@@ -6,10 +6,6 @@ import './app.css';
 import 'katex/dist/katex.min.css';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { registerSW } from 'virtual:pwa-register';
-import { installStorageQuotaProtection } from './utils/safeUtils';
-
-// Intercept and protect localStorage against QuotaExceededError crashes
-installStorageQuotaProtection();
 
 registerSW({
   onNeedRefresh() {},
@@ -43,7 +39,7 @@ console.error = (...args: any[]) => {
   _origConsoleError.apply(console, args);
 };
 
-const isBenignError = (reason: any): boolean => {
+const isNetworkLikeError = (reason: any): boolean => {
   if (!reason) return false;
   const code = reason.code || reason.name || '';
   const msg = (reason.message || String(reason)).toLowerCase();
@@ -54,8 +50,6 @@ const isBenignError = (reason: any): boolean => {
     code === 'cancelled' ||
     code === 'AbortError' ||
     code === 'NetworkError' ||
-    code === 'QuotaExceededError' ||
-    code === 'NS_ERROR_DOM_QUOTA_REACHED' ||
     msg.includes('network') ||
     msg.includes('offline') ||
     msg.includes('failed to fetch') ||
@@ -63,22 +57,20 @@ const isBenignError = (reason: any): boolean => {
     msg.includes('client is offline') ||
     msg.includes('could not reach cloud firestore backend') ||
     msg.includes("backend didn't respond") ||
-    msg.includes('client will operate in offline mode') ||
-    msg.includes('quota') ||
-    msg.includes('exceeded the quota')
+    msg.includes('client will operate in offline mode')
   );
 };
 
 window.addEventListener('unhandledrejection', (event) => {
-  if (isBenignError(event.reason)) {
-    console.warn('[suppressed rejection]:', event.reason);
+  if (isNetworkLikeError(event.reason)) {
+    console.warn('[offline] suppressed network rejection:', event.reason);
     event.preventDefault();
   }
 });
 
 window.addEventListener('error', (event) => {
-  if (isBenignError(event.error || event.message)) {
-    console.warn('[suppressed error]:', event.error || event.message);
+  if (isNetworkLikeError(event.error || event.message)) {
+    console.warn('[offline] suppressed network error:', event.error || event.message);
     event.preventDefault();
   }
 });

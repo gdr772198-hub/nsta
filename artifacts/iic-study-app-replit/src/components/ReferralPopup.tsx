@@ -22,7 +22,6 @@ import {
 } from 'lucide-react';
 import { User, ReferredUserRecord, SystemSettings } from '../types';
 import { saveUserToLive } from '../firebase';
-import { safeSaveUsersCache } from '../utils/safeUtils';
 import {
   REFERRAL_MILESTONES,
   getEffectiveReferralMilestones,
@@ -100,7 +99,7 @@ export const ReferralPopup: React.FC<Props> = ({ user, settings, onClose, onUpda
       if (stored) {
         const allUsers: User[] = JSON.parse(stored);
         const updatedAll = allUsers.map((u) => (u.id === res.updatedUser.id ? res.updatedUser : u));
-        safeSaveUsersCache(updatedAll);
+        localStorage.setItem('nst_users', JSON.stringify(updatedAll));
       }
       window.dispatchEvent(new CustomEvent('user-updated', { detail: res.updatedUser }));
     } catch {}
@@ -177,7 +176,7 @@ export const ReferralPopup: React.FC<Props> = ({ user, settings, onClose, onUpda
           if (u.id === referrer.id) return updatedReferrer;
           return u;
         });
-        safeSaveUsersCache(newUsersList);
+        localStorage.setItem('nst_users', JSON.stringify(newUsersList));
         saveUserToLive(updatedReferrer).catch(() => {});
       }
 

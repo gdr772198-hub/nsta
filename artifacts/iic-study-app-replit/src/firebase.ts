@@ -6,13 +6,14 @@ import { storage } from "./utils/storage";
 
 // --- FIREBASE CONFIGURATION ---
 const firebaseConfig = {
-  apiKey: "AIzaSyDyYNuSJr72nC52MinT0rt6jbDae8HLCts",
-  authDomain: "project-1959318394445181665.firebaseapp.com",
-  databaseURL: "https://project-1959318394445181665-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "project-1959318394445181665",
-  storageBucket: "project-1959318394445181665.firebasestorage.app",
-  messagingSenderId: "130030264192",
-  appId: "1:130030264192:web:1b8a53d694b15c8ef1eb65"
+  apiKey: "AIzaSyBEDKZVPgwOPCccjWdKSShfvSqC3REDa0c",
+  authDomain: "iic-nst.firebaseapp.com",
+  databaseURL: "https://iic-nst-default-rtdb.firebaseio.com",
+  projectId: "iic-nst",
+  storageBucket: "iic-nst.firebasestorage.app",
+  messagingSenderId: "984309241322",
+  appId: "1:984309241322:web:4dae35987732d630e64e93",
+  measurementId: "G-QX0XT7RSQX"
 };
 
 // ── Stale IndexedDB guard ──────────────────────────────────────────────────
@@ -24,9 +25,6 @@ const _lastProject = (() => { try { return localStorage.getItem(_FSP_KEY); } cat
 if (_lastProject && _lastProject !== firebaseConfig.projectId) {
   // Project switched — nuke stale caches synchronously before init
   try {
-    localStorage.removeItem('nst_cached_battle_mcqs');
-    localStorage.removeItem('nst_system_settings');
-    localStorage.removeItem('nst_official_mcqs_cache');
     (indexedDB as any).databases?.().then((dbs: { name?: string }[]) => {
       dbs.filter(d => d.name && (d.name.includes('firestore') || d.name.includes('firebase')))
         .forEach(d => { try { indexedDB.deleteDatabase(d.name!); } catch {} });
@@ -663,13 +661,7 @@ export const saveMcqLesson = async (lesson: any): Promise<void> => {
     setDoc(doc(db, 'mcq_lessons', id), payload),
     set(ref(rtdb, `mcq_lessons/${id}`), payload),
   ]);
-  try {
-    const raw = localStorage.getItem('nst_mcq_lessons_cache');
-    const existingMap: Record<string, any> = raw ? JSON.parse(raw) : {};
-    existingMap[id] = payload;
-    localStorage.setItem('nst_mcq_lessons_cache', JSON.stringify(existingMap));
-  } catch (_) {}
-  console.log(`[IIC] saveMcqLesson: ${id} saved (${lesson.mcqCount ?? (lesson.mcqs || []).length} MCQs)`);
+  console.log(`[IIC] saveMcqLesson: ${id} saved (${lesson.mcqCount} MCQs)`);
 };
 
 export const fetchMcqLesson = async (id: string): Promise<any | null> => {
@@ -681,13 +673,6 @@ export const fetchMcqLesson = async (id: string): Promise<any | null> => {
   try {
     const docSnap = await getDoc(doc(db, 'mcq_lessons', id));
     if (docSnap.exists()) return docSnap.data();
-  } catch (_) {}
-  try {
-    const raw = localStorage.getItem('nst_mcq_lessons_cache');
-    if (raw) {
-      const map = JSON.parse(raw);
-      if (map && map[id]) return map[id];
-    }
   } catch (_) {}
   return null;
 };
@@ -758,75 +743,18 @@ export const deleteMcqLesson = async (id: string): Promise<void> => {
     deleteDoc(doc(db, 'mcq_lessons', id)),
     remove(ref(rtdb, `mcq_lessons/${id}`)),
   ]);
-  try {
-    const raw = localStorage.getItem('nst_mcq_lessons_cache');
-    if (raw) {
-      const existingMap: Record<string, any> = JSON.parse(raw);
-      delete existingMap[id];
-      localStorage.setItem('nst_mcq_lessons_cache', JSON.stringify(existingMap));
-    }
-  } catch (_) {}
   console.log(`[IIC] deleteMcqLesson: ${id} deleted`);
 };
 
 export const subscribeMcqLessons = (cb: (lessons: any[]) => void): (() => void) => {
-  let initialDelivered = false;
-
-  // 1. Immediate delivery from localStorage cache
-  try {
-    const raw = localStorage.getItem('nst_mcq_lessons_cache');
-    if (raw) {
-      const map: Record<string, any> = JSON.parse(raw);
-      const cached = Object.values(map || {}) as any[];
-      if (cached.length > 0) {
-        cached.sort((a: any, b: any) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-        cb(cached);
-        initialDelivered = true;
-      }
-    }
-  } catch (_) {}
-
-  // 2. Real-time RTDB listener with Firestore fallback
   const r = ref(rtdb, 'mcq_lessons');
   const unsub = onValue(r, (snap) => {
-    if (snap.exists()) {
-      const val = snap.val();
-      const lessons = Object.values(val) as any[];
-      lessons.sort((a: any, b: any) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-      try {
-        localStorage.setItem('nst_mcq_lessons_cache', JSON.stringify(val));
-      } catch (_) {}
-      cb(lessons);
-    } else {
-      // If RTDB empty, check Firestore
-      getDocs(collection(db, 'mcq_lessons')).then((snapFs) => {
-        if (!snapFs.empty) {
-          const fsLessons = snapFs.docs.map(d => d.data());
-          fsLessons.sort((a: any, b: any) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-          try {
-            const map: Record<string, any> = {};
-            fsLessons.forEach((l: any) => { if (l && l.id) map[l.id] = l; });
-            localStorage.setItem('nst_mcq_lessons_cache', JSON.stringify(map));
-          } catch (_) {}
-          cb(fsLessons);
-        } else if (!initialDelivered) {
-          cb([]);
-        }
-      }).catch(() => {
-        if (!initialDelivered) cb([]);
-      });
-    }
-  }, (err) => {
-    console.warn('[subscribeMcqLessons] RTDB listener error, checking Firestore fallback:', err);
-    getDocs(collection(db, 'mcq_lessons')).then((snapFs) => {
-      if (!snapFs.empty) {
-        const fsLessons = snapFs.docs.map(d => d.data());
-        fsLessons.sort((a: any, b: any) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-        cb(fsLessons);
-      }
-    }).catch(() => {});
+    if (!snap.exists()) { cb([]); return; }
+    const val = snap.val();
+    const lessons = Object.values(val) as any[];
+    lessons.sort((a: any, b: any) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    cb(lessons);
   });
-
   return unsub;
 };
 
@@ -3954,7 +3882,6 @@ export const applyMcqFullEdit = async (
     newQuestion: string,
     newOptions: string[],
     mcqQuestion?: string,
-    newStatements?: string[],
 ): Promise<boolean> => {
     if (!chapterKey || typeof chapterKey !== 'string' || chapterKey.trim() === '') {
         throw new Error('[applyMcqFullEdit] chapterKey is empty or invalid');
@@ -3996,7 +3923,6 @@ export const applyMcqFullEdit = async (
         const updates: any = { correctAnswer: newCorrectAnswer };
         if (newQuestion.trim()) updates.question = newQuestion.trim();
         if (newOptions.length > 0 && newOptions.some(o => o.trim())) updates.options = newOptions.map(o => o.trim());
-        if (newStatements !== undefined) updates.statements = newStatements;
 
         mcqs[mcqIdx] = { ...mcqs[mcqIdx], ...updates };
         pages[pageIndex] = { ...page, mcqs };
@@ -4038,7 +3964,6 @@ export const applyMcqFullEdit = async (
         const updates: any = { correctAnswer: newCorrectAnswer };
         if (newQuestion.trim()) updates.question = newQuestion.trim();
         if (newOptions.length > 0 && newOptions.some(o => o.trim())) updates.options = newOptions.map(o => o.trim());
-        if (newStatements !== undefined) updates.statements = newStatements;
 
         mcqs[mcqIdx] = { ...mcqs[mcqIdx], ...updates };
         const updated = { ...entryData, parsedMcqs: mcqs };
@@ -4102,9 +4027,8 @@ const claimSuggestionReward = async (
     const d = snap.val();
     ownerUid = d.uid || '';
     ownerName = d.userName || 'Student';
-    const isVip = Boolean(d.isVip || d.tier === 'VIP');
     if (!ownerUid || ownerUid === 'anonymous') return null;
-    return { uid: ownerUid, userName: ownerName, isVip };
+    return { uid: ownerUid, userName: ownerName };
 };
 
 export const adminReplySuggestion = async (suggestionId: string, reply: string, tag?: string, status?: 'open' | 'replied' | 'resolved'): Promise<void> => {
@@ -4117,19 +4041,17 @@ export const adminReplySuggestion = async (suggestionId: string, reply: string, 
             status: computedStatus,
             ...(tag !== undefined ? { adminTag: tag } : {}),
         });
-        // Award coins for reply — VIP users get 3x reward (15 coins vs 5 coins)
+        // Award 5 coins for reply — atomic claim prevents double-award
         const replyOwner = await claimSuggestionReward(suggestionId, 'reply');
         if (replyOwner) {
-            const coins = replyOwner.isVip ? 15 : 5;
-            await awardSuggestionCoins(replyOwner.uid, replyOwner.userName, coins, 'admin_replied', suggestionId);
+            await awardSuggestionCoins(replyOwner.uid, replyOwner.userName, 5, 'admin_replied', suggestionId);
             await updateSuggestionLeaderboard(replyOwner.uid, replyOwner.userName, 'replied');
         }
-        // Award coins if marked resolved — VIP users get 50 coins vs 20 coins
+        // Award 20 coins if marked resolved
         if (computedStatus === 'resolved') {
             const resolveOwner = await claimSuggestionReward(suggestionId, 'resolve');
             if (resolveOwner) {
-                const coins = resolveOwner.isVip ? 50 : 20;
-                await awardSuggestionCoins(resolveOwner.uid, resolveOwner.userName, coins, 'galti_resolved', suggestionId);
+                await awardSuggestionCoins(resolveOwner.uid, resolveOwner.userName, 20, 'galti_resolved', suggestionId);
                 await updateSuggestionLeaderboard(resolveOwner.uid, resolveOwner.userName, 'resolved');
             }
         }

@@ -1,7 +1,6 @@
 // @ts-nocheck
 import React, { useState } from 'react';
 import { saveSuggestion, auth } from '../firebase';
-import { FREE_DAILY_FIX_LIMIT, getFreeDailyFixUsedCount, getFreeDailyFixRemaining, incrementFreeDailyFixCount } from '../utils/freeFixLimit';
 
 interface Props {
   user: any;
@@ -12,17 +11,7 @@ interface Props {
 }
 
 export const WriteModeCorrection: React.FC<Props> = ({ user, lessonTitle, pageNo, subject, classLevel }) => {
-  const isSubscriber = Boolean(
-    user?.role === 'ADMIN' ||
-    user?.isPremium ||
-    user?.subscriptionLevel === 'BASIC' ||
-    user?.subscriptionLevel === 'ULTRA'
-  );
-  const effectiveUid = auth.currentUser?.uid || user?.uid || user?.id || 'guest';
-  const [freeUsed, setFreeUsed] = useState(() => getFreeDailyFixUsedCount(effectiveUid));
-  const freeRemaining = Math.max(0, FREE_DAILY_FIX_LIMIT - freeUsed);
-  const canAccess = isSubscriber || freeRemaining > 0;
-
+  const isSubscriber = (user?.subscriptionLevel === 'BASIC' || user?.subscriptionLevel === 'ULTRA' || user?.isPremium || user?.role === 'ADMIN');
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -32,11 +21,11 @@ export const WriteModeCorrection: React.FC<Props> = ({ user, lessonTitle, pageNo
   const reset = () => { setDone(false); setError(false); setText(''); setOpen(false); };
 
   const submit = async () => {
-    if (!text.trim() || submitting) return;
-    if (!isSubscriber && getFreeDailyFixRemaining(effectiveUid) <= 0) {
-      alert(`🔒 Aaj ka Free Fix limit (${FREE_DAILY_FIX_LIMIT}/${FREE_DAILY_FIX_LIMIT}) pura ho gaya hai!\n\nKal aapko dobara 2 free fixes milenge, ya Unlimited access ke liye Basic ya Ultra plan upgrade karein.`);
+    if (!isSubscriber) {
+      alert('🔒 Correction Mode feature Basic aur Ultra members ke liye available hai. Plan upgrade karein!');
       return;
     }
+    if (!text.trim() || submitting) return;
     setSubmitting(true);
     setError(false);
     try {
@@ -54,10 +43,6 @@ export const WriteModeCorrection: React.FC<Props> = ({ user, lessonTitle, pageNo
         subject,
         classLevel,
       });
-      if (!isSubscriber) {
-        const nextUsed = incrementFreeDailyFixCount(effectiveUid);
-        setFreeUsed(nextUsed);
-      }
       setDone(true);
     } catch (e) {
       console.error('WriteModeCorrection submit error:', e);
@@ -104,19 +89,20 @@ export const WriteModeCorrection: React.FC<Props> = ({ user, lessonTitle, pageNo
       {!open ? (
         <button
           onClick={() => {
-            if (!canAccess) {
-              alert(`🔒 Aaj ka Free Fix limit (${FREE_DAILY_FIX_LIMIT}/${FREE_DAILY_FIX_LIMIT}) pura ho gaya hai!\n\nKal aapko dobara 2 free fixes milenge, ya Unlimited access ke liye Basic ya Ultra plan upgrade karein.`);
+            if (!isSubscriber) {
+              alert('🔒 Correction Mode feature Basic aur Ultra members ke liye available hai. Plan upgrade karein!');
               return;
             }
             setOpen(true);
           }}
           style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 20, border: '1px solid #fde68a', background: '#fffbeb', color: '#92400e', fontSize: 11, fontWeight: 900, cursor: 'pointer' }}
         >
-          {isSubscriber
-            ? '💡 Is page mein correction report karo'
-            : freeRemaining > 0
-              ? `💡 Is page mein correction report karo (Free: ${freeRemaining}/${FREE_DAILY_FIX_LIMIT} bache)`
-              : '🔒 Aaj ka correction limit pura (2/2) — Basic/Ultra required'}
+          {isSubscriber ? '💡 Is page mein correction report karo' : '🔒 Is page mein correction report karo'}
+          {!isSubscriber && (
+            <span style={{ fontSize: 9, background: 'rgba(217,119,6,0.15)', color: '#b45309', padding: '1px 5px', borderRadius: 4, fontWeight: 900 }}>
+              Basic+
+            </span>
+          )}
         </button>
       ) : (
         <div style={{ background: '#fffbeb', border: '2px solid #fcd34d', borderRadius: 14, padding: '12px', gap: 8, display: 'flex', flexDirection: 'column' }}>
