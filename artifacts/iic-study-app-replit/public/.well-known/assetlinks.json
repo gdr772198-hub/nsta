@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.vercel.nsta_iic_study_app_replit.twa",
+      "sha256_cert_fingerprints": [
+        "F2:C0:72:16:C9:22:94:BB:60:F4:DB:29:51:DE:FC:4D:DB:99:AF:2B:A1:07:22:83:65:4C:78:42:0D:7B:B0:71"
+      ]
+    }
+  }
+]
