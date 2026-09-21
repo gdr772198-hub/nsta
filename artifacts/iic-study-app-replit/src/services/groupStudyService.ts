@@ -31,6 +31,7 @@ export interface GroupStudyMessage {
 export interface GroupStudyMcqQuestion {
   id?: string;
   question: string;
+  statements?: string[];
   options: string[];
   correctIndex: number;
   explanation?: string;
@@ -941,14 +942,26 @@ export const startLiveMcqBattle = async (
   autoAdvance: boolean = true
 ): Promise<void> => {
   const now = Date.now();
-  const safeQuestions = (questions || []).map((q, idx) => ({
-    question: String(q?.question || `Question ${idx + 1}`).trim(),
-    options: (Array.isArray(q?.options) ? q.options : ['A', 'B', 'C', 'D'])
-      .slice(0, 4)
-      .map((opt, oIdx) => String(opt ?? `Option ${oIdx + 1}`).trim()),
-    correctIndex: typeof q?.correctIndex === 'number' ? Math.max(0, Math.min(3, q.correctIndex)) : 0,
-    explanation: q?.explanation ? String(q.explanation).trim() : '',
-  }));
+  const safeQuestions = (questions || []).map((q, idx) => {
+    const rawStmts = (q as any)?.statements ?? (q as any)?.statement ?? (q as any)?.mcqStatements;
+    let statements: string[] | undefined = undefined;
+    if (Array.isArray(rawStmts) && rawStmts.length > 0) {
+      statements = rawStmts.map((s: any) => String(s ?? '').trim()).filter(Boolean);
+    } else if (typeof rawStmts === 'string' && rawStmts.trim()) {
+      statements = rawStmts.split('\n').map((s: string) => s.trim()).filter(Boolean);
+    }
+
+    return {
+      question: String(q?.question || `Question ${idx + 1}`).trim(),
+      ...(statements && statements.length > 0 ? { statements } : {}),
+      options: (Array.isArray(q?.options) ? q.options : ['A', 'B', 'C', 'D'])
+        .slice(0, 4)
+        .map((opt, oIdx) => String(opt ?? `Option ${oIdx + 1}`).trim()),
+      correctIndex: typeof q?.correctIndex === 'number' ? Math.max(0, Math.min(3, q.correctIndex)) : 0,
+      explanation: q?.explanation ? String(q.explanation).trim() : '',
+      ...(q?.subject ? { subject: q.subject } : {}),
+    };
+  });
 
   const liveMcqData: any = {
     isActive: true,
@@ -1289,6 +1302,34 @@ export const endLiveMcqBattle = async (roomId: string): Promise<void> => {
   }
 };
 
+export const resetLiveMcqToWaiting = async (roomId: string): Promise<void> => {
+  try {
+    const now = Date.now();
+    const cached = getCachedRooms()[roomId];
+    if (cached && cached.liveMcq) {
+      cached.liveMcq.isActive = false;
+      cached.liveMcq.status = 'WAITING';
+      cached.liveMcq.scores = {};
+      cached.liveMcq.questionAnswers = {};
+      cached.lastActive = now;
+      saveCachedRoom(cached);
+    }
+
+    await update(ref(rtdb, `group_study_rooms/${roomId}`), {
+      mode: 'LIVE_MCQ',
+      'liveMcq/isActive': false,
+      'liveMcq/status': 'WAITING',
+      'liveMcq/scores': {},
+      'liveMcq/questionAnswers': {},
+      lastActive: now,
+    });
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied')) return;
+    console.warn('[GroupStudy] resetLiveMcqToWaiting notice:', err);
+  }
+};
+
 export const autoSubmitRoom = async (roomId: string): Promise<void> => {
   const now = Date.now();
   try {
@@ -1414,6 +1455,7 @@ export const broadcastHostMcq = async (
     questionIndex: number;
     totalQuestions: number;
     questionText: string;
+    statements?: string[];
     options: string[];
     correctIndex: number;
     explanation?: string;
@@ -1430,6 +1472,7 @@ export const broadcastHostMcq = async (
       questionIndex: mcqData.questionIndex,
       totalQuestions: mcqData.totalQuestions,
       questionText: mcqData.questionText,
+      ...(mcqData.statements && mcqData.statements.length > 0 ? { statements: mcqData.statements } : {}),
       options: mcqData.options,
       correctIndex: mcqData.correctIndex,
       explanation: mcqData.explanation || '',

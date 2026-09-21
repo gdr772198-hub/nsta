@@ -80,17 +80,20 @@ import {
   awardFinalStreakBonus,
   autoSubmitRoom,
   endLiveMcqBattle,
+  resetLiveMcqToWaiting,
   syncHostActivity,
   cleanRtdbPayload,
 } from '../services/groupStudyService';
-import { auth, getChapterData, saveUserToLive, subscribeMcqLessons } from '../firebase';
+import { auth, getChapterData, saveUserToLive, subscribeMcqLessons, saveTestResult, saveUserHistory } from '../firebase';
 import { STATIC_SYLLABUS, ADMIN_EMAIL, LUCENT_SUBJECT_OPTIONS_BASE, getLucentSubjectOptions } from '../constants';
-import { parseMCQText } from '../utils/mcqParser';
+import { parseMCQText, extractStatements } from '../utils/mcqParser';
+import { parseMcqQuestion } from '../utils/mcqRender';
+import { type MCQResult } from '../types';
 
 // Normalize any raw MCQ question to GroupStudyMcqQuestion format
 function parseQuestionToGroupMcq(q: any): GroupStudyMcqQuestion | null {
   if (!q) return null;
-  const questionText = String(q.question || q.title || q.prompt || '').trim();
+  let questionText = String(q.question || q.title || q.prompt || '').trim();
   if (!questionText) return null;
 
   let rawOptions: string[] = [];
@@ -122,8 +125,31 @@ function parseQuestionToGroupMcq(q: any): GroupStudyMcqQuestion | null {
     }
   }
 
+  // Preserve or extract statements for statement-based MCQs
+  let statements: string[] | undefined = undefined;
+  const rawStmts = q.statements ?? q.statement ?? q.statementsList ?? (q as any).mcqStatements;
+  if (Array.isArray(rawStmts) && rawStmts.length > 0) {
+    statements = rawStmts.map((s: any) => String(s ?? '').trim()).filter(Boolean);
+  } else if (typeof rawStmts === 'string' && rawStmts.trim()) {
+    statements = rawStmts.replace(/<br\s*\/?>/gi, '\n').split('\n').map((s: string) => s.trim()).filter(Boolean);
+  }
+
+  // If no explicit statements array, check if question contains embedded statements
+  if (!statements || statements.length === 0) {
+    try {
+      const ext = extractStatements(questionText);
+      if (ext.statements && ext.statements.length > 0) {
+        statements = ext.statements;
+        if (ext.cleanedQuestion && ext.cleanedQuestion.trim()) {
+          questionText = ext.cleanedQuestion.trim();
+        }
+      }
+    } catch {}
+  }
+
   return {
     question: questionText,
+    ...(statements && statements.length > 0 ? { statements } : {}),
     options: rawOptions.slice(0, 4),
     correctIndex,
     explanation: q.explanation ? String(q.explanation).trim() : '',
@@ -366,6 +392,9 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [showMobileHostControls, setShowMobileHostControls] = useState<boolean>(false);
   const [showHostTimerDropdown, setShowHostTimerDropdown] = useState<boolean>(false);
   const [selectedReviewQIdx, setSelectedReviewQIdx] = useState<number | null>(null);
+  const [showHostNextPicker, setShowHostNextPicker] = useState<boolean>(false);
+  const [reviewFilter, setReviewFilter] = useState<'ALL' | 'CORRECT' | 'WRONG' | 'UNANSWERED'>('ALL');
+  const savedSessionsRef = useRef<Set<string>>(new Set());
 
   // Is an MCQ actively being answered or revealed right now?
   const isMcqRunning = Boolean(
@@ -1129,16 +1158,15 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
 
   const isHost = Boolean(
     currentRoom && (
-      isAdmin ||
+      (user?.id && currentRoom.hostId === user.id) ||
+      (auth.currentUser?.uid && currentRoom.hostId === auth.currentUser.uid) ||
       (lastCreatedRoomId && currentRoom.id === lastCreatedRoomId) ||
       createdRoomIds.has(currentRoom.id) ||
       isRoomCreatedByMe(currentRoom.id, currentRoom.hostId, user?.id) ||
-      Boolean(auth.currentUser?.uid && currentRoom.hostId === auth.currentUser.uid) ||
-      Boolean(user?.id && currentRoom.hostId === user.id) ||
-      (Boolean(user?.name && currentRoom.hostName) && user.name.trim().toLowerCase() === currentRoom.hostName.trim().toLowerCase()) ||
       Boolean(user?.id && currentRoom.members?.[user.id]?.isHost) ||
       Boolean(auth.currentUser?.uid && currentRoom.members?.[auth.currentUser.uid]?.isHost) ||
-      Object.keys(currentRoom.members || {}).length <= 1
+      (Boolean(user?.name && currentRoom.hostName) && user.name.trim().toLowerCase() === currentRoom.hostName.trim().toLowerCase() && currentRoom.hostName.trim().length > 1) ||
+      (isAdmin && (!currentRoom.hostId || currentRoom.hostId === user?.id))
     )
   );
   const currentMember = currentRoom?.members?.[user?.id] || (auth.currentUser?.uid ? currentRoom?.members?.[auth.currentUser.uid] : undefined);
@@ -1238,8 +1266,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
         const remaining = Math.max(0, duration - elapsedSec);
         setMcqSecondsLeft(remaining);
 
-        // Auto-reveal exactly when selected timer expires (0s)
-        if (remaining <= 0 && liveMcq.status === 'QUESTION') {
+        // Auto-reveal exactly when selected timer expires (0s) - Host authority only
+        if (isHost && remaining <= 0 && liveMcq.status === 'QUESTION') {
           handleRevealAnswer();
           return;
         }
@@ -1256,6 +1284,7 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     currentRoom?.liveMcq?.status,
     currentRoom?.liveMcq?.questionStartTime,
     currentRoom?.liveMcq?.durationPerQuestion,
+    isHost,
   ]);
 
   // ── Auto-advance Countdown during REVEAL ──
@@ -1276,7 +1305,7 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
       setRevealSecondsLeft((prev) => {
         if (prev <= 1) {
           clearInterval(revealTimer);
-          if (liveMcq.status === 'REVEAL') {
+          if (isHost && liveMcq.status === 'REVEAL') {
             handleNextMcqQuestion();
           }
           return 0;
@@ -1291,14 +1320,116 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     currentRoom?.liveMcq?.currentQuestionIndex,
     currentRoom?.liveMcq?.autoAdvance,
     autoAdvanceEnabled,
+    isHost,
   ]);
 
-  // Reset local answer selection on new question
+  // Reset local answer selection on new question or new battle session
   useEffect(() => {
     setSelectedOption(null);
     setHasAnsweredCurrentQ(false);
     setShowXpBanner(false);
-  }, [currentRoom?.liveMcq?.currentQuestionIndex]);
+  }, [currentRoom?.liveMcq?.currentQuestionIndex, currentRoom?.liveMcq?.title, currentRoom?.liveMcq?.status]);
+
+  // ── Auto-save Group Study MCQ results to Student's MCQ Activity History ────
+  useEffect(() => {
+    if (!currentRoom || !user?.id) return;
+    const liveMcq = currentRoom.liveMcq;
+    if (!liveMcq) return;
+
+    const isEnded = liveMcq.status === 'ENDED' || currentRoom.isExpired;
+    if (!isEnded) return;
+
+    const totalQ = liveMcq.totalQuestions || liveMcq.questions?.length || 0;
+    if (totalQ === 0) return;
+
+    const sessionKey = `${currentRoom.id}_${liveMcq.title || liveMcq.quizTitle || currentRoom.name || 'battle'}_${totalQ}_${liveMcq.questions?.[0]?.question?.slice(0, 20) || ''}`;
+    if (savedSessionsRef.current.has(sessionKey)) return;
+    savedSessionsRef.current.add(sessionKey);
+
+    const myScore = liveMcq.scores?.[user.id];
+    const allAnswersMap = liveMcq.questionAnswers || {};
+    const questions = liveMcq.questions || [];
+
+    const correctCount = myScore?.correctCount || 0;
+    const wrongCount = myScore?.wrongCount || 0;
+    const unansweredCount = Math.max(0, totalQ - correctCount - wrongCount);
+    const accuracy = totalQ > 0 ? Math.round((correctCount / totalQ) * 100) : 0;
+    const durationPerQ = liveMcq.durationPerQuestion || 20;
+
+    const userAnswersRecord: Record<number, number> = {};
+    const wrongQuestionsList: any[] = [];
+
+    questions.forEach((q, qIndex) => {
+      const qAns = allAnswersMap[qIndex]?.[user.id];
+      const selected = qAns?.selectedOption !== undefined ? qAns.selectedOption : -1;
+      userAnswersRecord[qIndex] = selected;
+
+      if (selected !== -1 && selected !== q.correctIndex) {
+        wrongQuestionsList.push({
+          question: q.question,
+          statements: q.statements,
+          qIndex,
+          correctAnswer: q.correctIndex,
+          explanation: q.explanation || '',
+        });
+      }
+    });
+
+    const groupStudyResult: MCQResult = {
+      id: `study_room_${currentRoom.id}_${Date.now()}`,
+      userId: user.id,
+      chapterId: currentRoom.id,
+      chapterTitle: liveMcq.title || liveMcq.quizTitle || currentRoom.name || 'Study Room MCQ Battle',
+      subjectId: currentRoom.subject || 'GROUP_STUDY',
+      subjectName: currentRoom.subject || 'Group Study Room',
+      topic: `Study Room • ${currentRoom.name}`,
+      date: new Date().toISOString(),
+      score: correctCount,
+      totalQuestions: totalQ,
+      correctCount,
+      wrongCount,
+      totalTimeSeconds: Math.round(totalQ * durationPerQ),
+      averageTimePerQuestion: durationPerQ,
+      performanceTag: accuracy >= 80 ? 'EXCELLENT' : accuracy >= 50 ? 'GOOD' : 'BAD',
+      userAnswers: userAnswersRecord,
+      wrongQuestions: wrongQuestionsList,
+      questions: questions.map((q, qIndex) => ({
+        id: q.id || `q_${qIndex}`,
+        question: q.question,
+        statements: q.statements,
+        options: q.options,
+        correctAnswer: q.correctIndex,
+        explanation: q.explanation || '',
+      })),
+    };
+
+    // 1. Save to local storage for immediate HistoryPage access
+    try {
+      const storageKey = `nst_test_results_${user.id}`;
+      const existing = JSON.parse(localStorage.getItem(storageKey) || '[]');
+      const updated = [groupStudyResult, ...existing.filter((item: any) => item.id !== groupStudyResult.id)].slice(0, 50);
+      localStorage.setItem(storageKey, JSON.stringify(updated));
+    } catch (err) {
+      console.warn('[GroupStudy] Error saving local test result:', err);
+    }
+
+    // 2. Save to Firestore / RTDB
+    saveTestResult(user.id, groupStudyResult).catch((err) => {
+      console.warn('[GroupStudy] saveTestResult notice:', err);
+    });
+    saveUserHistory(user.id, groupStudyResult).catch((err) => {
+      console.warn('[GroupStudy] saveUserHistory notice:', err);
+    });
+
+    // 3. Update in-memory user mcqHistory
+    if (onUserUpdate && user) {
+      const updatedUser = {
+        ...user,
+        mcqHistory: [groupStudyResult, ...(user.mcqHistory || []).filter((h: any) => h.id !== groupStudyResult.id)],
+      };
+      onUserUpdate(updatedUser);
+    }
+  }, [currentRoom?.liveMcq?.status, currentRoom?.isExpired, user?.id]);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -1430,13 +1561,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
           ? {
               lessonTitle: prefilledContext.chapterTitle || prefilledContext.title || 'Chapter MCQ Battle',
               questions: prefilledContext.mcqData
-                .map((q: any) => ({
-                  question: q.question,
-                  options: (q.options || []).slice(0, 4),
-                  correctIndex: typeof q.correctAnswer === 'number' ? q.correctAnswer : 0,
-                  explanation: q.explanation || '',
-                }))
-                .filter((q: any) => q.question && q.options.length >= 2),
+                .map((q: any) => parseQuestionToGroupMcq(q))
+                .filter((q: any): q is GroupStudyMcqQuestion => Boolean(q && q.question && q.options.length >= 2)),
             }
           : null
       );
@@ -1722,14 +1848,26 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
 
     const rawQuestions = Array.isArray(lesson.questions) ? lesson.questions : [];
     const cleanQuestions: GroupStudyMcqQuestion[] = rawQuestions
-      .map((q, idx) => ({
-        question: String(q?.question || `Question ${idx + 1}`).trim(),
-        options: (Array.isArray(q?.options) ? q.options : ['A', 'B', 'C', 'D'])
-          .slice(0, 4)
-          .map((opt, oIdx) => String(opt ?? `Option ${oIdx + 1}`).trim()),
-        correctIndex: typeof q?.correctIndex === 'number' ? Math.max(0, Math.min(3, q.correctIndex)) : 0,
-        explanation: q?.explanation ? String(q.explanation).trim() : '',
-      }))
+      .map((q, idx) => {
+        const parsed = parseQuestionToGroupMcq(q);
+        if (parsed) return parsed;
+        const rawStmts = (q as any)?.statements ?? (q as any)?.statement ?? (q as any)?.mcqStatements;
+        let statements: string[] | undefined = undefined;
+        if (Array.isArray(rawStmts) && rawStmts.length > 0) {
+          statements = rawStmts.map((s: any) => String(s ?? '').trim()).filter(Boolean);
+        } else if (typeof rawStmts === 'string' && rawStmts.trim()) {
+          statements = rawStmts.split('\n').map((s: string) => s.trim()).filter(Boolean);
+        }
+        return {
+          question: String(q?.question || `Question ${idx + 1}`).trim(),
+          ...(statements && statements.length > 0 ? { statements } : {}),
+          options: (Array.isArray(q?.options) ? q.options : ['A', 'B', 'C', 'D'])
+            .slice(0, 4)
+            .map((opt, oIdx) => String(opt ?? `Option ${oIdx + 1}`).trim()),
+          correctIndex: typeof q?.correctIndex === 'number' ? Math.max(0, Math.min(3, q.correctIndex)) : 0,
+          explanation: q?.explanation ? String(q.explanation).trim() : '',
+        };
+      })
       .filter((q) => q.question.length > 0 && q.options.length >= 2);
 
     if (cleanQuestions.length === 0) {
@@ -1820,12 +1958,9 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
       try {
         const chapterData = await getChapterData(chapterTitle) || await getChapterData(`nst_${chapterTitle}`);
         if (chapterData && Array.isArray(chapterData.mcq) && chapterData.mcq.length > 0) {
-          questions = chapterData.mcq.map((q: any) => ({
-            question: q.question,
-            options: (q.options || []).slice(0, 4),
-            correctIndex: typeof q.correctAnswer === 'number' ? q.correctAnswer : 0,
-            explanation: q.explanation || '',
-          })).filter((q: any) => q.question && q.options.length >= 2);
+          questions = chapterData.mcq
+            .map((q: any) => parseQuestionToGroupMcq(q))
+            .filter((q: any): q is GroupStudyMcqQuestion => Boolean(q && q.question && q.options.length >= 2));
         }
       } catch (e) {
         console.warn('Chapter MCQ fetch note:', e);
@@ -1982,7 +2117,8 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
     );
 
     setLastXpOutcome(outcome);
-    setShowXpBanner(true);
+    // User requested: Answer dete time na dikhega kitna galat hua kitna sahi
+    setShowXpBanner(false);
 
     // Synchronize XP to user profile & localStorage & Firebase
     if (outcome.netXpChange !== 0 && user?.id) {
@@ -2710,20 +2846,23 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="text-slate-400 text-[11px]">Timer per Q:</span>
                       <div className="flex items-center gap-1">
-                        {[10, 15, 20, 30, 45, 60].map((sec) => (
-                          <button
-                            key={`dur_drawer_${sec}`}
-                            type="button"
-                            onClick={() => handleSetDuration(sec)}
-                            className={`px-2 py-1 rounded-lg font-black transition cursor-pointer text-[10px] ${
-                              duration === sec
-                                ? 'bg-amber-500 text-slate-950 shadow'
-                                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                            }`}
-                          >
-                            {sec}s
-                          </button>
-                        ))}
+                        {[10, 15, 20, 30, 45, 60].map((sec) => {
+                          const activeDuration = currentRoom?.liveMcq?.durationPerQuestion || selectedTimerDuration || 20;
+                          return (
+                            <button
+                              key={`dur_drawer_${sec}`}
+                              type="button"
+                              onClick={() => handleSetDuration(sec)}
+                              className={`px-2 py-1 rounded-lg font-black transition cursor-pointer text-[10px] ${
+                                activeDuration === sec
+                                  ? 'bg-amber-500 text-slate-950 shadow'
+                                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                              }`}
+                            >
+                              {sec}s
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 ml-auto">
@@ -2827,8 +2966,8 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               {/* ── TAB 1: LIVE MCQ BATTLE ── */}
               {activeTab === 'MCQ' && (
                 <div className="flex-1 flex flex-col justify-between space-y-4">
-                  {/* Battle State: WAITING (Host launches quiz) */}
-                  {(!currentRoom.liveMcq?.isActive || currentRoom.liveMcq?.status === 'WAITING') && (
+                  {/* Battle State: WAITING (Host launches quiz, members wait in lobby) */}
+                  {(!currentRoom.liveMcq || currentRoom.liveMcq?.status === 'WAITING') && currentRoom.liveMcq?.status !== 'ENDED' && !currentRoom.isExpired && (
                     <div className="rounded-2xl bg-slate-800/60 border border-slate-700 p-6 text-center space-y-4 my-auto shadow-xl">
                       <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto text-3xl">
                         🎯
@@ -3443,13 +3582,107 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                           </button>
                         </div>
                       ) : (
-                        <div className="py-6 space-y-2 text-center">
-                          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-black animate-pulse">
-                            <Clock size={16} /> Host live MCQ quiz start karne wala hai...
+                        <div className="py-4 space-y-4 max-w-lg mx-auto text-left">
+                          {/* Waiting Status Banner */}
+                          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-center space-y-2">
+                            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/20 text-amber-300 text-xs font-black animate-pulse">
+                              <Clock size={15} /> Host Ke Shuru Karne Ka Intezar Karein...
+                            </div>
+                            <p className="text-xs text-slate-300 font-medium leading-relaxed">
+                              Aap Study Room me safaltapoorvak jud chuke hain. Jaise hi Host session shuru karenge, pehla sawal aapke screen par turant aa jayega!
+                            </p>
                           </div>
-                          <p className="text-[11px] text-slate-400">
-                            Jaise hi host quiz shuru karega, aapke mobile par automatically sawal load ho jayega!
-                          </p>
+
+                          {/* Kitne User Aaye Hain (Count Banner) */}
+                          <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 flex items-center justify-between">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-9 h-9 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-black">
+                                <Users size={18} />
+                              </div>
+                              <div>
+                                <h4 className="text-xs font-black text-white">
+                                  Room Me Kul {Object.keys(currentRoom.members || {}).length} Vidhyarthi Online Hain
+                                </h4>
+                                <p className="text-[11px] text-slate-400">
+                                  Sabhi participants live arena me jud chuke hain
+                                </p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard?.writeText(currentRoom.code || '');
+                                alert(`Room Code ${currentRoom.code} copy ho gaya! Doston ko bulayein.`);
+                              }}
+                              className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-bold transition flex items-center gap-1 cursor-pointer"
+                            >
+                              <Copy size={12} /> Code: {currentRoom.code}
+                            </button>
+                          </div>
+
+                          {/* Kon Kon Aaye Hain (Members List) */}
+                          <div className="rounded-2xl bg-slate-900/90 border border-slate-800 p-3.5 space-y-2.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-black text-slate-200 flex items-center gap-1.5">
+                                <UserCheck size={14} className="text-emerald-400" />
+                                Kon Kon Aaye Hain ({Object.keys(currentRoom.members || {}).length})
+                              </span>
+                              <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
+                                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /> Live Connected
+                              </span>
+                            </div>
+
+                            <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                              {Object.values(currentRoom.members || {}).map((m, idx) => {
+                                const isSelf = m.id === user?.id;
+                                const isMemberHost = m.id === currentRoom.hostId || m.isHost;
+
+                                return (
+                                  <div
+                                    key={m.id || `m_${idx}`}
+                                    className={`p-2.5 rounded-xl border flex items-center justify-between text-xs transition ${
+                                      isSelf
+                                        ? 'bg-indigo-950/40 border-indigo-500/40'
+                                        : 'bg-slate-800/60 border-slate-700/60'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                      <div className="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center font-black text-xs text-white shrink-0 overflow-hidden">
+                                        {m.photoURL ? (
+                                          <img src={m.photoURL} alt={m.name} className="w-full h-full object-cover" />
+                                        ) : (
+                                          (m.name || 'S').charAt(0).toUpperCase()
+                                        )}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <p className="font-bold text-slate-200 truncate text-xs flex items-center gap-1.5">
+                                          <span>{m.name || 'Student'}</span>
+                                          {isSelf && (
+                                            <span className="text-[10px] text-indigo-400 font-black">(Aap)</span>
+                                          )}
+                                        </p>
+                                        <span className="text-[10px] text-slate-400">
+                                          {isMemberHost ? '👑 Room Host (Quiz Shuru Karega)' : '🎓 Vidhyarthi / Participant'}
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    <div className="shrink-0 flex items-center gap-1.5">
+                                      {isMemberHost ? (
+                                        <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-black text-[10px] border border-amber-500/30">
+                                          Host
+                                        </span>
+                                      ) : (
+                                        <span className="px-2 py-0.5 rounded-full bg-slate-700/70 text-slate-300 font-bold text-[10px]">
+                                          Online
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -3568,15 +3801,64 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                               </span>
                             </div>
 
-                            <h4
-                              className={`font-black text-white leading-relaxed ${
-                                isProjector
-                                  ? 'text-lg sm:text-2xl tracking-wide text-cyan-50'
-                                  : 'text-base sm:text-lg'
-                              }`}
-                            >
-                              {q.question}
-                            </h4>
+                            {(() => {
+                              const parsed = parseMcqQuestion(q as any);
+                              const hasStatements = parsed.statements && parsed.statements.length > 0;
+                              return (
+                                <>
+                                  <h4
+                                    className={`font-black text-white leading-relaxed ${
+                                      isProjector
+                                        ? 'text-lg sm:text-2xl tracking-wide text-cyan-50'
+                                        : 'text-base sm:text-lg'
+                                    }`}
+                                    dangerouslySetInnerHTML={{
+                                      __html: parsed.questionHtml || q.question,
+                                    }}
+                                  />
+
+                                  {/* Render numbered statements for statement-based MCQs */}
+                                  {hasStatements && (
+                                    <div className="mt-3 space-y-2">
+                                      {parsed.statements.map((stmtHtml, sIdx) => (
+                                        <div
+                                          key={`live_stmt_${sIdx}`}
+                                          className={`p-2.5 sm:p-3 rounded-xl border flex items-start gap-2.5 leading-relaxed text-xs sm:text-sm font-semibold transition ${
+                                            isProjector
+                                              ? 'bg-slate-900/90 border-cyan-500/40 text-cyan-100 shadow-sm'
+                                              : 'bg-slate-900/80 border-indigo-500/40 text-indigo-100 shadow-sm'
+                                          }`}
+                                        >
+                                          <span
+                                            className={`w-6 h-6 rounded-lg font-black text-xs flex items-center justify-center shrink-0 mt-0.5 border ${
+                                              isProjector
+                                                ? 'bg-cyan-950 text-cyan-300 border-cyan-500/50'
+                                                : 'bg-indigo-950 text-indigo-300 border-indigo-500/40'
+                                            }`}
+                                          >
+                                            {sIdx + 1}
+                                          </span>
+                                          <div
+                                            className="flex-1 select-text"
+                                            dangerouslySetInnerHTML={{ __html: stmtHtml }}
+                                          />
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+
+                                  {/* Render closing suffix line if present */}
+                                  {parsed.suffixHtml && (
+                                    <div
+                                      className={`mt-2 font-bold italic ${
+                                        isProjector ? 'text-cyan-300 text-sm sm:text-base' : 'text-amber-300 text-xs sm:text-sm'
+                                      }`}
+                                      dangerouslySetInnerHTML={{ __html: parsed.suffixHtml }}
+                                    />
+                                  )}
+                                </>
+                              );
+                            })()}
                           </div>
 
                           {/* Options Grid */}
@@ -3645,8 +3927,8 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                             </div>
                           ) : hasAnsweredCurrentQ ? (
                             <div className="text-center text-xs font-medium text-slate-400">
-                              <span className="text-emerald-300 font-black flex items-center justify-center gap-1.5">
-                                <CheckCircle2 size={15} /> Uttar Lock Ho Gaya! Timer khatam hote hi agla sawal aayega ({mcqSecondsLeft}s)...
+                              <span className="text-indigo-300 font-black flex items-center justify-center gap-1.5">
+                                <CheckCircle2 size={15} /> Aapka Uttar Darj Ho Gaya! (Option {selectedOption !== null ? String.fromCharCode(65 + selectedOption) : ''} Chuna) • Timer khatam hote hi agla sawal aayega ({mcqSecondsLeft}s)...
                               </span>
                             </div>
                           ) : null}
@@ -3699,9 +3981,15 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                           <p className="font-bold text-slate-200 truncate text-[11px]">
                                             {m.name} {isCurrentUser && '(Aap)'}
                                           </p>
-                                          <p className="text-[10px] text-amber-400 font-black">
-                                            {userScore?.score || 0} pts • 🔥 {userScore?.currentStreak || 0}
-                                          </p>
+                                          {isReveal ? (
+                                            <p className="text-[10px] text-amber-400 font-black">
+                                              {userScore?.score || 0} pts • 🔥 {userScore?.currentStreak || 0}
+                                            </p>
+                                          ) : (
+                                            <p className="text-[10px] text-slate-400 font-semibold">
+                                              {m.id === currentRoom.hostId || m.isHost ? '👑 Host' : '🎓 Vidhyarthi'} • Live
+                                            </p>
+                                          )}
                                         </div>
                                       </div>
 
@@ -3725,10 +4013,10 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                             </div>
                                           ) : (
                                             <div className="flex flex-col items-end">
-                                              <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                                                ✅ Banaya
+                                              <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                                                ✅ Attempted
                                               </span>
-                                              <span className="text-[9px] text-amber-300 font-mono font-bold mt-0.5">
+                                              <span className="text-[9px] text-slate-400 font-mono mt-0.5">
                                                 ⚡ {ans.timeTakenSec.toFixed(1)}s me
                                               </span>
                                             </div>
@@ -3934,20 +4222,72 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                           </div>
                         </div>
 
-                        {/* ── QUESTION-BY-QUESTION DEEP REVIEW (Har Ek Sawal Ka Vishleshan) ── */}
+                        {/* ── QUESTION-BY-QUESTION DEEP REVIEW (Har Ek Sawal Ka Vishleshan: Kon Sahi Hua Kon Galat) ── */}
                         {questions.length > 0 && (
                           <div className="max-w-xl mx-auto text-left space-y-3 pt-2">
-                            <div className="flex items-center justify-between">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
                               <h4 className="text-xs font-black text-slate-200 flex items-center gap-1.5">
                                 <BookOpen size={14} className="text-emerald-400" /> Har Ek Sawal Ka Full Analysis & Answers
                               </h4>
-                              <span className="text-[11px] font-bold text-slate-400">
-                                {questions.length} Questions Review
-                              </span>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setReviewFilter('ALL')}
+                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
+                                    reviewFilter === 'ALL'
+                                      ? 'bg-indigo-600 text-white shadow'
+                                      : 'bg-slate-800 text-slate-400 hover:text-white'
+                                  }`}
+                                >
+                                  Sabhi ({questions.length})
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setReviewFilter('CORRECT')}
+                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
+                                    reviewFilter === 'CORRECT'
+                                      ? 'bg-emerald-600 text-white shadow'
+                                      : 'bg-slate-800 text-slate-400 hover:text-emerald-400'
+                                  }`}
+                                >
+                                  ✅ Sahi ({myScore?.correctCount || 0})
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setReviewFilter('WRONG')}
+                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
+                                    reviewFilter === 'WRONG'
+                                      ? 'bg-rose-600 text-white shadow'
+                                      : 'bg-slate-800 text-slate-400 hover:text-rose-400'
+                                  }`}
+                                >
+                                  ❌ Galat ({myScore?.wrongCount || 0})
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setReviewFilter('UNANSWERED')}
+                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
+                                    reviewFilter === 'UNANSWERED'
+                                      ? 'bg-amber-600 text-white shadow'
+                                      : 'bg-slate-800 text-slate-400 hover:text-amber-400'
+                                  }`}
+                                >
+                                  ⚪ Attempt Nahi ({Math.max(0, totalQ - (myScore?.correctCount || 0) - (myScore?.wrongCount || 0))})
+                                </button>
+                              </div>
                             </div>
 
                             <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
-                              {questions.map((questionItem, qIndex) => {
+                              {questions
+                                .map((q, idx) => ({ questionItem: q, qIndex: idx }))
+                                .filter(({ qIndex }) => {
+                                  const ans = allAnswersMap[qIndex]?.[user?.id || ''];
+                                  if (reviewFilter === 'CORRECT') return ans?.isCorrect === true;
+                                  if (reviewFilter === 'WRONG') return ans && ans.isCorrect === false;
+                                  if (reviewFilter === 'UNANSWERED') return !ans;
+                                  return true;
+                                })
+                                .map(({ questionItem, qIndex }) => {
                                 const qAnswers = allAnswersMap[qIndex] || {};
                                 const myAnswer = user?.id ? qAnswers[user.id] : null;
                                 const isExpanded = selectedReviewQIdx === qIndex;
@@ -4004,6 +4344,37 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                     {/* Expanded Detail View of Question */}
                                     {isExpanded && (
                                       <div className="pt-2 border-t border-slate-700/60 space-y-2 text-xs">
+                                        {/* Statement rendering if question has statements */}
+                                        {(() => {
+                                          const parsedRev = parseMcqQuestion(questionItem as any);
+                                          const hasRevStmts = parsedRev.statements && parsedRev.statements.length > 0;
+                                          if (!hasRevStmts) return null;
+                                          return (
+                                            <div className="space-y-1.5 mb-2 bg-slate-950/40 p-2.5 rounded-lg border border-slate-800">
+                                              {parsedRev.statements.map((sHtml, sIdx) => (
+                                                <div
+                                                  key={`rev_stmt_${sIdx}`}
+                                                  className="flex items-start gap-2 text-xs text-slate-200"
+                                                >
+                                                  <span className="w-4 h-4 rounded bg-indigo-900/80 text-indigo-300 font-black text-[10px] flex items-center justify-center shrink-0 mt-0.5">
+                                                    {sIdx + 1}
+                                                  </span>
+                                                  <div
+                                                    className="flex-1"
+                                                    dangerouslySetInnerHTML={{ __html: sHtml }}
+                                                  />
+                                                </div>
+                                              ))}
+                                              {parsedRev.suffixHtml && (
+                                                <p
+                                                  className="text-[11px] font-bold text-amber-300/90 italic pt-1"
+                                                  dangerouslySetInnerHTML={{ __html: parsedRev.suffixHtml }}
+                                                />
+                                              )}
+                                            </div>
+                                          );
+                                        })()}
+
                                         <div className="space-y-1">
                                           {questionItem.options.map((optText, optI) => {
                                             const isCorrectOpt = optI === questionItem.correctIndex;
@@ -4057,30 +4428,47 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                           </div>
                         )}
 
-                        {/* Action Buttons */}
-                        <div className="pt-3 flex flex-wrap items-center justify-center gap-2">
+                        {/* Action Buttons: Host can start next session in same room; Students see persistence note */}
+                        <div className="pt-3 flex flex-col items-center justify-center gap-3">
                           {isHost ? (
-                            <>
+                            <div className="flex flex-wrap items-center justify-center gap-2">
                               <button
-                                onClick={() => endLiveMcqBattle(currentRoom.id)}
-                                className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs active:scale-95 transition cursor-pointer flex items-center gap-1.5"
+                                type="button"
+                                onClick={async () => {
+                                  await resetLiveMcqToWaiting(currentRoom.id);
+                                }}
+                                className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs active:scale-95 transition cursor-pointer flex items-center gap-1.5 shadow-lg shadow-amber-900/30"
                               >
-                                <BookOpen size={14} /> Agla MCQ Lesson Chunein (Lobby Me Jayein)
+                                <Play size={14} className="fill-current" /> Agla / Naya MCQ Lesson Shuru Karein (Isi Room Me)
                               </button>
                               <button
-                                onClick={() => endLiveMcqBattle(currentRoom.id)}
-                                className="px-5 py-2.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-bold text-xs active:scale-95 transition cursor-pointer flex items-center gap-1.5"
+                                type="button"
+                                onClick={() => setActiveTab('CHAT')}
+                                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs active:scale-95 transition cursor-pointer flex items-center gap-1.5"
                               >
-                                <RotateCcw size={14} /> Reset Arena (Naya Battle)
+                                <MessageSquare size={14} /> Classroom Chat & Doubts
                               </button>
-                            </>
+                            </div>
                           ) : (
-                            <button
-                              onClick={() => setActiveTab('CHAT')}
-                              className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs active:scale-95 transition cursor-pointer flex items-center gap-1.5"
-                            >
-                              <MessageSquare size={14} /> Classroom Chat & Doubts Me Jayein
-                            </button>
+                            <div className="w-full space-y-2.5">
+                              <div className="p-3.5 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 text-center space-y-1">
+                                <p className="text-xs font-bold text-indigo-300 flex items-center justify-center gap-1.5">
+                                  <Clock size={14} className="text-amber-400" /> Host agla MCQ session isi room me shuru karenge to aap dobara attempt kar sakenge!
+                                </p>
+                                <p className="text-[11px] text-slate-400">
+                                  Aapka yeh result aur sabhi sawal aapke "MCQ Activity" me save ho chuke hain.
+                                </p>
+                              </div>
+                              <div className="flex items-center justify-center">
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveTab('CHAT')}
+                                  className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs active:scale-95 transition cursor-pointer flex items-center gap-1.5"
+                                >
+                                  <MessageSquare size={14} /> Classroom Chat & Doubts Me Jayein
+                                </button>
+                              </div>
+                            </div>
                           )}
                         </div>
                       </div>
