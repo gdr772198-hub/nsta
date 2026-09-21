@@ -47,6 +47,7 @@ import {
   Share2,
   Info,
   ChevronDown,
+  ChevronUp,
   Settings,
 } from 'lucide-react';
 import {
@@ -387,6 +388,23 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [autoAdvanceEnabled, setAutoAdvanceEnabled] = useState<boolean>(true);
   const [showLiveAnswersSheet, setShowLiveAnswersSheet] = useState<boolean>(false);
   const [showMobileChat, setShowMobileChat] = useState<boolean>(false);
+  const [isDiscussionCollapsed, setIsDiscussionCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('nst_hide_live_discussion') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleDiscussionCollapsed = (forceState?: boolean) => {
+    setIsDiscussionCollapsed((prev) => {
+      const next = typeof forceState === 'boolean' ? forceState : !prev;
+      try {
+        localStorage.setItem('nst_hide_live_discussion', String(next));
+      } catch {}
+      return next;
+    });
+  };
   const [showMobileRoomInfo, setShowMobileRoomInfo] = useState<boolean>(false);
   const [showMobileInvite, setShowMobileInvite] = useState<boolean>(false);
   const [showMobileHostControls, setShowMobileHostControls] = useState<boolean>(false);
@@ -2764,29 +2782,32 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                     </div>
                   </div>
 
-                  {/* Invite & Share Bar (No Instagram) */}
-                  <div className="mb-4 p-3 rounded-2xl bg-slate-900/90 border border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
-                    <div className="flex items-center gap-2">
+                  {/* Invite & Share Bar: All Buttons in Single Line */}
+                  <div className="mb-4 p-2.5 sm:p-3 rounded-2xl bg-slate-900/90 border border-slate-800 flex items-center justify-between gap-2 overflow-x-auto no-scrollbar">
+                    <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 whitespace-nowrap">
                       <span className="text-xs font-bold text-slate-300">👥 Doston ko bulayein:</span>
                       <span className="font-mono text-xs font-black text-amber-400 bg-amber-950/60 px-2 py-0.5 rounded-lg border border-amber-500/30">
                         Code: {currentRoom.code}
                       </span>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-1.5 shrink-0 whitespace-nowrap">
                       <button
+                        type="button"
                         onClick={handleCopyCode}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 active:scale-95 transition cursor-pointer"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 active:scale-95 transition cursor-pointer shrink-0"
                       >
                         {copiedCode ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
                         <span>{copiedCode ? 'Copied' : 'Copy Code'}</span>
                       </button>
                       {isHost && (
                         <button
+                          type="button"
                           onClick={() => setActiveTab('MCQ')}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md active:scale-95 transition cursor-pointer"
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md active:scale-95 transition cursor-pointer shrink-0"
                           title="Wahi se koi bhi lesson ka MCQ start karein"
                         >
-                          <Play size={13} /> Start Live MCQ
+                          <Play size={13} className="fill-current" />
+                          <span>Start Live MCQ</span>
                         </button>
                       )}
                     </div>
@@ -4596,57 +4617,92 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               )}
             </div>
 
-            {/* ── SIDE PANEL: ROOM CHAT & DOUBTS ── */}
-            <div className={`w-full md:w-80 flex flex-col bg-slate-950/60 shrink-0 ${
-              isMcqRunning && !showMobileChat ? 'h-auto md:h-auto' : 'h-64 md:h-auto'
+            {/* ── SIDE PANEL / BOTTOM BAR: ROOM CHAT & DOUBTS (Hide / Expand on Tap) ── */}
+            <div className={`w-full md:w-80 flex flex-col bg-slate-950/90 shrink-0 border-t md:border-t-0 md:border-l border-slate-800 transition-all duration-200 ${
+              isDiscussionCollapsed ? 'h-auto' : 'h-64 md:h-auto'
             }`}>
               <div
-                onClick={() => {
-                  if (isMcqRunning) setShowMobileChat(!showMobileChat);
-                }}
-                className={`flex items-center justify-between px-3 py-2 border-b border-slate-800 bg-slate-900/50 ${
-                  isMcqRunning ? 'cursor-pointer select-none' : ''
-                }`}
+                onClick={() => toggleDiscussionCollapsed()}
+                className="flex items-center justify-between px-3 py-2 sm:py-2.5 border-b border-slate-800 bg-slate-900/90 cursor-pointer select-none hover:bg-slate-800/80 transition"
+                title={isDiscussionCollapsed ? "Live Discussion kholne ke liye tap karein" : "Live Discussion hide/niche karne ke liye tap karein"}
               >
-                <div className="flex items-center gap-1.5">
-                  <MessageSquare size={14} className="text-indigo-400" />
-                  <span className="text-xs font-black text-white">Live Discussion</span>
-                  {isMcqRunning && (
-                    <span className="md:hidden text-[10px] text-indigo-400 font-bold ml-1">
-                      {showMobileChat ? '▴ Hide' : '▾ Tap to Chat'}
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  <MessageSquare size={14} className="text-indigo-400 shrink-0" />
+                  <span className="text-xs font-black text-white whitespace-nowrap">Live Discussion</span>
+                  {isDiscussionCollapsed ? (
+                    <span className="text-[10px] text-indigo-300 font-bold bg-indigo-950/70 border border-indigo-500/30 px-2 py-0.5 rounded-full flex items-center gap-1 whitespace-nowrap">
+                      Tap to Chat ▴
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-400 font-medium hidden sm:inline whitespace-nowrap">
+                      Charcha & Doubts
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-1 text-[10px]">
+
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  {!isDiscussionCollapsed && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setChatFilter('ALL');
+                        }}
+                        className={`px-2 py-0.5 rounded cursor-pointer ${
+                          chatFilter === 'ALL' ? 'bg-slate-700 text-white font-bold' : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setChatFilter('DOUBTS');
+                        }}
+                        className={`px-2 py-0.5 rounded cursor-pointer ${
+                          chatFilter === 'DOUBTS'
+                            ? 'bg-amber-600/30 text-amber-300 font-bold border border-amber-500/40'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        💡 Doubts
+                      </button>
+                    </>
+                  )}
+
+                  {/* Hide / Collapse Toggle Button */}
                   <button
+                    type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setChatFilter('ALL');
+                      toggleDiscussionCollapsed();
                     }}
-                    className={`px-2 py-0.5 rounded cursor-pointer ${
-                      chatFilter === 'ALL' ? 'bg-slate-700 text-white font-bold' : 'text-slate-400 hover:text-white'
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer whitespace-nowrap ${
+                      isDiscussionCollapsed
+                        ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm'
+                        : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700'
                     }`}
+                    title={isDiscussionCollapsed ? "Live Discussion Kholein (Bara Karein)" : "Live Discussion Chhupayein (Niche Bhejein)"}
                   >
-                    All
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setChatFilter('DOUBTS');
-                    }}
-                    className={`px-2 py-0.5 rounded cursor-pointer ${
-                      chatFilter === 'DOUBTS'
-                        ? 'bg-amber-600/30 text-amber-300 font-bold border border-amber-500/40'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    💡 Doubts
+                    {isDiscussionCollapsed ? (
+                      <>
+                        <ChevronUp size={13} className="text-white" />
+                        <span>Kholein (Open)</span>
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown size={13} className="text-slate-400" />
+                        <span>Hide</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
 
-              {/* Message Feed & Input (Collapsible on mobile during running MCQ) */}
-              <div className={`${isMcqRunning && !showMobileChat ? 'hidden md:flex' : 'flex'} flex-1 flex-col overflow-hidden`}>
+              {/* Message Feed & Input (Collapsible on tap when isDiscussionCollapsed is true) */}
+              <div className={`${isDiscussionCollapsed ? 'hidden' : 'flex'} flex-1 flex-col overflow-hidden`}>
                 <div className="flex-1 overflow-y-auto p-3 space-y-2.5 max-h-48 md:max-h-none">
                   {currentRoom.chat &&
                     Object.entries(currentRoom.chat)
