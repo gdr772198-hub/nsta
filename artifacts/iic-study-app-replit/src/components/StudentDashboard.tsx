@@ -231,7 +231,7 @@ import {
   Loader2,
   Radio,
 } from "lucide-react";
-import { FaInstagram, FaWhatsapp, FaYoutube } from "react-icons/fa";
+import { FaWhatsapp, FaYoutube } from "react-icons/fa";
 import { SiGmail } from "react-icons/si";
 import { speakText, stopSpeech, stripHtml } from "../utils/textToSpeech";
 import { parseMCQText, normalizeMcqPaste, extractStatements } from "../utils/mcqParser";
@@ -14853,19 +14853,6 @@ export const StudentDashboard: React.FC<Props> = ({
                    <FaYoutube size={18} />
                  </span>
                  <span className="text-[10px] font-bold" style={{ color: _pTxtSubColor }}>YouTube</span>
-               </a>
-               <a
-                 href="https://www.instagram.com/thenadimanwarx?igsi=Z3hxbXE2dnZ3c3g3"
-                 target="_blank"
-                 rel="noopener noreferrer"
-                 aria-label="Developer Instagram"
-                 className="flex flex-col items-center justify-center py-2.5 rounded-xl transition-all active:scale-95"
-                  style={{ background: 'rgba(236,72,153,0.08)', border: '1px solid rgba(236,72,153,0.22)' }}
-               >
-                  <span className="w-9 h-9 rounded-full flex items-center justify-center mb-1" style={{ background: 'rgba(236,72,153,0.16)', color: '#f472b6' }}>
-                   <FaInstagram size={18} />
-                 </span>
-                 <span className="text-[10px] font-bold" style={{ color: _pTxtSubColor }}>Instagram</span>
                </a>
                <a
                  href={`mailto:${SUPPORT_EMAIL}?subject=Support%20Request`}

@@ -154,6 +154,7 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [adminReplyPostId, setAdminReplyPostId] = useState<string | null>(null);
   const [adminReplyText, setAdminReplyText] = useState<string>('');
+  const [inlineAdminReplyInputs, setInlineAdminReplyInputs] = useState<Record<string, string>>({});
   const [adminReplyStatus, setAdminReplyStatus] = useState<'open' | 'replied' | 'resolved'>('resolved');
   const [adminReplyTag, setAdminReplyTag] = useState<string>('Galti Sudhar Di');
   const [isSubmittingAdminReply, setIsSubmittingAdminReply] = useState<boolean>(false);
@@ -417,7 +418,8 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
 
   // Admin Submit Inline Reply for Notes Fix
   const handleAdminSubmitReply = async (post: CommunityPost) => {
-    if (!adminReplyText.trim()) {
+    const textToSubmit = ((typeof inlineAdminReplyInputs !== 'undefined' && inlineAdminReplyInputs ? inlineAdminReplyInputs[post.id] : '') || adminReplyText || '').trim();
+    if (!textToSubmit) {
       showToast('⚠️ Kripya reply text likhein!');
       return;
     }
@@ -425,11 +427,11 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
     setIsSubmittingAdminReply(true);
     try {
       if (post.isSuggestionItem || post.originalSuggestionId) {
-        await adminReplySuggestion(suggId, adminReplyText.trim(), adminReplyTag, adminReplyStatus);
+        await adminReplySuggestion(suggId, textToSubmit, adminReplyTag, adminReplyStatus);
       } else {
         const postRef = ref(rtdb, `community_posts/${post.id}`);
         await update(postRef, {
-          adminReply: adminReplyText.trim(),
+          adminReply: textToSubmit,
           adminReplyAt: new Date().toISOString(),
           adminTag: adminReplyTag,
           status: adminReplyStatus === 'resolved' ? 'RESOLVED' : 'REPLIED',
@@ -438,6 +440,7 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
       showToast('✅ Admin reply safaltapoorvak bhej diya gaya!');
       setAdminReplyPostId(null);
       setAdminReplyText('');
+      setInlineAdminReplyInputs((prev) => ({ ...prev, [post.id]: '' }));
     } catch (e: any) {
       console.error('Error sending admin reply:', e);
       showToast('❌ Reply bhejne me error aaya: ' + (e.message || ''));
@@ -1888,10 +1891,11 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
                     <div className="flex gap-1.5">
                       <input
                         type="text"
-                        value={inlineAdminReplyInputs[post.id] || ''}
+                        value={(typeof inlineAdminReplyInputs !== 'undefined' && inlineAdminReplyInputs ? inlineAdminReplyInputs[post.id] : '') || ''}
                         onChange={(e) =>
+                          typeof setInlineAdminReplyInputs === 'function' &&
                           setInlineAdminReplyInputs((prev) => ({
-                            ...prev,
+                            ...(prev || {}),
                             [post.id]: e.target.value,
                           }))
                         }

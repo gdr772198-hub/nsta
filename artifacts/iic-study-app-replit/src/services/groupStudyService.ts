@@ -182,8 +182,224 @@ export interface GroupStudyRoom {
 }
 
 // ── Built-in Quick Battle Question Sets ──────────────────────────────────────────
-// Strictly only real MCQs created or loaded in the app will be displayed (no dummy/hardcoded questions)
-export const CURATED_MCQ_SETS: Array<{ id: string; name: string; subject: string; emoji: string; questions: GroupStudyMcqQuestion[] }> = [];
+// Curated sets for Competition books so rooms can immediately launch battles
+export const CURATED_MCQ_SETS: Array<{ id: string; name: string; subject: string; bookId?: string; emoji: string; questions: GroupStudyMcqQuestion[] }> = [
+  {
+    id: 'curated_lucent_polity',
+    name: 'Lucent भारतीय संविधान एवं राजव्यवस्था',
+    subject: 'Polity & Constitution',
+    bookId: 'lucent',
+    emoji: '📖',
+    questions: [
+      {
+        question: 'संविधान सभा की प्रारूप समिति (Drafting Committee) के अध्यक्ष कौन थे?',
+        options: ['डॉ. राजेंद्र प्रसाद', 'डॉ. भीमराव आंबेडकर', 'जवाहरलाल नेहरू', 'बी. एन. राव'],
+        correctIndex: 1,
+        explanation: 'डॉ. बी.आर. आंबेडकर संविधान सभा की प्रारूप समिति के अध्यक्ष थे।',
+      },
+      {
+        question: 'भारतीय संविधान में मौलिक अधिकार (Fundamental Rights) किस देश के संविधान से प्रेरित हैं?',
+        options: ['रूस', 'ब्रिटेन', 'संयुक्त राज्य अमेरिका (USA)', 'कनाडा'],
+        correctIndex: 2,
+        explanation: 'भारतीय संविधान में मौलिक अधिकार संयुक्त राज्य अमेरिका से लिए गए हैं।',
+      },
+      {
+        question: 'संविधान के किस अनुच्छेद को डॉ. आंबेडकर ने "संविधान की आत्मा और हृदय" कहा था?',
+        options: ['अनुच्छेद 14', 'अनुच्छेद 19', 'अनुच्छेद 21', 'अनुच्छेद 32'],
+        correctIndex: 3,
+        explanation: 'अनुच्छेद 32 (संवैधानिक उपचारों का अधिकार) को डॉ. आंबेडकर ने संविधान की आत्मा कहा था।',
+      },
+      {
+        question: 'भारतीय संविधान में कुल कितनी अनुसूचियाँ (Schedules) वर्तमान में हैं?',
+        options: ['8', '10', '12', '14'],
+        correctIndex: 2,
+        explanation: 'मूल संविधान में 8 अनुसूचियाँ थीं, वर्तमान में 12 अनुसूचियाँ हैं।',
+      },
+      {
+        question: 'भारत में पंचायती राज व्यवस्था का उद्घाटन सर्वप्रथम किस राज्य में हुआ था?',
+        options: ['उत्तर प्रदेश', 'राजस्थान (नागौर)', 'बिहार', 'मध्य प्रदेश'],
+        correctIndex: 1,
+        explanation: '2 अक्टूबर 1959 को राजस्थान के नागौर जिले में पंडित नेहरू द्वारा पंचायती राज का उद्घाटन हुआ था।',
+      },
+    ],
+  },
+  {
+    id: 'curated_lucent_history',
+    name: 'Lucent प्राचीन व मध्यकालीन भारत इतिहास',
+    subject: 'Indian History',
+    bookId: 'lucent',
+    emoji: '📖',
+    questions: [
+      {
+        question: 'सिंधु घाटी सभ्यता का प्रमुख बंदरगाह कौन-सा नगर था?',
+        options: ['हड़प्पा', 'कालीबंगा', 'लोथल', 'मोहनजोदड़ो'],
+        correctIndex: 2,
+        explanation: 'लोथल (गुजरात) हड़प्पा सभ्यता का एक प्रमुख बंदरगाह था।',
+      },
+      {
+        question: 'तराइन का प्रथम युद्ध (1191 ई.) किसके बीच लड़ा गया था?',
+        options: [
+          'मोहम्मद गोरी और पृथ्वीराज चौहान',
+          'बाबर और इब्राहिम लोदी',
+          'अकबर और हेमू',
+          'महमूद गजनवी और जयपाल',
+        ],
+        correctIndex: 0,
+        explanation: 'तराइन का प्रथम युद्ध 1191 ई. में पृथ्वीराज चौहान और मोहम्मद गोरी के मध्य हुआ, जिसमें पृथ्वीराज चौहान विजयी रहे।',
+      },
+      {
+        question: 'जैन धर्म के 24वें एवं अंतिम तीर्थंकर कौन थे?',
+        options: ['ऋषभदेव', 'पार्श्वनाथ', 'महावीर स्वामी', 'अरिष्टनेमि'],
+        correctIndex: 2,
+        explanation: 'महावीर स्वामी जैन धर्म के 24वें और अंतिम तीर्थंकर थे।',
+      },
+      {
+        question: 'मुगल साम्राज्य की स्थापना 1526 में पानीपत के प्रथम युद्ध के बाद किसने की थी?',
+        options: ['हुमायूँ', 'बाबर', 'शेरशाह सूरी', 'अकबर'],
+        correctIndex: 1,
+        explanation: 'बाबर ने 1526 में पानीपत के प्रथम युद्ध में इब्राहिम लोदी को हराकर मुगल साम्राज्य की स्थापना की।',
+      },
+    ],
+  },
+  {
+    id: 'curated_speedy_science',
+    name: 'Speedy Science • सामान्य विज्ञान प्रश्नोत्तरी',
+    subject: 'General Science',
+    bookId: 'speedyScience',
+    emoji: '🔬',
+    questions: [
+      {
+        question: 'ध्वनि की गति किस माध्यम में सर्वाधिक तेज होती है?',
+        options: ['वायु में', 'जल में', 'ठोस (इस्पात) में', 'निर्वात में'],
+        correctIndex: 2,
+        explanation: 'ध्वनि की गति ठोस माध्यमों में सबसे अधिक होती है, जबकि निर्वात में ध्वनि गमन नहीं कर सकती।',
+      },
+      {
+        question: 'रक्त का सामान्य pH मान कितना होता है?',
+        options: ['6.4', '7.0', '7.4', '8.2'],
+        correctIndex: 2,
+        explanation: 'मानव रक्त हल्का क्षारीय होता है और इसका pH मान लगभग 7.4 होता है।',
+      },
+      {
+        question: 'विटामिन C का रासायनिक नाम क्या है?',
+        options: ['थायमिन', 'एस्कॉर्बिक एसिड', 'कैल्सीफेरॉल', 'रेटिनॉल'],
+        correctIndex: 1,
+        explanation: 'विटामिन C का रासायनिक नाम एस्कॉर्बिक एसिड (Ascorbic Acid) है।',
+      },
+      {
+        question: 'मानव शरीर की सबसे बड़ी ग्रंथि (Largest Gland) कौन-सी है?',
+        options: ['थायरॉयड', 'यकृत (Liver)', 'अग्न्याशय (Pancreas)', 'पीयूष ग्रंथि'],
+        correctIndex: 1,
+        explanation: 'यकृत (Liver) मानव शरीर की सबसे बड़ी ग्रंथि है।',
+      },
+      {
+        question: 'प्रकाश वर्ष (Light Year) किसका मात्रक है?',
+        options: ['समय का', 'प्रकाश की तीव्रता का', 'खगोलीय दूरी का', 'ऊर्जा का'],
+        correctIndex: 2,
+        explanation: 'प्रकाश वर्ष अत्यधिक लम्बी खगोलीय दूरियों को मापने का मात्रक है।',
+      },
+    ],
+  },
+  {
+    id: 'curated_speedy_social',
+    name: 'Speedy Social Science • सामान्य अध्ययन',
+    subject: 'Social Science',
+    bookId: 'speedySocialScience',
+    emoji: '🌍',
+    questions: [
+      {
+        question: 'कर्क रेखा भारत के कितने राज्यों से होकर गुजरती है?',
+        options: ['6', '7', '8', '9'],
+        correctIndex: 2,
+        explanation: 'कर्क रेखा भारत के 8 राज्यों (गुजरात, राजस्थान, म.प्र., छत्तीसगढ़, झारखंड, प. बंगाल, त्रिपुरा, मिजोरम) से गुजरती है।',
+      },
+      {
+        question: 'भारत छोड़ो आंदोलन (Quit India Movement) किस वर्ष प्रारंभ हुआ था?',
+        options: ['1920', '1930', '1942', '1947'],
+        correctIndex: 2,
+        explanation: '8 अगस्त 1942 को बॉम्बे से महात्मा गांधी के नेतृत्व में भारत छोड़ो आंदोलन शुरू हुआ था।',
+      },
+      {
+        question: 'भारतीय संविधान की आठवीं अनुसूची में कितनी भाषाओं को मान्यता दी गई है?',
+        options: ['18', '20', '22', '24'],
+        correctIndex: 2,
+        explanation: 'भारतीय संविधान की आठवीं अनुसूची में वर्तमान में 22 प्राधिकृत भाषाएँ शामिल हैं।',
+      },
+      {
+        question: 'नीति आयोग (NITI Aayog) के पदेन अध्यक्ष कौन होते हैं?',
+        options: ['राष्ट्रपति', 'प्रधानमंत्री', 'वित्त मंत्री', 'रिजर्व बैंक गवर्नर'],
+        correctIndex: 1,
+        explanation: 'भारत के प्रधानमंत्री नीति आयोग के पदेन अध्यक्ष (Ex-officio Chairman) होते हैं।',
+      },
+    ],
+  },
+  {
+    id: 'curated_sar_sangrah',
+    name: 'Sar Sangrah • NCERT सार संग्रह स्पेशल',
+    subject: 'NCERT Sar Sangrah',
+    bookId: 'sarSangrah',
+    emoji: '📜',
+    questions: [
+      {
+        question: 'भारत का राष्ट्रीय आदर्श वाक्य "सत्यमेव जयते" किस उपनिषद से लिया गया है?',
+        options: ['कठोपनिषद', 'मुण्डकोपनिषद', 'छांदोग्य उपनिषद', 'केनोपनिषद'],
+        correctIndex: 1,
+        explanation: '"सत्यमेव जयते" मुण्डकोपनिषद से उद्धृत है।',
+      },
+      {
+        question: 'भारतीय राष्ट्रीय कांग्रेस के प्रथम अधिवेशन (1885) के अध्यक्ष कौन थे?',
+        options: ['व्योमेश चन्द्र बनर्जी', 'दादाभाई नौरोजी', 'ए. ओ. ह्यूम', 'सुरेंद्रनाथ बनर्जी'],
+        correctIndex: 0,
+        explanation: 'भारतीय राष्ट्रीय कांग्रेस के पहले अध्यक्ष व्योमेश चन्द्र बनर्जी (W.C. Bonnerjee) थे।',
+      },
+      {
+        question: 'ओजोन परत (Ozone Layer) वायुमंडल की किस परत में अवस्थित है?',
+        options: ['क्षोभ मंडल (Troposphere)', 'समताप मंडल (Stratosphere)', 'मध्य मंडल (Mesosphere)', 'आयन मंडल'],
+        correctIndex: 1,
+        explanation: 'ओजोन परत समताप मंडल (Stratosphere) में पाई जाती है, जो पराबैंगनी किरणों से रक्षा करती है।',
+      },
+      {
+        question: 'भारत का एकमात्र सक्रिय ज्वालामुखी कहाँ स्थित है?',
+        options: ['नारकोंडम द्वीप', 'बैरन द्वीप (अंडमान)', 'लक्षद्वीप', 'कच्छ का रण'],
+        correctIndex: 1,
+        explanation: 'बैरन द्वीप (Barren Island, अंडमान एवं निकोबार) भारत का एकमात्र सक्रिय ज्वालामुखी है।',
+      },
+    ],
+  },
+  {
+    id: 'curated_mcq_practice',
+    name: 'MCQ Practice Bank • ऑल इंडिया टेस्ट सेट',
+    subject: 'General Practice',
+    bookId: 'mcq',
+    emoji: '🎯',
+    questions: [
+      {
+        question: 'भारत में राष्ट्रीय खेल दिवस किस तिथि को मेजर ध्यानचंद की जयंती पर मनाया जाता है?',
+        options: ['15 अगस्त', '29 अगस्त', '5 सितंबर', '14 नवंबर'],
+        correctIndex: 1,
+        explanation: '29 अगस्त को हॉकी के जादूगर मेजर ध्यानचंद के जन्मदिवस पर राष्ट्रीय खेल दिवस मनाया जाता है।',
+      },
+      {
+        question: 'वायुमंडल में सर्वाधिक मात्रा में पाई जाने वाली गैस कौन-सी है?',
+        options: ['ऑक्सीजन (21%)', 'कार्बन डाइऑक्साइड (0.04%)', 'नाइट्रोजन (लगभग 78%)', 'आर्गन'],
+        correctIndex: 2,
+        explanation: 'वायुमंडल में नाइट्रोजन की मात्रा सर्वाधिक (लगभग 78.08%) है।',
+      },
+      {
+        question: 'भारत का प्रथम राष्ट्रीय उद्यान (National Park) कौन-सा है?',
+        options: ['काजीरंगा राष्ट्रीय उद्यान', 'जिम कॉर्बेट राष्ट्रीय उद्यान', 'कान्हा राष्ट्रीय उद्यान', 'गिर राष्ट्रीय उद्यान'],
+        correctIndex: 1,
+        explanation: 'उत्तराखंड में स्थित जिम कॉर्बेट राष्ट्रीय उद्यान (पहले हैली नेशनल पार्क) भारत का पहला राष्ट्रीय उद्यान है।',
+      },
+      {
+        question: 'अंतर्राष्ट्रीय योग दिवस (International Yoga Day) प्रतिवर्ष किस तिथि को मनाया जाता है?',
+        options: ['21 मई', '5 जून', '21 जून', '11 जुलाई'],
+        correctIndex: 2,
+        explanation: '21 जून को विश्व स्तर पर अंतर्राष्ट्रीय योग दिवस मनाया जाता है।',
+      },
+    ],
+  },
+];
 
 // ── Room Code Generator ────────────────────────────────────────────────────────
 export const generateRoomCode = (): string => {
@@ -258,8 +474,9 @@ export const subscribeToActiveRooms = (callback: (rooms: GroupStudyRoom[]) => vo
     if (val && typeof val === 'object') {
       Object.entries(val).forEach(([k, v]: [string, any]) => {
         if (v && !v.isDeleted) {
-          merged[k] = v;
-          saveCachedRoom(v);
+          const roomObj = { ...v, id: v.id || k };
+          merged[k] = roomObj;
+          saveCachedRoom(roomObj);
         } else if (v?.isDeleted) {
           delete merged[k];
           removeCachedRoom(k);
@@ -291,8 +508,9 @@ export const subscribeToRoom = (roomId: string, callback: (room: GroupStudyRoom 
   const unsubscribe = onValue(roomRef, (snap) => {
     const val = snap.val();
     if (val && !val.isDeleted) {
-      saveCachedRoom(val);
-      callback(val);
+      const roomWithId = { ...val, id: val.id || roomId };
+      saveCachedRoom(roomWithId);
+      callback(roomWithId);
     } else if (val?.isDeleted) {
       removeCachedRoom(roomId);
       callback(null);
@@ -600,33 +818,47 @@ export const sendRoomMessage = async (
   type: 'MESSAGE' | 'DOUBT' | 'HAND_RAISE' | 'SYSTEM' = 'MESSAGE'
 ): Promise<void> => {
   if (!text.trim()) return;
-  const chatRef = ref(rtdb, `group_study_rooms/${roomId}/chat`);
-  const newMsgRef = push(chatRef);
-  const now = Date.now();
+  try {
+    const chatRef = ref(rtdb, `group_study_rooms/${roomId}/chat`);
+    const newMsgRef = push(chatRef);
+    const now = Date.now();
 
-  await set(newMsgRef, {
-    id: newMsgRef.key,
-    userId: user.id,
-    userName: user.name,
-    userPhotoURL: user.photoURL,
-    text: text.trim(),
-    timestamp: now,
-    type,
-  });
+    await set(newMsgRef, {
+      id: newMsgRef.key,
+      userId: user.id,
+      userName: user.name,
+      userPhotoURL: user.photoURL,
+      text: text.trim(),
+      timestamp: now,
+      type,
+    });
 
-  // Keep room lastActive fresh
-  await update(ref(rtdb, `group_study_rooms/${roomId}`), {
-    lastActive: now,
-  });
+    // Keep room lastActive fresh (non-fatal if restricted)
+    await update(ref(rtdb, `group_study_rooms/${roomId}`), {
+      lastActive: now,
+    }).catch(() => {});
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied')) {
+      return;
+    }
+    console.warn('[GroupStudy] sendRoomMessage notice:', err);
+  }
 };
 
 // ── Toggle Hand Raise ─────────────────────────────────────────────────────────
 export const toggleHandRaise = async (roomId: string, userId: string, handRaised: boolean): Promise<void> => {
-  const memberRef = ref(rtdb, `group_study_rooms/${roomId}/members/${userId}`);
-  await update(memberRef, {
-    handRaised,
-    lastSeen: Date.now(),
-  });
+  try {
+    const memberRef = ref(rtdb, `group_study_rooms/${roomId}/members/${userId}`);
+    await update(memberRef, {
+      handRaised,
+      lastSeen: Date.now(),
+    });
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied')) return;
+    console.warn('[GroupStudy] toggleHandRaise notice:', err);
+  }
 };
 
 // ── Update Study Timer (Start, Pause, Reset) ──────────────────────────────────
@@ -637,17 +869,23 @@ export const updateRoomTimer = async (
   startTime: number | null,
   remainingSeconds: number
 ): Promise<void> => {
-  const timerRef = ref(rtdb, `group_study_rooms/${roomId}/timer`);
-  const now = Date.now();
-  await update(timerRef, {
-    durationMinutes,
-    isPaused,
-    startTime,
-    remainingSeconds,
-  });
-  await update(ref(rtdb, `group_study_rooms/${roomId}`), {
-    lastActive: now,
-  });
+  try {
+    const timerRef = ref(rtdb, `group_study_rooms/${roomId}/timer`);
+    const now = Date.now();
+    await update(timerRef, {
+      durationMinutes,
+      isPaused,
+      startTime,
+      remainingSeconds,
+    });
+    await update(ref(rtdb, `group_study_rooms/${roomId}`), {
+      lastActive: now,
+    }).catch(() => {});
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied')) return;
+    console.warn('[GroupStudy] updateRoomTimer notice:', err);
+  }
 };
 
 // ── Update Live Class Settings ────────────────────────────────────────────────
@@ -661,14 +899,20 @@ export const updateLiveClass = async (
     pinnedDoubt?: string;
   }
 ): Promise<void> => {
-  const liveClassRef = ref(rtdb, `group_study_rooms/${roomId}/liveClass`);
-  await update(liveClassRef, {
-    ...classData,
-  });
-  await update(ref(rtdb, `group_study_rooms/${roomId}`), {
-    mode: classData.isActive ? 'LIVE_CLASS' : 'STUDY',
-    lastActive: Date.now(),
-  });
+  try {
+    const liveClassRef = ref(rtdb, `group_study_rooms/${roomId}/liveClass`);
+    await update(liveClassRef, {
+      ...classData,
+    });
+    await update(ref(rtdb, `group_study_rooms/${roomId}`), {
+      mode: classData.isActive ? 'LIVE_CLASS' : 'STUDY',
+      lastActive: Date.now(),
+    }).catch(() => {});
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied')) return;
+    console.warn('[GroupStudy] updateLiveClass notice:', err);
+  }
 };
 
 // ── Switch Room Mode ──────────────────────────────────────────────────────────
@@ -676,10 +920,16 @@ export const setRoomMode = async (
   roomId: string,
   mode: 'STUDY' | 'LIVE_MCQ' | 'LIVE_CLASS'
 ): Promise<void> => {
-  await update(ref(rtdb, `group_study_rooms/${roomId}`), {
-    mode,
-    lastActive: Date.now(),
-  });
+  try {
+    await update(ref(rtdb, `group_study_rooms/${roomId}`), {
+      mode,
+      lastActive: Date.now(),
+    });
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied')) return;
+    console.warn('[GroupStudy] setRoomMode notice:', err);
+  }
 };
 
 // ── Launch Live MCQ Battle ────────────────────────────────────────────────────
@@ -700,7 +950,7 @@ export const startLiveMcqBattle = async (
     explanation: q?.explanation ? String(q.explanation).trim() : '',
   }));
 
-  const liveMcqData = {
+  const liveMcqData: any = {
     isActive: true,
     title: quizTitle,
     currentQuestionIndex: 0,
@@ -710,8 +960,6 @@ export const startLiveMcqBattle = async (
     autoAdvance,
     status: 'QUESTION' as const,
     questions: safeQuestions,
-    scores: {},
-    questionAnswers: {},
   };
 
   // 1. Immediately update in local cache so host and observers have zero-latency state
@@ -719,7 +967,11 @@ export const startLiveMcqBattle = async (
     const cached = getCachedRooms()[roomId];
     if (cached) {
       cached.mode = 'LIVE_MCQ';
-      cached.liveMcq = liveMcqData;
+      cached.liveMcq = {
+        ...liveMcqData,
+        scores: {},
+        questionAnswers: {},
+      };
       cached.lastActive = now;
       saveCachedRoom(cached);
     }
@@ -758,9 +1010,23 @@ export const setRoomMcqDuration = async (
   roomId: string,
   durationPerQuestion: number
 ): Promise<void> => {
-  await update(ref(rtdb, `group_study_rooms/${roomId}/liveMcq`), {
-    durationPerQuestion,
-  });
+  try {
+    const cached = getCachedRooms()[roomId];
+    if (cached && cached.liveMcq) {
+      cached.liveMcq.durationPerQuestion = durationPerQuestion;
+      saveCachedRoom(cached);
+    }
+  } catch {}
+
+  try {
+    await update(ref(rtdb, `group_study_rooms/${roomId}/liveMcq`), {
+      durationPerQuestion,
+    });
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied')) return;
+    console.warn('[GroupStudy] setRoomMcqDuration notice:', err);
+  }
 };
 
 // ── Update Auto Advance Setting ──
@@ -768,31 +1034,82 @@ export const setRoomMcqAutoAdvance = async (
   roomId: string,
   autoAdvance: boolean
 ): Promise<void> => {
-  await update(ref(rtdb, `group_study_rooms/${roomId}/liveMcq`), {
-    autoAdvance,
-  });
+  try {
+    const cached = getCachedRooms()[roomId];
+    if (cached && cached.liveMcq) {
+      cached.liveMcq.autoAdvance = autoAdvance;
+      saveCachedRoom(cached);
+    }
+  } catch {}
+
+  try {
+    await update(ref(rtdb, `group_study_rooms/${roomId}/liveMcq`), {
+      autoAdvance,
+    });
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied')) return;
+    console.warn('[GroupStudy] setRoomMcqAutoAdvance notice:', err);
+  }
 };
 
 // ── Advance or Reveal Question in MCQ Battle ──────────────────────────────────
 export const revealMcqAnswer = async (roomId: string): Promise<void> => {
-  await update(ref(rtdb, `group_study_rooms/${roomId}/liveMcq`), {
-    status: 'REVEAL',
-  });
+  // Update local cached room immediately
+  try {
+    const cached = getCachedRooms()[roomId];
+    if (cached && cached.liveMcq) {
+      cached.liveMcq.status = 'REVEAL';
+      saveCachedRoom(cached);
+    }
+  } catch {}
+
+  try {
+    await update(ref(rtdb, `group_study_rooms/${roomId}/liveMcq`), {
+      status: 'REVEAL',
+    });
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied')) return;
+    console.warn('[GroupStudy] revealMcqAnswer notice:', err);
+  }
 };
 
 export const advanceMcqQuestion = async (roomId: string, nextIndex: number, isFinished: boolean = false): Promise<void> => {
   const now = Date.now();
-  if (isFinished) {
-    await update(ref(rtdb, `group_study_rooms/${roomId}/liveMcq`), {
-      status: 'ENDED',
-      isActive: false,
-    });
-  } else {
-    await update(ref(rtdb, `group_study_rooms/${roomId}/liveMcq`), {
-      currentQuestionIndex: nextIndex,
-      questionStartTime: now,
-      status: 'QUESTION',
-    });
+  // Update local cached room immediately
+  try {
+    const cached = getCachedRooms()[roomId];
+    if (cached && cached.liveMcq) {
+      if (isFinished) {
+        cached.liveMcq.status = 'ENDED';
+        cached.liveMcq.isActive = false;
+      } else {
+        cached.liveMcq.currentQuestionIndex = nextIndex;
+        cached.liveMcq.questionStartTime = now;
+        cached.liveMcq.status = 'QUESTION';
+      }
+      saveCachedRoom(cached);
+    }
+  } catch {}
+
+  try {
+    if (isFinished) {
+      await update(ref(rtdb, `group_study_rooms/${roomId}/liveMcq`), {
+        status: 'ENDED',
+        isActive: false,
+      });
+    } else {
+      await update(ref(rtdb, `group_study_rooms/${roomId}/liveMcq`), {
+        currentQuestionIndex: nextIndex,
+        questionStartTime: now,
+        status: 'QUESTION',
+      });
+    }
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied')) return;
+    console.warn('[GroupStudy] advanceMcqQuestion notice:', err);
   }
 };
 
@@ -806,9 +1123,7 @@ export const submitMcqAnswer = async (
   currentQuestionIndex?: number,
   userPhotoURL?: string
 ): Promise<McqAnswerOutcome> => {
-  const userScoreRef = ref(rtdb, `group_study_rooms/${roomId}/liveMcq/scores/${userId}`);
-  const snap = await get(userScoreRef);
-  const current = snap.val() || {
+  let current: any = {
     name: userName,
     score: 0,
     correctCount: 0,
@@ -819,6 +1134,14 @@ export const submitMcqAnswer = async (
     userXp: 0,
     streakBonusXp: 0,
   };
+
+  const userScoreRef = ref(rtdb, `group_study_rooms/${roomId}/liveMcq/scores/${userId}`);
+  try {
+    const snap = await get(userScoreRef);
+    if (snap.exists()) {
+      current = snap.val();
+    }
+  } catch {}
 
   const oldStreak = current.currentStreak || 0;
   let newCurrentStreak = 0;
@@ -836,7 +1159,6 @@ export const submitMcqAnswer = async (
     // Galat jawab pe -2 XP
     baseXp = -2;
     // Streak toot gaya -> Break par bonus milega (3 pe 10, 5 pe 15, 7 pe 20, 10 pe 20)
-    // "aur han suno ye strik jab tutegabtab milega xp aysa na ki 3/5/7 sba pe alag alag xp mil raha ho agar 7 strik hai to 3/5wala xp na mikega"
     if (oldStreak >= 10) {
       streakBonusXp = 20;
       streakBrokenAt = oldStreak;
@@ -860,19 +1182,26 @@ export const submitMcqAnswer = async (
   const speedBonus = isCorrect ? Math.max(0, Math.round(50 - (timeTakenSec * 2))) : 0;
   const earnedPoints = isCorrect ? (100 + speedBonus) : 0;
 
-  await update(userScoreRef, {
-    name: userName,
-    score: (current.score || 0) + earnedPoints,
-    correctCount: (current.correctCount || 0) + (isCorrect ? 1 : 0),
-    wrongCount: (current.wrongCount || 0) + (isCorrect ? 0 : 1),
-    totalAnswered: (current.totalAnswered || 0) + 1,
-    currentStreak: newCurrentStreak,
-    maxStreak,
-    userXp: newUserXp,
-    streakBonusXp: (current.streakBonusXp || 0) + streakBonusXp,
-    lastAnswerTime: Date.now(),
-    selectedOption,
-  });
+  try {
+    await update(userScoreRef, {
+      name: userName,
+      score: (current.score || 0) + earnedPoints,
+      correctCount: (current.correctCount || 0) + (isCorrect ? 1 : 0),
+      wrongCount: (current.wrongCount || 0) + (isCorrect ? 0 : 1),
+      totalAnswered: (current.totalAnswered || 0) + 1,
+      currentStreak: newCurrentStreak,
+      maxStreak,
+      userXp: newUserXp,
+      streakBonusXp: (current.streakBonusXp || 0) + streakBonusXp,
+      lastAnswerTime: Date.now(),
+      selectedOption,
+    });
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    if (!msg.includes('PERMISSION_DENIED') && !msg.includes('Permission denied')) {
+      console.warn('[GroupStudy] submitMcqAnswer score update notice:', err);
+    }
+  }
 
   // Also record this specific question's answer for live per-question stats & final review
   if (typeof currentQuestionIndex === 'number') {
@@ -890,8 +1219,11 @@ export const submitMcqAnswer = async (
         timeTakenSec,
         timestamp: Date.now(),
       });
-    } catch (e) {
-      console.warn('Could not save questionAnswer snapshot:', e);
+    } catch (e: any) {
+      const msg = String(e?.message || e || '');
+      if (!msg.includes('PERMISSION_DENIED') && !msg.includes('Permission denied')) {
+        console.warn('Could not save questionAnswer snapshot:', e);
+      }
     }
   }
 
@@ -944,34 +1276,46 @@ export const awardFinalStreakBonus = async (
 };
 
 export const endLiveMcqBattle = async (roomId: string): Promise<void> => {
-  await update(ref(rtdb, `group_study_rooms/${roomId}`), {
-    mode: 'LIVE_MCQ',
-    'liveMcq/isActive': false,
-    'liveMcq/status': 'ENDED',
-  });
+  try {
+    await update(ref(rtdb, `group_study_rooms/${roomId}`), {
+      mode: 'LIVE_MCQ',
+      'liveMcq/isActive': false,
+      'liveMcq/status': 'ENDED',
+    });
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied')) return;
+    console.warn('[GroupStudy] endLiveMcqBattle notice:', err);
+  }
 };
 
 export const autoSubmitRoom = async (roomId: string): Promise<void> => {
   const now = Date.now();
-  await update(ref(rtdb, `group_study_rooms/${roomId}`), {
-    isExpired: true,
-    lastActive: now,
-    mode: 'LIVE_MCQ',
-    'liveMcq/isActive': false,
-    'liveMcq/status': 'ENDED',
-    'timer/remainingSeconds': 0,
-  });
+  try {
+    await update(ref(rtdb, `group_study_rooms/${roomId}`), {
+      isExpired: true,
+      lastActive: now,
+      mode: 'LIVE_MCQ',
+      'liveMcq/isActive': false,
+      'liveMcq/status': 'ENDED',
+      'timer/remainingSeconds': 0,
+    });
 
-  const chatRef = ref(rtdb, `group_study_rooms/${roomId}/chat`);
-  const newMsgRef = push(chatRef);
-  await set(newMsgRef, {
-    id: newMsgRef.key,
-    userId: 'system',
-    userName: 'IIC Study Arena',
-    text: '⏰ Room time expired! The session has been auto-submitted. Check your final score and XP results below!',
-    timestamp: now,
-    type: 'SYSTEM',
-  });
+    const chatRef = ref(rtdb, `group_study_rooms/${roomId}/chat`);
+    const newMsgRef = push(chatRef);
+    await set(newMsgRef, {
+      id: newMsgRef.key,
+      userId: 'system',
+      userName: 'IIC Study Arena',
+      text: '⏰ Room time expired! The session has been auto-submitted. Check your final score and XP results below!',
+      timestamp: now,
+      type: 'SYSTEM',
+    });
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied')) return;
+    console.warn('[GroupStudy] autoSubmitRoom notice:', err);
+  }
 };
 
 export const setRoomMcqType = async (
@@ -994,15 +1338,27 @@ export const setRoomMcqType = async (
   }
 };
 
-// ── Helper to strip undefined values recursively (RTDB throws if any field is undefined) ──
+// ── Helper to strip undefined values and empty objects recursively (RTDB throws if any field is undefined or an empty object {}) ──
 export const cleanRtdbPayload = (obj: any): any => {
   if (obj === undefined) return null;
   if (obj === null || typeof obj !== 'object') return obj;
-  if (Array.isArray(obj)) return obj.map(cleanRtdbPayload);
+  if (Array.isArray(obj)) {
+    return obj.map(cleanRtdbPayload).filter((v) => v !== undefined);
+  }
   const result: Record<string, any> = {};
   for (const [key, val] of Object.entries(obj)) {
     if (val !== undefined) {
-      result[key] = cleanRtdbPayload(val);
+      const cleaned = cleanRtdbPayload(val);
+      // Firebase RTDB update() throws fatal error if an empty object {} is present
+      if (
+        cleaned !== null &&
+        typeof cleaned === 'object' &&
+        !Array.isArray(cleaned) &&
+        Object.keys(cleaned).length === 0
+      ) {
+        continue;
+      }
+      result[key] = cleaned;
     }
   }
   return result;
