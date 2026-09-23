@@ -127,11 +127,21 @@ export const TodayMcqSession: React.FC<Props> = ({ user, topics, onClose, onComp
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [isProjectorMode, soundActive]);
 
-    // Timer
+    // Timer: Active MCQ session awards 30 XP per active minute (0 credit) per user mandate
     useEffect(() => {
-        const timer = setInterval(() => setTotalTime(prev => prev + 1), 1000);
+        const timer = setInterval(() => {
+            setTotalTime(prev => {
+                const next = prev + 1;
+                if (next > 0 && next % 60 === 0 && user?.id) {
+                    try {
+                        tryEarnScore(user.id, 30, user.subscriptionLevel, user.isPremium, 0, 'TODAY_MCQ_ACTIVE_TIME', undefined, undefined, 'Today MCQ Active Minute');
+                    } catch (_) {}
+                }
+                return next;
+            });
+        }, 1000);
         return () => clearInterval(timer);
-    }, []);
+    }, [user?.id, user?.subscriptionLevel, user?.isPremium]);
 
     // ── Load ALL topics upfront, then interleave ──────────────────────────
     useEffect(() => {
@@ -248,7 +258,7 @@ export const TodayMcqSession: React.FC<Props> = ({ user, topics, onClose, onComp
                 hapticCorrect();
                 const newStreak = mcqStreak + 1;
                 setMcqStreak(newStreak);
-                const pts = tryEarnScore(user.id, 2, _tier, _subValid, 0, 'REVISION_MCQ_CORRECT');
+                const pts = tryEarnScore(user.id, 5, _tier, _subValid, 0, 'REVISION_MCQ_CORRECT');
                 const bonus = getMcqStreakBonus(newStreak);
                 const bonusPts = bonus > 0 ? tryEarnScore(user.id, bonus, _tier, _subValid, 0, `REVISION_MCQ_STREAK_${newStreak}`) : 0;
                 const totalPts = pts + bonusPts;
@@ -275,14 +285,14 @@ export const TodayMcqSession: React.FC<Props> = ({ user, topics, onClose, onComp
                 playSoundWrong();
                 hapticWrong();
                 setMcqStreak(0);
-                subtractDailyScore(user.id, 1);
+                subtractDailyScore(user.id, 2);
                 const _u = userRef.current;
                 if (_u && onUpdateUser) {
-                    const updated = { ..._u, totalScore: Math.max(0, (_u.totalScore || 0) - 1) };
+                    const updated = { ..._u, totalScore: Math.max(0, (_u.totalScore || 0) - 2) };
                     onUpdateUser(updated);
                     saveUserToLive(updated);
                 }
-                showMcqScore(-1);
+                showMcqScore(-2);
             }
         }
 

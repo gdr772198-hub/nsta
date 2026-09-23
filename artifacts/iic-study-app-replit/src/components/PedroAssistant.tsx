@@ -1,6 +1,15 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Volume2, VolumeX, X, Sparkles, ChevronRight, RotateCcw, ArrowLeft, Move, HelpCircle, Compass } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { 
+  Volume2, VolumeX, X, Sparkles, ChevronRight, ChevronDown, ChevronUp, RotateCcw, 
+  ArrowLeft, Move, HelpCircle, Compass, Gift, Crown, Clock, Flame, Calendar, Bell, 
+  AlertTriangle, Check, Zap, Shield, Battery, BatteryCharging, Moon, Sun, BookOpen, 
+  Trophy, Award, Lock, Unlock, CheckCircle2, AlertCircle, Info 
+} from 'lucide-react';
+import { Pedro3DMascot, type PedroMascotPose } from './Pedro3DMascot';
 import type { PedroItemDetail, PedroCategory, PedroPageConfig } from '../types';
+import { loadRoutineData } from '../utils/routineStorage';
+import { PedroEngine, PEDRO_LEVELS, type PedroLevelConfig, type PedroEnergyStatus, type PedroPenaltyState } from '../utils/engines/pedroEngine';
+import { pedroSpeak, stopPedroVoice, playSoftChime } from '../utils/pedroVoiceManager';
 
 export type { PedroItemDetail, PedroCategory, PedroPageConfig };
 
@@ -10,63 +19,123 @@ export const PEDRO_PAGE_KNOWLEDGE: Record<string, PedroPageConfig> = {
     pageId: 'HOME',
     pageTitle: 'Home Screen',
     pageIcon: '🏠',
-    introSpeech: 'Hello! Main hoon Pedro, aapka smart robot guide! Home screen par aap kiske baare mein dekhna chahte hain? Option chuniye!',
+    introSpeech: 'Bataiye dost, kya madad karun?',
     categories: [
       {
         id: 'TOP_BAR',
         title: 'Top Bar',
         icon: '🔝',
-        description: 'Class switcher, guide, streak aur 3-dot tools.',
+        description: 'Brand logo, events, connection dots, 3-dots aur settings tools.',
         targetSelector: '#top-banner-container',
-        speechText: 'Yeh hai aapka Top Bar! Isme class switch karne, app guide, mailbox alerts aur 3-dot settings ke sare top tools milte hain. Kaunsa tool dekhna hai?',
+        speechText: 'Yeh Top Bar hai, yahan se important shortcuts milte hain.',
         items: [
           {
             id: 'APP_NAME_ASSEMBLE',
-            title: 'App Name & Assemble Animation',
+            title: 'App Logo & Naam',
             icon: '✨',
-            summary: 'App ke naam aur logo par tap karke home page assemble animation replay karein.',
-            speechText: 'Top bar me yeh hamare App ka Naam aur Logo hai! Is par tap karne se home page ka majestic assemble animation play hota hai aur page smoothly upar scroll ho jata hai.',
-            bullets: ['App logo aur verified badge.', 'Tap karne par assemble animation trigger hota hai.'],
+            summary: 'App logo aur brand title par tap karke home page assemble animation replay karein.',
+            speechText: 'Isse home assemble replay hoga.',
+            bullets: ['App logo aur verified badge.', 'Tap karne par majestic assemble animation trigger hota hai.'],
             targetSelector: '#nsta-header-brand-btn',
             actionKey: 'SIMULATE_APP_LOGO',
           },
           {
-            id: 'APP_GUIDE',
-            title: 'App User Guide',
-            icon: '📖',
-            summary: 'Poori app ki visual user manual aur feature explanations.',
-            speechText: 'App Guide button par tap karne se poori app ka step-by-step visual handbook khul jata hai, jisme har feature ka screen demo diya gaya hai.',
-            bullets: ['Step-by-step visual illustrations.', 'Naye students ke liye best guide.'],
-            targetSelector: '#topbar-app-guide-btn',
-            actionKey: 'SIMULATE_APP_GUIDE',
+            id: 'ROW2_USER_GREETING',
+            title: 'User Greeting & Naam (Row 2)',
+            icon: '👋',
+            summary: 'Top Bar Row 2 par aapka naam aur greeting: Hey, student name!',
+            speechText: 'Yeh Row 2 par aapka naam aur personalized greeting hai.',
+            bullets: ['Row 2 student greeting.', 'Pedro isse padhkar aapka swagat karta hai.'],
+            targetSelector: '#topbar-row2-greeting',
+            actionKey: 'READ_ROW2_NAME',
           },
           {
-            id: 'INBOX_MAIL',
-            title: 'Mailbox & Announcements',
-            icon: '📫',
-            summary: 'Admin ke zaroori notices, circulars aur gifts.',
-            speechText: 'Mailbox me teachers aur admin ki taraf se aane wale official updates, exam circulars aur bonus gift claims aate hain.',
-            bullets: ['Official notices aur exam timetables.', 'Special gift claims.'],
-            targetSelector: '#topbar-mail-btn',
-            actionKey: 'SIMULATE_MAILBOX',
+            id: 'WHATS_NEW_BADGE',
+            title: "What's New & Updates",
+            icon: '🎖️',
+            summary: 'Logo ke bagal wala blue badge naye updates aur feature releases ka hai.',
+            speechText: 'Yahan naye updates aur features milte hain.',
+            bullets: ['What\'s New direct shortcut.', 'Latest features and announcements.'],
+            targetSelector: '#top-banner-container',
+            actionKey: 'GO_UPDATES',
           },
           {
             id: 'EVENTS_STATUS',
-            title: 'Events & System Status',
+            title: 'Live Events & Booster Drawer',
             icon: '⚡',
-            summary: 'Live events, study streak aur cloud database connection dots.',
-            speechText: 'Yahan active score boost events, streak flame aur green dots database connection ka live status dikhate hain.',
-            bullets: ['Active events countdown.', 'Cloud connection status dots.'],
+            summary: 'Active score boosts, discount sales aur booster countdowns drawer.',
+            speechText: 'Yahan active score boosts aur discount events hain.',
+            bullets: ['Active events countdown.', 'Score booster details drawer.'],
             targetSelector: '#topbar-events-btn',
             actionKey: 'SIMULATE_EVENTS',
           },
           {
+            id: 'STATUS_DOTS',
+            title: 'System Health 5 Dots',
+            icon: '🛰️',
+            summary: 'Network, Connection, Account, Settings aur Content status indicators.',
+            speechText: 'Yeh 5 dots live system status dikhate hain.',
+            bullets: ['5 Cloud connection indicators.', 'Live system health monitor.'],
+            targetSelector: '#topbar-status-dots-btn',
+            actionKey: 'SIMULATE_STATUS_DOTS',
+          },
+          {
+            id: 'DOCKED_PEDRO',
+            title: 'Top Bar Docked Pedro Mascot',
+            icon: '🤖',
+            summary: 'Pedro robot on standby in top bar.',
+            speechText: 'Pedro paused, tap karke wapis bulayein.',
+            bullets: ['Pedro mascot standby.', 'Tap to summon Pedro anytime.'],
+            targetSelector: '#topbar-docked-pedro-btn',
+            actionKey: 'SIMULATE_PEDRO_RESTORE',
+          },
+          {
             id: 'THREE_DOTS',
-            title: '3-Dot Menu (Board Switcher & Tools)',
+            title: '3-Dot Menu Overview',
             icon: '⋮',
-            summary: 'Board switcher (NCERT / BSEB), theme changer aur system settings.',
-            speechText: 'Yeh dekhiye, 3-dot menu khul gaya! Iske andar sabse upar Board Switcher hai jahan se aap NCERT English, NCERT Hindi aur BSEB board switch kar sakte hain. Saath hi Day/Night themes aur rules bhi yahan se badal sakte hain.',
-            bullets: ['Board switcher (NCERT English, Hindi, BSEB).', 'Day/Night luxury themes.', 'Rules aur settings shortcuts.'],
+            summary: 'Board switcher, mailbox, score history aur theme changer menu.',
+            speechText: 'Yahan Board switch aur settings hain.',
+            bullets: ['All top bar shortcuts in one place.', 'Board switcher aur luxury themes.'],
+            targetSelector: '#topbar-3dots-btn',
+            actionKey: 'SIMULATE_3DOTS',
+          },
+          {
+            id: 'BOARD_SWITCHER',
+            title: 'Board Switcher (NCERT / BSEB)',
+            icon: '🎓',
+            summary: 'NCERT English, NCERT Hindi aur BSEB Bihar Board switch karein.',
+            speechText: 'Yahan se NCERT aur Bihar Board switch karein.',
+            bullets: ['NCERT English & Hindi mediums.', 'BSEB state board support.'],
+            targetSelector: '#topbar-3dots-btn',
+            actionKey: 'SIMULATE_BOARD_DROPDOWN',
+          },
+          {
+            id: 'MAILBOX_TOOL',
+            title: 'Mail Box & Free Rewards',
+            icon: '📬',
+            summary: 'Unread circulars, notices aur daily claimable free gift rewards.',
+            speechText: 'Yahan circulars aur free gift rewards hain.',
+            bullets: ['Official notices & study alerts.', 'Free coins aur daily rewards.'],
+            targetSelector: '#topbar-3dots-btn',
+            actionKey: 'SIMULATE_MAILBOX',
+          },
+          {
+            id: 'SCORE_HISTORY',
+            title: 'Score History & Level',
+            icon: '📊',
+            summary: 'Apne total score points, daily XP aur level tracking ledger.',
+            speechText: 'Yahan aapka daily XP aur score ledger hai.',
+            bullets: ['Daily points ledger.', 'Level progression overview.'],
+            targetSelector: '#topbar-3dots-btn',
+            actionKey: 'SIMULATE_3DOTS',
+          },
+          {
+            id: 'THEMES_TOOL',
+            title: 'Luxury Themes (Day / Night / Blue)',
+            icon: '🌙',
+            summary: 'Day mode, Dark black mode aur Midnight Blue themes.',
+            speechText: 'Yahan se Day aur Night themes badlein.',
+            bullets: ['Eye-comfort night themes.', 'Midnight Blue luxury styling.'],
             targetSelector: '#topbar-3dots-btn',
             actionKey: 'SIMULATE_3DOTS',
           }
@@ -79,14 +148,14 @@ export const PEDRO_PAGE_KNOWLEDGE: Record<string, PedroPageConfig> = {
         description: 'School classes 6th to 12th ka full syllabus aur chapters.',
         targetSelector: '#home-class-6-12-card',
         actionKey: 'SPOTLIGHT_CLASS_6_12',
-        speechText: 'Yeh hai Class 6 se 12 ka Selection Desk! Yahan se aap Class 6, 7, 8, 9, 10, 11 ya 12 me se apni class chun sakte hain. Chunne ke baad sare subjects aur chapter notes automatically load ho jate hain.',
+        speechText: 'Class 6 se 12 ke subjects chun lijiye.',
         items: [
           {
             id: 'CLASS_6_12_ITEM',
             title: 'Class 6-12 Desk',
             icon: '🏫',
             summary: 'Select your class from 6th to 12th.',
-            speechText: 'Yeh hai Class 6 se 12 ka Selection Desk! Yahan se aap Class 6, 7, 8, 9, 10, 11 ya 12 me se apni class chun sakte hain. Chunne ke baad sare subjects aur chapter notes automatically load ho jate hain.',
+            speechText: 'Class 6 se 12 ke subjects chun lijiye.',
             bullets: ['Class 6th se 12th tak sabhi classes.', 'NCERT aur State Board syllabus.'],
             targetSelector: '#home-class-6-12-card',
             actionKey: 'SPOTLIGHT_CLASS_6_12'
@@ -100,14 +169,14 @@ export const PEDRO_PAGE_KNOWLEDGE: Record<string, PedroPageConfig> = {
         description: 'Competitive · Govt. Exams preparation desk.',
         targetSelector: '#home-competition-card',
         actionKey: 'SIMULATE_COMPETITION',
-        speechText: 'Yeh hai Competitive aur Government Exams ka card! Isme SSC, Railway, Banking, Defense aur State exams ke syllabus, previous year papers aur comprehensive notes milte hain.',
+        speechText: 'Govt exams aur specialized tests yahan hain.',
         items: [
           {
             id: 'COMPETITION_ITEM',
             title: 'Competitive Exams',
             icon: '🎯',
             summary: 'SSC, Railway, Banking, Defense exams.',
-            speechText: 'Yeh hai Competitive aur Government Exams ka card! Isme SSC, Railway, Banking, Defense aur State exams ke syllabus, previous year papers aur comprehensive notes milte hain.',
+            speechText: 'Govt exams aur specialized tests yahan hain.',
             bullets: ['SSC, Railway, Banking, Defense exams.', 'Previous year papers aur full notes.'],
             targetSelector: '#home-competition-card',
             actionKey: 'SIMULATE_COMPETITION'
@@ -121,14 +190,14 @@ export const PEDRO_PAGE_KNOWLEDGE: Record<string, PedroPageConfig> = {
         description: 'Daily timetable, study targets aur habit streak.',
         targetSelector: '#home-routine-card',
         actionKey: 'SIMULATE_ROUTINE',
-        speechText: 'Yeh hai My Routine card! Is par tap karke aap apna daily timetable, study target aur habit streak track kar sakte hain taaki roz sahi time par focused padhai ho sake.',
+        speechText: 'Yahan aapka daily timetable aur targets hain.',
         items: [
           {
             id: 'ROUTINE_ITEM',
             title: 'My Routine Planner',
             icon: '⏰',
             summary: 'Daily timetable & study targets.',
-            speechText: 'Yeh hai My Routine card! Is par tap karke aap apna daily timetable, study target aur habit streak track kar sakte hain taaki roz sahi time par focused padhai ho sake.',
+            speechText: 'Yahan aapka daily timetable aur targets hain.',
             bullets: ['Daily study timetable.', 'Study target hours.', 'Habit streak.'],
             targetSelector: '#home-routine-card',
             actionKey: 'SIMULATE_ROUTINE'
@@ -142,14 +211,14 @@ export const PEDRO_PAGE_KNOWLEDGE: Record<string, PedroPageConfig> = {
         description: 'Fast revision, Lucent GK aur one-liner recall.',
         targetSelector: '#home-revision-card',
         actionKey: 'SIMULATE_REVISION',
-        speechText: 'Yeh hai Revision Hub card! Yahan se Lucent GK, quick formula sheets aur fast revision notes ek jagah milte hain taaki exam se pehle superfast revision ho sake.',
+        speechText: 'Fast revision aur quick formulas yahan hain.',
         items: [
           {
             id: 'REVISION_HUB_ITEM',
             title: 'Revision Hub',
             icon: '⚡',
             summary: 'Lucent GK & fast revision points.',
-            speechText: 'Yeh hai Revision Hub card! Yahan se Lucent GK, quick formula sheets aur fast revision notes ek jagah milte hain taaki exam se pehle superfast revision ho sake.',
+            speechText: 'Fast revision aur quick formulas yahan hain.',
             bullets: ['Lucent GK high-yield points.', 'Fast chapter summaries.'],
             targetSelector: '#home-revision-card',
             actionKey: 'SIMULATE_REVISION'
@@ -163,14 +232,14 @@ export const PEDRO_PAGE_KNOWLEDGE: Record<string, PedroPageConfig> = {
         description: 'Screen par floating quick actions wheel.',
         targetSelector: '#nsta-quick-fab',
         actionKey: 'SIMULATE_WHEEL',
-        speechText: 'Yeh hai screen par floating Feature Wheel! Is par tap karte hi ghumne wala circular wheel khulta hai jisse aap bina kisi page par jaye 10 important tools aur messenger turant use kar sakte hain.',
+        speechText: 'Screen par floating tools ka quick wheel hai.',
         items: [
           {
             id: 'FUTURE_WHEEL_ITEM',
             title: 'NSTA Quick Wheel',
             icon: '🎡',
             summary: '10 tools & messenger in floating wheel.',
-            speechText: 'Yeh hai screen par floating Feature Wheel! Is par tap karte hi ghumne wala circular wheel khulta hai jisse aap bina kisi page par jaye 10 important tools aur messenger turant use kar sakte hain.',
+            speechText: 'Screen par floating tools ka quick wheel hai.',
             bullets: ['10 tools instant finger reach par.', 'Floating draggable icon.'],
             targetSelector: '#nsta-quick-fab',
             actionKey: 'SIMULATE_WHEEL'
@@ -891,6 +960,16 @@ export const PEDRO_PAGE_KNOWLEDGE: Record<string, PedroPageConfig> = {
             speechText: 'Yeh aapka main Identity Card hai! Isme aapka current level, badge emoji, XP meter aur level discount dikhta hai. Tap karne par poora level ladder khulta hai!',
             targetSelector: '#profile-user-card',
             bullets: ['Level 1 se 15 ladder.', 'XP progress bar.', 'Level discount perks.']
+          },
+          {
+            id: 'PROFILE_CAMERA_ITEM',
+            title: 'Profile Camera & Photo',
+            icon: '📸',
+            summary: 'Camera se live photo ya gallery se profile picture lagayein.',
+            speechText: 'Camera button par tap karke aap apni live photo ya gallery photo ko profile pic bana sakte hain!',
+            targetSelector: '#profile-camera-btn',
+            bullets: ['Live camera capture option.', 'Gallery selection.', 'Instant profile photo update.'],
+            actionKey: 'OPEN_CAMERA'
           }
         ]
       },
@@ -1026,35 +1105,87 @@ export const PEDRO_PAGE_KNOWLEDGE: Record<string, PedroPageConfig> = {
 };
 
 // ══════════════════ SMART GREETING HELPER ══════════════════
-const getSmartGreeting = (robotName: string, pageTitle?: string, pageIntro?: string): { speech: string; isFirstToday: boolean } => {
-  const hour = new Date().getHours();
-  const timeGreeting = hour < 12 ? 'Good morning!' : hour < 17 ? 'Good afternoon!' : 'Good evening!';
-  const todayDate = new Date().toDateString();
-  const lastGreetDate = typeof window !== 'undefined' ? localStorage.getItem('nst_pedro_last_greet_date') : null;
-  const isFirstToday = lastGreetDate !== todayDate;
-
-  const targetName = pageTitle || 'Is screen';
-
-  if (isFirstToday) {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('nst_pedro_last_greet_date', todayDate);
-    }
-    return {
-      speech: `${timeGreeting} Main hoon ${robotName || 'Pedro'}! ${pageIntro || `${targetName} par aap kiske baare mein dekhna chahte hain? Option chuniye!`}`,
-      isFirstToday: true
-    };
+export const formatTimeMinSecHindi = (seconds: number): string => {
+  const safeSec = Math.max(0, Math.round(seconds));
+  const mins = Math.floor(safeSec / 60);
+  const secs = safeSec % 60;
+  if (mins > 0 && secs > 0) {
+    return `${mins} minute ${secs} second`;
+  } else if (mins > 0) {
+    return `${mins} minute`;
   } else {
-    return {
-      speech: `${timeGreeting} ${pageIntro || `${targetName} par aap kiske baare mein dekhna chahte hain? Option chuniye!`}`,
-      isFirstToday: false
-    };
+    return `${secs} second`;
   }
+};
+
+export const getRoutineSpeechSummary = (userId?: string, user?: any): string => {
+  const routineLines: string[] = [];
+
+  if (userId) {
+    try {
+      const routineData = loadRoutineData(userId);
+      if (routineData?.routineCategories && routineData.routineCategories.length > 0) {
+        routineData.routineCategories.forEach((cat) => {
+          const sub = cat.subjects?.[cat.currentSubjectIndex ?? 0];
+          if (sub) {
+            routineLines.push(`${cat.categoryName || sub.displayName}: Lesson ${sub.currentLessonIndex + 1}`);
+          }
+        });
+      } else if (routineData?.routineSlots && routineData.routineSlots.length > 0) {
+        routineData.routineSlots.forEach((slot) => {
+          routineLines.push(`${slot.displayName || slot.bookName}: Lesson ${slot.currentLessonIndex + 1}`);
+        });
+      }
+    } catch {}
+  }
+
+  const dailyTasks = user?.dailyRoutine?.tasks;
+  const taskDescriptions: string[] = [];
+  if (Array.isArray(dailyTasks) && dailyTasks.length > 0) {
+    dailyTasks.slice(0, 3).forEach((t: any) => {
+      taskDescriptions.push(`${t.title} (${t.duration} min)`);
+    });
+  }
+
+  if (routineLines.length > 0) {
+    return `Routine ke anusaar, aaj aapke yeh study tracks scheduled hain: ${routineLines.join(', ')}. ${
+      taskDescriptions.length > 0 ? `Saath hi daily practice tasks: ${taskDescriptions.join(', ')}.` : ''
+    } Routine poora karke maximum XP aur coins boost karein!`;
+  } else if (taskDescriptions.length > 0) {
+    return `Aaj aapke routine mein yeh tasks scheduled hain: ${taskDescriptions.join(', ')}. Routine ke anusaar padhai jaari rakhein!`;
+  } else {
+    return `Aapka Routine page open hai. Yahan daily timetable aur scheduled lessons set karke apni padhai ko track karein!`;
+  }
+};
+
+export const speakPedroVoice = (text: string, customPitch?: number, customRate?: number, isAutomated?: boolean) => {
+  pedroSpeak(text, {
+    isAutomated,
+    pitch: customPitch ?? 1.15,
+    rate: customRate ?? 1.08,
+    showBubble: true
+  });
+};
+
+const getSmartGreeting = (
+  _robotName?: string,
+  _pageTitle?: string,
+  _pageIntro?: string,
+  _userName?: string,
+  _streak?: number
+): { speech: string; isFirstToday: boolean } => {
+  return {
+    speech: 'Bataiye dost, kya madad karun?',
+    isFirstToday: false
+  };
 };
 
 // ══════════════════ INTERFACES ══════════════════
 interface PedroAssistantProps {
   isOpen: boolean;
   onClose: () => void;
+  isSystemGuideOpen?: boolean;
+  onCloseSystemGuide?: () => void;
   activeTab?: string;
   currentPageContext?: string;
   onNavigateTab?: (tab: string) => void;
@@ -1063,11 +1194,32 @@ interface PedroAssistantProps {
   customRobotName?: string;
   defaultPitch?: number;
   defaultRate?: number;
+  user?: any;
+  onOpenInbox?: () => void;
+  onAutoClaimRewards?: () => void;
+  studyTimerSeconds?: number;
+  dailyGoalSeconds?: number;
+  activeGroupStudyRoomsCount?: number;
+  onOpenStudyRoom?: () => void;
+  onOpenRoutine?: () => void;
+  settings?: any;
+  activeStudySession?: {
+    isStudying: boolean;
+    lessonTitle?: string;
+    pageNumber?: number;
+    totalPages?: number;
+    requiredSeconds?: number;
+    timeSpentSeconds?: number;
+    countdownSeconds?: number;
+    mode?: string;
+  };
 }
 
 export const PedroAssistant: React.FC<PedroAssistantProps> = ({
   isOpen,
   onClose,
+  isSystemGuideOpen,
+  onCloseSystemGuide,
   activeTab = 'HOME',
   currentPageContext,
   onNavigateTab,
@@ -1075,8 +1227,36 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
   customKnowledge,
   customRobotName = 'Pedro',
   defaultPitch = 1.48,
-  defaultRate = 1.05
+  defaultRate = 1.05,
+  user,
+  onOpenInbox,
+  onAutoClaimRewards,
+  studyTimerSeconds = 0,
+  dailyGoalSeconds = 1800,
+  activeGroupStudyRoomsCount = 0,
+  onOpenStudyRoom,
+  onOpenRoutine,
+  settings,
+  activeStudySession,
 }) => {
+  // Controlled or event-driven System Guide open state (3-dot menu)
+  const [internalSystemGuideOpen, setInternalSystemGuideOpen] = useState(false);
+  const effectiveSystemGuideOpen = isSystemGuideOpen !== undefined ? isSystemGuideOpen : internalSystemGuideOpen;
+  const [systemGuideTab, setSystemGuideTab] = useState<'LEVELS' | 'POWERS' | 'ENERGY'>('LEVELS');
+
+  useEffect(() => {
+    const handleOpenSystemGuide = () => {
+      setInternalSystemGuideOpen(true);
+    };
+    window.addEventListener('nst-open-pedro-system-guide', handleOpenSystemGuide);
+    return () => window.removeEventListener('nst-open-pedro-system-guide', handleOpenSystemGuide);
+  }, []);
+
+  const handleCloseSystemGuide = () => {
+    setInternalSystemGuideOpen(false);
+    onCloseSystemGuide?.();
+  };
+
   // Merge static knowledge with Admin customized knowledge
   const activeKnowledge = useMemo(() => {
     if (!customKnowledge) return PEDRO_PAGE_KNOWLEDGE;
@@ -1119,15 +1299,282 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<PedroCategory | null>(null);
   const [activeItemTitle, setActiveItemTitle] = useState<string | null>(null);
   const [showAskMoreChip, setShowAskMoreChip] = useState<boolean>(false);
+  const [isMinimized, setIsMinimized] = useState<boolean>(false);
+
+  // Navigation tabs inside Pedro Dialog: Guide (Default), Powers, Rules, Energy (4 pages)
+  const [activeMainTab, setActiveMainTab] = useState<'GUIDE' | 'POWERS' | 'RULES' | 'ENERGY'>('GUIDE');
+  const [expandedOptionId, setExpandedOptionId] = useState<string | null>(null);
+
+  // Pedro Action Options: "Kya karna hai & Kaise karna hai"
+  const pedroActionOptions = useMemo(() => [
+    {
+      id: 'STUDY_NOTES',
+      title: 'Padhai Shuru Karni Hai (Notes & Chapters)',
+      badge: 'Study & Notes',
+      badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+      icon: '📖',
+      kyaKarnaHai: 'Apni class aur subject ke chapters, theory aur formulas padhein.',
+      kaiseKarnaHai: [
+        '1. Home screen par apni Class (6th–12th) choose karein.',
+        '2. Subject (Science, Math, Social etc.) par tap karein.',
+        '3. Chapter khol kar padhna shuru karein — har page padhne par study coins unlock honge!',
+      ],
+      speechText: 'Padhai shuru karne ke liye Home screen par Class aur Subject chuniye, aur chapter khol kar padhein!',
+      buttonText: 'Padhai Kholein ➔',
+      action: () => {
+        onClose();
+        onNavigateTab?.('HOME');
+      },
+    },
+    {
+      id: 'MCQ_QUIZ',
+      title: 'MCQ Test & Speed Quiz Dena Hai',
+      badge: 'Quiz & XP',
+      badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
+      icon: '⚔️',
+      kyaKarnaHai: 'MCQs practice karke time speed aur accuracy badhayein, rank score earn karein.',
+      kaiseKarnaHai: [
+        '1. MCQ Arena tab par jayein.',
+        '2. Speed Test ya Practice Mode select karein.',
+        '3. Sahi uttar par +XP aur Medals milenge, Leaderboard par top rank payein!',
+      ],
+      speechText: 'MCQ test ke liye Arena me jayein, Speed test ya Practice mode chun kar sawal solve karein!',
+      buttonText: 'MCQ Arena Kholein ➔',
+      action: () => {
+        onClose();
+        onNavigateTab?.('MCQ');
+      },
+    },
+    {
+      id: 'ROUTINE_SLOTS',
+      title: 'Study Routine / Time-table Set Karna Hai',
+      badge: 'Time-Table',
+      badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+      icon: '⏰',
+      kyaKarnaHai: 'Apne din bhar ka study time-table set karein aur regular padhai karein.',
+      kaiseKarnaHai: [
+        '1. Routine button par tap karke apna study slot banayein.',
+        '2. Morning aur Evening study target select karein.',
+        '3. Pedro aapko padhai ke samay auto reminder alert dega!',
+      ],
+      speechText: 'Study routine set karne ke liye Routine drawer me jayein aur apne daily study slots add karein!',
+      buttonText: 'Routine Kholein ➔',
+      action: () => {
+        onClose();
+        onOpenRoutine?.();
+      },
+    },
+    {
+      id: 'LIVE_ROOM',
+      title: 'Live Group Study Room Join Karna Hai',
+      badge: 'Live Room',
+      badgeColor: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30',
+      icon: '🎙️',
+      kyaKarnaHai: 'Live study room me sabhi students ke sath silent ya voice study session karein.',
+      kaiseKarnaHai: [
+        '1. Live Study Room button par tap karein.',
+        '2. Apna audio mic on karein ya Silent Focus mode laga kar padhein.',
+        '3. Group timer ke sath bina distraction focused study karein!',
+      ],
+      speechText: 'Live Study room join karne ke liye Live room button tap karein aur sath milkar focused study karein!',
+      buttonText: 'Live Room Kholein ➔',
+      action: () => {
+        onClose();
+        onOpenStudyRoom?.();
+      },
+    },
+    {
+      id: 'STORE_REWARDS',
+      title: 'Store, Free Rewards & VIP Plans',
+      badge: 'Coins & Store',
+      badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
+      icon: '💎',
+      kyaKarnaHai: 'Apne earned coins se plans lein aur inbox me aaye free rewards claim karein.',
+      kaiseKarnaHai: [
+        '1. Store tab me jakar coins aur diamonds balance check karein.',
+        '2. Mailbox me aaye daily gifts aur bonus rewards claim karein.',
+        '3. VIP plan lekar unlimited features access karein!',
+      ],
+      speechText: 'Store tab me jayein, apne coins se VIP pass lein aur inbox se daily free rewards claim karein!',
+      buttonText: 'Store Kholein ➔',
+      action: () => {
+        onClose();
+        onNavigateTab?.('STORE');
+      },
+    },
+    {
+      id: 'BOOST_RANK',
+      title: 'Pedro Level & Apni Rank Boost Karni Hai',
+      badge: 'XP & Powers',
+      badgeColor: 'bg-orange-500/20 text-orange-300 border-orange-500/30',
+      icon: '⚡',
+      kyaKarnaHai: 'Pedro ke Level 1 se Level 10 tak ke powers unlock karein aur rank badhayein.',
+      kaiseKarnaHai: [
+        '1. Roz 15+ minute padhai karein taaki streak bane.',
+        '2. Streak tutne par Pedro naraj hota hai, isliye daily active rahein.',
+        '3. Powers tab me jakar dekhein kaun se superpowers unlock huye hain!',
+      ],
+      speechText: 'Pedro level badhane ke liye roz kam se kam 15 minute padhai karein taaki aapki streak bane aur naye powers unlock hon!',
+      buttonText: 'Pedro Powers Dekhein ➔',
+      action: () => {
+        setActiveMainTab('POWERS');
+      },
+    },
+    {
+      id: 'SCREEN_GUIDE',
+      title: 'Is Screen Ke Sabhi Features Samajhna Hai',
+      badge: 'Screen Guide',
+      badgeColor: 'bg-pink-500/20 text-pink-300 border-pink-500/30',
+      icon: '🧭',
+      kyaKarnaHai: 'Abhi jo screen khuli hai, uske sabhi hidden buttons aur options ka tutorial dekhein.',
+      kaiseKarnaHai: [
+        '1. Screen Guide tab par tap karein.',
+        '2. Screen ke har section par spotlight highlight ke sath Pedro explain karega.',
+        '3. Kisi bhi feature ko directly trigger karke demo dekh sakte hain!',
+      ],
+      speechText: 'Screen guide tab me jakar aap is screen ke sabhi tools aur features ka live demo dekh sakte hain!',
+      buttonText: 'Screen Guide Dekhein ➔',
+      action: () => {
+        setActiveMainTab('GUIDE');
+      },
+    },
+  ], [onClose, onNavigateTab, onOpenRoutine, onOpenStudyRoom]);
+
+  // Pedro Mascot Level & Energy Engine status
+  const effectiveLevel = useMemo(() => PedroEngine.getEffectiveLevel(user), [user]);
+  const levelConfig = useMemo(() => PedroEngine.getLevelConfig(effectiveLevel), [effectiveLevel]);
+
+  // Level 8 Color Change Scheme ("level 8 pe color change karne ka option milega 2 color milenge")
+  const [pedroColorScheme, setPedroColorScheme] = useState<'classic' | 'cyber'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('pedro_color_scheme');
+      if (saved === 'classic' || saved === 'cyber') return saved;
+    }
+    return 'classic';
+  });
+
+  const handleSetColorScheme = (scheme: 'classic' | 'cyber') => {
+    setPedroColorScheme(scheme);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('pedro_color_scheme', scheme);
+      window.dispatchEvent(new CustomEvent('pedro-color-scheme-change', { detail: { scheme } }));
+    }
+  };
+
+  const [energyStatus, setEnergyStatus] = useState<PedroEnergyStatus>(() => PedroEngine.getEnergyStatus(user, studyTimerSeconds));
+
+  useEffect(() => {
+    setEnergyStatus(PedroEngine.getEnergyStatus(user, studyTimerSeconds));
+  }, [user, studyTimerSeconds]);
+
+  useEffect(() => {
+    const handleEnergyRefresh = () => {
+      setEnergyStatus(PedroEngine.getEnergyStatus(user, studyTimerSeconds));
+    };
+    const handleOpenEnergyTab = () => {
+      setActiveMainTab('ENERGY');
+      setIsMinimized(false);
+    };
+    const handleOpenPowersTab = () => {
+      setActiveMainTab('POWERS');
+      setIsMinimized(false);
+    };
+    const handleOpenRulesTab = () => {
+      setActiveMainTab('RULES');
+      setIsMinimized(false);
+    };
+    window.addEventListener('nst-pedro-energy-change', handleEnergyRefresh);
+    window.addEventListener('nst-pedro-open-energy', handleOpenEnergyTab);
+    window.addEventListener('nst-pedro-open-powers', handleOpenPowersTab);
+    window.addEventListener('nst-pedro-open-rules', handleOpenRulesTab);
+    return () => {
+      window.removeEventListener('nst-pedro-energy-change', handleEnergyRefresh);
+      window.removeEventListener('nst-pedro-open-energy', handleOpenEnergyTab);
+      window.removeEventListener('nst-pedro-open-powers', handleOpenPowersTab);
+      window.removeEventListener('nst-pedro-open-rules', handleOpenRulesTab);
+    };
+  }, [user, studyTimerSeconds]);
+
+  // User tier & mailbox rewards state
+  const isUltraUser = user?.subscriptionTier === 'ULTRA' || user?.subscriptionTier === 'LIFETIME';
+
+  // Level 8 Overdrive state (24h active window, 6-7 day recharge cycle, 2x XP + credits)
+  const [l8Overdrive, setL8Overdrive] = useState<PedroL8OverdriveInfo>(() =>
+    PedroEngine.getL8OverdriveState(user?.id, user?.level, isUltraUser)
+  );
+
+  useEffect(() => {
+    const updateL8 = () => {
+      setL8Overdrive(PedroEngine.getL8OverdriveState(user?.id, user?.level, isUltraUser));
+    };
+    updateL8();
+    const timer = setInterval(updateL8, 1000);
+    window.addEventListener('nst-pedro-overdrive-change', updateL8);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('nst-pedro-overdrive-change', updateL8);
+    };
+  }, [user?.id, user?.level, isUltraUser]);
+
+  const handleActivateL8Overdrive = () => {
+    if (!user?.id) return;
+    const ok = PedroEngine.activateL8Overdrive(user.id, user.level);
+    if (ok) {
+      setL8Overdrive(PedroEngine.getL8OverdriveState(user.id, user.level, isUltraUser));
+      speakText('Pedro Level 8 Overdrive active ho gaya hai! Agle 24 ghante tak primary study mode me 2x XP aur bonus credits milenge!');
+    }
+  };
+
+  // Pedro Streak Break Penalty ("Naraj") state
+  const [penaltyState, setPenaltyState] = useState<PedroPenaltyState>(() =>
+    PedroEngine.getPenaltyState(user?.id, user?.level)
+  );
+
+  useEffect(() => {
+    const updatePenalty = () => {
+      setPenaltyState(PedroEngine.getPenaltyState(user?.id, user?.level));
+    };
+    updatePenalty();
+    window.addEventListener('nst-pedro-penalty-change', updatePenalty);
+    window.addEventListener('nst-pedro-naraj', updatePenalty);
+    return () => {
+      window.removeEventListener('nst-pedro-penalty-change', updatePenalty);
+      window.removeEventListener('nst-pedro-naraj', updatePenalty);
+    };
+  }, [user?.id, user?.level]);
+
+  const rawInbox = user?.inbox || [];
+  const now = Date.now();
+  const pendingRewards = rawInbox.filter(
+    (m: any) =>
+      (m.type === 'REWARD' || m.type === 'GIFT' || m.type === 'STORE_DISCOUNT') &&
+      !m.isClaimed &&
+      (!m.expiresAt || new Date(m.expiresAt).getTime() > now)
+  );
+
+  // Detect expiring reward or store discount (< 24 hours)
+  const expiringItem = pendingRewards.find((m: any) => {
+    if (!m.expiresAt) return false;
+    const diff = new Date(m.expiresAt).getTime() - now;
+    return diff > 0 && diff <= 24 * 60 * 60 * 1000;
+  });
+
+  // Study Mode time calculations
+  const studyMins = Math.floor((studyTimerSeconds || 0) / 60);
+  const goalMins = Math.max(20, Math.floor((dailyGoalSeconds || 1800) / 60));
+  const remainingStudyMins = Math.max(0, goalMins - studyMins);
+
+  // Live Notification state
+  const [liveAlert, setLiveAlert] = useState<{ title: string; message: string } | null>(null);
+  const [hasAutoClaimed, setHasAutoClaimed] = useState(false);
 
   // Audio / Speech State
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const speechRef = useRef<SpeechSynthesisUtterance | null>(null);
 
-  // Spotlight & Pointer Hand State
+  // Spotlight State
   const [spotlightRect, setSpotlightRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
-  const [pointerHandPos, setPointerHandPos] = useState<{ x: number; y: number; isTapping: boolean } | null>(null);
 
   // Simulation Countdown Toast
   const [simToast, setSimToast] = useState<{ message: string; countdown: number; onCancel: () => void } | null>(null);
@@ -1168,65 +1615,275 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
 
   // Voice speech synthesis
   const speakText = (text: string, onFinish?: () => void) => {
-    if (isMuted || typeof window === 'undefined' || !('speechSynthesis' in window)) {
-      if (onFinish) setTimeout(onFinish, 2500);
+    if (isMuted) {
+      if (onFinish) setTimeout(onFinish, 2000);
       return;
     }
-    try {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'hi-IN';
-      utterance.pitch = defaultPitch;
-      utterance.rate = defaultRate;
-
-      utterance.onstart = () => {
-        setIsSpeaking(true);
-      };
-      utterance.onend = () => {
+    setIsSpeaking(true);
+    pedroSpeak(text, {
+      pitch: defaultPitch,
+      rate: defaultRate,
+      onEnd: () => {
         setIsSpeaking(false);
         if (onFinish) onFinish();
-      };
-      utterance.onerror = () => {
-        setIsSpeaking(false);
-        if (onFinish) onFinish();
-      };
-
-      speechRef.current = utterance;
-      window.speechSynthesis.speak(utterance);
-    } catch (e) {
-      console.warn('Speech error:', e);
-      setIsSpeaking(false);
-      if (onFinish) onFinish();
-    }
+      },
+      showBubble: true,
+    });
   };
 
   const stopVoice = () => {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
+    stopPedroVoice();
     setIsSpeaking(false);
   };
 
-  // On open: smart time greeting & skip self-intro if already visited today
+  // Listen to live page notifications and announce them via voice
+  useEffect(() => {
+    const handleLiveNotif = (e: any) => {
+      const detail = e.detail;
+      if (!detail) return;
+      const title = detail.title || 'Notification';
+      const message = detail.message || '';
+
+      // User requested: Short Alert: "Naya circular aaya hai." (Poora content user khud padhega ya tap par sunega)
+      if (!isMuted) {
+        pedroSpeak('Naya circular aaya hai.', { rate: 1.1, showBubble: false });
+      }
+      setLiveAlert({ title, message });
+      setTimeout(() => setLiveAlert(null), 8000);
+    };
+    window.addEventListener('nst_live_notification', handleLiveNotif);
+    return () => window.removeEventListener('nst_live_notification', handleLiveNotif);
+  }, [isMuted]);
+
+  // On open: Single crisp sentence when user taps Pedro: "Bataiye dost, kya madad karun?"
   useEffect(() => {
     if (isOpen) {
+      setActiveMainTab('OPTIONS');
       setSelectedCategory(null);
       setActiveItemTitle(null);
       setShowAskMoreChip(false);
       setSpotlightRect(null);
-      setPointerHandPos(null);
 
-      // Smart time-of-day greeting
-      const greetingInfo = getSmartGreeting(customRobotName, pageConfig?.pageTitle, pageConfig?.introSpeech);
-      speakText(greetingInfo.speech);
+      // Auto-claim silently for ULTRA users if pending rewards exist
+      if (isUltraUser && pendingRewards.length > 0 && !hasAutoClaimed) {
+        onAutoClaimRewards?.();
+        setHasAutoClaimed(true);
+      }
+
+      // User requirement: "bas option bolega itne ke jagah pe user jo option choose kare phir ushke bare me bataye par pehle itna na bolega"
+      speakText('Option chuniye.');
     } else {
       stopVoice();
       setSpotlightRect(null);
-      setPointerHandPos(null);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('nst-pedro-return-home'));
+      }
       if (simTimerRef.current) clearInterval(simTimerRef.current);
       setSimToast(null);
+      setIsMinimized(false);
     }
   }, [isOpen]);
+
+  // Count active Pro page events
+  const activeProEventsCount = useMemo(() => {
+    if (!settings) return 0;
+    const curNow = Date.now();
+    const chk = (en?: boolean, s?: string, e?: string) => {
+      if (!en) return false;
+      const st = s ? new Date(s).getTime() : 0;
+      const en2 = e ? new Date(e).getTime() : Infinity;
+      return curNow >= st && curNow < en2;
+    };
+    let count = 0;
+    if (chk(settings?.scoreBoostEvent?.enabled, settings?.scoreBoostEvent?.startsAt, settings?.scoreBoostEvent?.endsAt)) count++;
+    if (chk(settings?.specialDiscountEvent?.enabled, settings?.specialDiscountEvent?.startsAt, settings?.specialDiscountEvent?.endsAt)) count++;
+    const gf = settings?.globalFreeAccessEvent?.enabled ?? (settings?.isGlobalFreeMode ?? false);
+    if (chk(gf, settings?.globalFreeAccessEvent?.startsAt, settings?.globalFreeAccessEvent?.endsAt)) count++;
+    const cf = settings?.creditFreeEvent?.enabled ?? (settings?.isCreditFreeEvent ?? false);
+    if (chk(cf, (settings?.creditFreeEvent as any)?.startsAt, (settings?.creditFreeEvent as any)?.endsAt)) count++;
+    if (chk((settings as any)?.dailyLimitBoostEvent?.enabled, (settings as any)?.dailyLimitBoostEvent?.startsAt, (settings as any)?.dailyLimitBoostEvent?.endsAt)) count++;
+    if (chk(settings?.themeStudioEvent?.enabled, settings?.themeStudioEvent?.startsAt, settings?.themeStudioEvent?.endsAt)) count++;
+    if (chk(settings?.creditBonusEvent?.enabled, settings?.creditBonusEvent?.startsAt, settings?.creditBonusEvent?.endsAt)) count++;
+    return count;
+  }, [settings]);
+
+  // Pedro Smart Action Handlers
+  const handleClaimOrInspectRewards = () => {
+    if (isUltraUser) {
+      onAutoClaimRewards?.();
+      speakText(`Ultra VIP! Aapke sabhi mailbox rewards auto-claim ho chuke hain!`);
+    } else {
+      if (onOpenInbox) {
+        onOpenInbox();
+        onClose();
+      }
+      speakText(
+        pendingRewards.length > 0
+          ? `Aapke mailbox mein ${pendingRewards.length} rewards bache hain! Yahan se claim karein!`
+          : `Aapka mailbox bilkul update hai!`
+      );
+    }
+  };
+
+  // Required Time: If user is studying inside a lesson, reads the exact page required time and progress
+  const handleSpeakStudyModeRules = () => {
+    if (activeStudySession?.mode === 'MCQS' || currentPageContext === 'MCQ') {
+      speakText('MCQ Practice me koi required reading time nahi hai, bas har question ka sahi answer dekar points score karein!');
+      return;
+    }
+    if (activeStudySession?.isStudying) {
+      const reqSec = activeStudySession.requiredSeconds || 30;
+      const spentSec = activeStudySession.timeSpentSeconds || 0;
+      const remSec = Math.max(0, reqSec - spentSec);
+      const title = activeStudySession.lessonTitle || 'is lesson';
+      const pageNum = activeStudySession.pageNumber || 1;
+
+      let speech = '';
+      if (remSec > 0) {
+        speech = `Aap abhi ${title} ke Page ${pageNum} par padh rahe hain. Is page ka required reading time ${reqSec} second hai. Aapne abhi tak ${spentSec} second padh liya hai, aur score unlock karne ke liye ${remSec} second aur dhyan se padhna zaroori hai!`;
+      } else {
+        speech = `Aap abhi ${title} ke Page ${pageNum} par hain. Is page ka required ${reqSec} second ka reading time poora ho chuka hai! Aapne kul ${spentSec} second padhai ki hai. Ab aap bina score loss ke agle page ya MCQ practice par ja sakte hain!`;
+      }
+      speakText(speech);
+    } else {
+      const speech = `Required Time Guide: Jab aap kisi lesson ya study page ko open karte hain, toh full XP aur score ke liye us page ke points ke anusaar minimum reading time zaroori hota hai. Jaise hi aap kisi lesson page par honge, main us page ka live timer aur required time dekh kar bataunga! Aaj ka total study time ${studyMins} minute hai, daily goal ${goalMins} minute ka hai.`;
+      speakText(speech);
+    }
+  };
+
+  // Aaj Ka Routine: Reads live scheduled subjects and tasks directly from routine storage / routine page
+  const handleSpeakRoutine = () => {
+    const routineLines: string[] = [];
+
+    if (user?.id) {
+      try {
+        const routineData = loadRoutineData(user.id);
+        if (routineData?.routineCategories && routineData.routineCategories.length > 0) {
+          routineData.routineCategories.forEach((cat) => {
+            const sub = cat.subjects?.[cat.currentSubjectIndex ?? 0];
+            if (sub) {
+              routineLines.push(`${cat.categoryName || sub.displayName}: Lesson ${sub.currentLessonIndex + 1}`);
+            }
+          });
+        } else if (routineData?.routineSlots && routineData.routineSlots.length > 0) {
+          routineData.routineSlots.forEach((slot) => {
+            routineLines.push(`${slot.displayName || slot.bookName}: Lesson ${slot.currentLessonIndex + 1}`);
+          });
+        }
+      } catch {}
+    }
+
+    const dailyTasks = user?.dailyRoutine?.tasks;
+    const taskDescriptions: string[] = [];
+    if (Array.isArray(dailyTasks) && dailyTasks.length > 0) {
+      dailyTasks.slice(0, 3).forEach((t: any) => {
+        taskDescriptions.push(`${t.title} (${t.duration} min)`);
+      });
+    }
+
+    let speech = '';
+    if (routineLines.length > 0) {
+      speech = `Routine page ke anusaar, aaj aapke yeh study tracks scheduled hain: ${routineLines.join(', ')}. ${
+        taskDescriptions.length > 0 ? `Saath hi practice tasks: ${taskDescriptions.join(', ')}.` : ''
+      } Routine poora karke maximum XP aur coins boost karein!`;
+    } else if (taskDescriptions.length > 0) {
+      speech = `Aaj aapke daily routine mein yeh tasks scheduled hain: ${taskDescriptions.join(', ')}. Routine ke anusaar padhai jaari rakhein!`;
+    } else {
+      speech = `Aapne abhi tak Routine page par subjects ya slots set nahi kiye hain. Routine button par tap karke apna daily schedule set karein!`;
+    }
+
+    speakText(speech);
+    if (onOpenRoutine) {
+      setTimeout(() => {
+        onOpenRoutine();
+        onClose();
+      }, 3500);
+    }
+  };
+
+  // Live Events on Pro Page: Announces all live and upcoming events with discount % & perks
+  const handleSpeakEvents = () => {
+    const curTime = Date.now();
+    const activeList: string[] = [];
+    const upcomingList: string[] = [];
+
+    const checkLive = (en?: boolean, start?: string, end?: string) => {
+      if (!en) return false;
+      const st = start ? new Date(start).getTime() : 0;
+      const enTime = end ? new Date(end).getTime() : Infinity;
+      return curTime >= st && curTime < enTime;
+    };
+
+    const checkUpcoming = (en?: boolean, start?: string, end?: string) => {
+      if (!en || !start) return false;
+      const st = new Date(start).getTime();
+      const enTime = end ? new Date(end).getTime() : Infinity;
+      return st > curTime && curTime < enTime;
+    };
+
+    // 1. Discount event
+    const disc = settings?.specialDiscountEvent;
+    if (checkLive(disc?.enabled, disc?.startsAt, disc?.endsAt)) {
+      activeList.push(`Special Discount Sale (${disc?.eventName || 'Mega Sale'} - ${disc?.discountPercent || 20}% OFF)`);
+    } else if (checkUpcoming(disc?.enabled, disc?.startsAt, disc?.endsAt)) {
+      upcomingList.push(`Discount Sale (${disc?.eventName || 'Sale'})`);
+    }
+
+    // 2. Score Boost
+    const sb = settings?.scoreBoostEvent;
+    if (checkLive(sb?.enabled, sb?.startsAt, sb?.endsAt)) {
+      activeList.push('Score Boost Event (2x Extra XP Multiplier)');
+    } else if (checkUpcoming(sb?.enabled, sb?.startsAt, sb?.endsAt)) {
+      upcomingList.push('Score Boost Event');
+    }
+
+    // 3. Global Free Access
+    const gf = settings?.globalFreeAccessEvent?.enabled ?? (settings?.isGlobalFreeMode ?? false);
+    if (checkLive(gf, settings?.globalFreeAccessEvent?.startsAt, settings?.globalFreeAccessEvent?.endsAt)) {
+      activeList.push('Global Free Access Event (Sabhi content muft)');
+    }
+
+    // 4. Credit Free
+    const cf = settings?.creditFreeEvent?.enabled ?? (settings?.isCreditFreeEvent ?? false);
+    if (checkLive(cf, (settings?.creditFreeEvent as any)?.startsAt, (settings?.creditFreeEvent as any)?.endsAt)) {
+      activeList.push('Credit Free Event (Bina coins kharch kiye unlock)');
+    }
+
+    // 5. Daily Limit Boost
+    const lb = (settings as any)?.dailyLimitBoostEvent;
+    if (checkLive(lb?.enabled, lb?.startsAt, lb?.endsAt)) {
+      activeList.push('Daily Limit Boost Event (Extra practice limit)');
+    }
+
+    // 6. Theme Studio
+    const ts = settings?.themeStudioEvent;
+    if (checkLive(ts?.enabled, ts?.startsAt, ts?.endsAt)) {
+      activeList.push(`Theme Studio Event (${ts?.eventName || 'Custom Themes'})`);
+    }
+
+    // 7. Credit Bonus
+    const cb = settings?.creditBonusEvent;
+    if (checkLive(cb?.enabled, cb?.startsAt, cb?.endsAt)) {
+      activeList.push(`Credit Bonus Event (+${cb?.bonusPercent || 25}% Extra Coins)`);
+    }
+
+    let speech = '';
+    if (activeList.length > 0) {
+      speech = `Pro page par abhi yeh live events chal rahe hain: ${activeList.join(', ')}! Pro page par jakar in special discounts aur boosts ka turant fayda uthayein!`;
+    } else if (upcomingList.length > 0) {
+      speech = `Pro page par koi event abhi live nahi hai, lekin agle events jald shuru ho rahe hain: ${upcomingList.join(', ')}!`;
+    } else {
+      speech = `Filhaal Pro page par koi live discount ya boost event active nahi hai. Naye special events aate hi main aapko turant alert kar doonga!`;
+    }
+
+    speakText(speech);
+    if (onNavigateTab) {
+      setTimeout(() => {
+        onNavigateTab('PRO');
+        onClose();
+      }, 3500);
+    }
+  };
 
   // Clean up on unmount
   useEffect(() => {
@@ -1236,7 +1893,7 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
     };
   }, []);
 
-  // Spotlight and pointer gesture helper
+  // Spotlight and Pedro flight gesture helper ("jo bhi feature dikhayega khud ja ke dikhayega na ki ek hand alag se aayega")
   const pointAndSpotlight = (selector: string | undefined, callback?: () => void) => {
     if (!selector) {
       if (callback) callback();
@@ -1260,21 +1917,56 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
         height: rect.height
       });
 
-      // Position pointer hand directly over target
-      const handX = Math.max(20, Math.min(window.innerWidth - 60, rect.left + rect.width / 2 - 18));
-      const handY = Math.max(70, rect.top + rect.height / 2 - 20);
+      // Fly Pedro mascot himself directly to the target element
+      const pedroSize = 72;
+      let targetX = rect.right + 10;
+      let targetY = rect.top + rect.height / 2 - pedroSize / 2;
 
-      setPointerHandPos({ x: handX, y: handY, isTapping: false });
+      // If element is near right edge, place Pedro on the left
+      if (targetX + pedroSize > window.innerWidth - 10) {
+        targetX = Math.max(10, rect.left - pedroSize - 10);
+      }
+      // If element is wide (cards, banners), place Pedro below or above
+      if (rect.width > 220) {
+        targetX = Math.min(window.innerWidth - pedroSize - 16, Math.max(16, rect.left + rect.width / 2 - pedroSize / 2));
+        targetY = rect.bottom + 10;
+        if (targetY + pedroSize > window.innerHeight - 80) {
+          targetY = Math.max(70, rect.top - pedroSize - 10);
+        }
+      }
 
-      // Tap animation after hand arrives
+      // Clamp to screen bounds
+      targetX = Math.max(10, Math.min(window.innerWidth - pedroSize - 10, targetX));
+      targetY = Math.max(65, Math.min(window.innerHeight - pedroSize - 80, targetY));
+
+      // Dispatch event to smoothly fly Pedro over and point directly at the element!
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('nst-pedro-fly-to', {
+            detail: {
+              x: targetX,
+              y: targetY,
+              isPointing: true,
+              elementRect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height }
+            }
+          })
+        );
+      }
+
+      // Allow Pedro time to arrive and gesture before speaking/acting
       setTimeout(() => {
-        setPointerHandPos({ x: handX, y: handY, isTapping: true });
-        setTimeout(() => {
-          setPointerHandPos({ x: handX, y: handY, isTapping: false });
-          if (callback) callback();
-        }, 400);
-      }, 500);
+        if (callback) callback();
+      }, 450);
     }, 350);
+  };
+
+  // Helper to smoothly bring the menu back up after Pedro finishes explaining a feature
+  const restoreMenuAfterDemo = (extraSpeech: string = 'Any doubt?') => {
+    setIsMinimized(false);
+    setShowAskMoreChip(true);
+    if (extraSpeech) {
+      speakText(extraSpeech);
+    }
   };
 
   // Interactive Demonstration Handler
@@ -1285,8 +1977,65 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
       pointAndSpotlight('#nsta-header-brand-btn', () => {
         onTriggerAction?.('DEMO_APP_LOGO');
         speakText(item.speechText, () => {
-          speakText('Aur kuch jaanna hai aapko?');
-          setShowAskMoreChip(true);
+          restoreMenuAfterDemo('Any doubt?');
+        });
+      });
+    } else if (action === 'READ_ROW2_NAME') {
+      pointAndSpotlight('#topbar-row2-greeting', () => {
+        const row2El = document.getElementById('topbar-row2-greeting');
+        const stName = row2El?.getAttribute('data-student-name') || userName || 'Student';
+        speakText(`Hey ${stName}! Yeh Row 2 par aapka greeting aur student naam hai.`, () => {
+          restoreMenuAfterDemo('Any doubt?');
+        });
+      });
+    } else if (action === 'SIMULATE_EVENTS') {
+      pointAndSpotlight('#topbar-events-btn', () => {
+        onTriggerAction?.('OPEN_EVENTS');
+        speakText(item.speechText, () => {
+          startCountdown('Auto-closing Live Events...', 4, () => {
+            onTriggerAction?.('CLOSE_EVENTS');
+            setSpotlightRect(null);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('nst-pedro-return-home'));
+            }
+            restoreMenuAfterDemo('Live Events drawer band ho gaya! Any doubt?');
+          });
+        });
+      });
+    } else if (action === 'SIMULATE_STATUS_DOTS') {
+      pointAndSpotlight('#topbar-status-dots-btn', () => {
+        onTriggerAction?.('OPEN_STATUS_DOTS');
+        speakText(item.speechText, () => {
+          startCountdown('Auto-closing System Health...', 4, () => {
+            onTriggerAction?.('CLOSE_STATUS_DOTS');
+            setSpotlightRect(null);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('nst-pedro-return-home'));
+            }
+            restoreMenuAfterDemo('System health status band ho gaya! Any doubt?');
+          });
+        });
+      });
+    } else if (action === 'SIMULATE_BOARD_DROPDOWN') {
+      pointAndSpotlight('#topbar-3dots-btn', () => {
+        onTriggerAction?.('OPEN_BOARD_DROPDOWN');
+        speakText(item.speechText, () => {
+          startCountdown('Auto-closing Board Switcher...', 4, () => {
+            onTriggerAction?.('CLOSE_BOARD_DROPDOWN');
+            onTriggerAction?.('CLOSE_3DOTS');
+            setSpotlightRect(null);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('nst-pedro-return-home'));
+            }
+            restoreMenuAfterDemo('Board switcher band ho gaya! Any doubt?');
+          });
+        });
+      });
+    } else if (action === 'SIMULATE_PEDRO_RESTORE') {
+      pointAndSpotlight('#topbar-docked-pedro-btn', () => {
+        onTriggerAction?.('RESTORE_PEDRO');
+        speakText(item.speechText, () => {
+          restoreMenuAfterDemo('Any doubt?');
         });
       });
     } else if (action === 'SIMULATE_3DOTS') {
@@ -1300,9 +2049,10 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
           startCountdown('Auto-closing 3-dot menu...', 4, () => {
             onTriggerAction?.('CLOSE_3DOTS');
             setSpotlightRect(null);
-            setPointerHandPos(null);
-            speakText('3-dot menu band ho gaya! Aur kuch jaanna hai aapko?');
-            setShowAskMoreChip(true);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('nst-pedro-return-home'));
+            }
+            restoreMenuAfterDemo('3-dot menu band ho gaya! Any doubt?');
           });
         });
       });
@@ -1313,9 +2063,10 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
           startCountdown('Auto-closing App Guide...', 4, () => {
             onTriggerAction?.('CLOSE_GUIDE');
             setSpotlightRect(null);
-            setPointerHandPos(null);
-            speakText('Aur kuch jaanna hai aapko?');
-            setShowAskMoreChip(true);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('nst-pedro-return-home'));
+            }
+            restoreMenuAfterDemo('Any doubt?');
           });
         });
       });
@@ -1326,9 +2077,10 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
           startCountdown('Auto-closing Mailbox...', 4, () => {
             onTriggerAction?.('CLOSE_INBOX');
             setSpotlightRect(null);
-            setPointerHandPos(null);
-            speakText('Aur kuch jaanna hai aapko?');
-            setShowAskMoreChip(true);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('nst-pedro-return-home'));
+            }
+            restoreMenuAfterDemo('Any doubt?');
           });
         });
       });
@@ -1339,9 +2091,10 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
           startCountdown('Auto-closing Feature Wheel...', 4, () => {
             onTriggerAction?.('CLOSE_WHEEL');
             setSpotlightRect(null);
-            setPointerHandPos(null);
-            speakText('Wheel band ho gaya! Aur kuch jaanna hai aapko?');
-            setShowAskMoreChip(true);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('nst-pedro-return-home'));
+            }
+            restoreMenuAfterDemo('Wheel band ho gaya! Any doubt?');
           });
         });
       });
@@ -1352,9 +2105,10 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
           startCountdown('Home screen wapas ja rahe hain...', 4, () => {
             onTriggerAction?.('GO_HOME');
             setSpotlightRect(null);
-            setPointerHandPos(null);
-            speakText('Home par wapas aa gaye! Aur kuch jaanna hai aapko?');
-            setShowAskMoreChip(true);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('nst-pedro-return-home'));
+            }
+            restoreMenuAfterDemo('Home par wapas aa gaye! Any doubt?');
           });
         });
       });
@@ -1365,9 +2119,10 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
           startCountdown('Home screen wapas ja rahe hain...', 4, () => {
             onTriggerAction?.('GO_HOME');
             setSpotlightRect(null);
-            setPointerHandPos(null);
-            speakText('Home par wapas aa gaye! Aur kuch jaanna hai aapko?');
-            setShowAskMoreChip(true);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('nst-pedro-return-home'));
+            }
+            restoreMenuAfterDemo('Home par wapas aa gaye! Any doubt?');
           });
         });
       });
@@ -1378,9 +2133,10 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
           startCountdown('Home screen wapas ja rahe hain...', 4, () => {
             onTriggerAction?.('GO_HOME');
             setSpotlightRect(null);
-            setPointerHandPos(null);
-            speakText('Home par wapas aa gaye! Aur kuch jaanna hai aapko?');
-            setShowAskMoreChip(true);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('nst-pedro-return-home'));
+            }
+            restoreMenuAfterDemo('Home par wapas aa gaye! Any doubt?');
           });
         });
       });
@@ -1388,8 +2144,7 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
       // General item spotlight & speech
       pointAndSpotlight(item.targetSelector, () => {
         speakText(item.speechText, () => {
-          speakText('Aur kuch jaanna hai aapko?');
-          setShowAskMoreChip(true);
+          restoreMenuAfterDemo('Any doubt?');
         });
       });
     }
@@ -1406,6 +2161,11 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
       onCancel: () => {
         if (simTimerRef.current) clearInterval(simTimerRef.current);
         setSimToast(null);
+        setSpotlightRect(null);
+        setIsMinimized(false);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('nst-pedro-return-home'));
+        }
       }
     });
 
@@ -1430,6 +2190,7 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
       const singleItem = cat.items[0];
       setSelectedCategory(null);
       setActiveItemTitle(cat.title);
+      setIsMinimized(true);
       executeSimulation(singleItem);
       return;
     }
@@ -1437,6 +2198,7 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
     // Multiple sub-items (e.g. Top Bar)
     setSelectedCategory(cat);
     setActiveItemTitle(cat.title);
+    setIsMinimized(false);
 
     // Spotlight the top-level element (e.g. #top-banner-container) and speak intro
     pointAndSpotlight(cat.targetSelector, () => {
@@ -1448,6 +2210,7 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
   const handleSelectItem = (item: PedroItemDetail) => {
     setShowAskMoreChip(false);
     setActiveItemTitle(item.title);
+    setIsMinimized(true);
     executeSimulation(item);
   };
 
@@ -1476,197 +2239,998 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
         </div>
       )}
 
-      {/* ── 2. ANIMATED FLYING ROBOT POINTER HAND (👆) ── */}
-      {pointerHandPos && (
-        <div
-          className="fixed pointer-events-none z-[99995] transition-all duration-500 ease-out"
-          style={{
-            left: `${pointerHandPos.x}px`,
-            top: `${pointerHandPos.y}px`,
-            transform: pointerHandPos.isTapping ? 'scale(0.82) translateY(8px)' : 'scale(1.05) translateY(0)',
-            transformOrigin: 'bottom center'
-          }}
-        >
-          <div className="relative flex flex-col items-center">
-            {/* Robot Pointer Emoji Hand with Glowing Aura */}
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-400 via-orange-500 to-amber-300 text-white shadow-[0_4px_25px_rgba(245,158,11,0.9)] flex items-center justify-center border-2 border-white text-2xl animate-bounce">
-              👆
-            </div>
-
-            {/* Ripple Wave on Tap */}
-            {pointerHandPos.isTapping && (
-              <span className="w-14 h-14 rounded-full border-2 border-amber-400 animate-ping absolute -top-1 pointer-events-none" />
-            )}
+      {/* ── 2. STUDENT-FRIENDLY FLOATING PEDRO GUIDE MENU (SLIDES DOWN 95% WHEN VIEWING FEATURE) ── */}
+      <div
+        style={{
+          position: 'fixed',
+          bottom: isMinimized ? '0px' : '16px',
+          left: '50%',
+          transform: isMinimized
+            ? 'translate(-50%, calc(100% - 46px))'
+            : 'translate(-50%, 0)',
+          width: 'calc(100vw - 20px)',
+          maxWidth: '500px',
+          zIndex: 99980,
+          transition: 'transform 0.45s cubic-bezier(0.16, 1, 0.3, 1), bottom 0.35s ease'
+        }}
+        className="pointer-events-auto select-none"
+      >
+        {/* Live Notification Pill (if any and not minimized) */}
+        {!isMinimized && liveAlert && (
+          <div className="mb-2 px-3.5 py-1.5 rounded-full bg-amber-500/20 border border-amber-400/50 backdrop-blur-md flex items-center gap-2 text-xs text-amber-200 shadow-lg">
+            <Bell size={13} className="text-amber-400 shrink-0" />
+            <span className="font-bold text-[11px] truncate">{liveAlert.title}:</span>
+            <span className="text-[10px] text-amber-100 truncate">{liveAlert.message}</span>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ── 3. SIMULATION COUNTDOWN TOAST (AUTO-RETURN) ── */}
-      {simToast && (
-        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-[99998] pointer-events-auto animate-in slide-in-from-top-4 duration-200">
-          <div className="bg-slate-900/95 text-white border-2 border-amber-400 shadow-2xl rounded-2xl px-4 py-2.5 flex items-center gap-3 backdrop-blur-md">
-            <span className="w-3 h-3 rounded-full bg-amber-400 animate-ping" />
-            <div className="text-xs">
-              <p className="font-black text-amber-300">{simToast.message}</p>
-              <p className="text-[10px] text-slate-300">Wapas aane me: <span className="font-bold text-white text-xs">{simToast.countdown}s</span></p>
+        {/* Sim Countdown Bar (if running simulation countdown and not minimized) */}
+        {!isMinimized && simToast && (
+          <div className="mb-2 px-3.5 py-2 rounded-2xl bg-slate-900/95 border-2 border-amber-400 shadow-xl backdrop-blur-md flex items-center justify-between gap-2 text-xs text-white">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping shrink-0" />
+              <div className="truncate">
+                <span className="font-black text-amber-300 text-xs block truncate">{simToast.message}</span>
+                <span className="text-[10px] text-slate-300">Wapas aane me: <b className="text-white">{simToast.countdown}s</b></span>
+              </div>
             </div>
             <button
               onClick={simToast.onCancel}
-              className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10px] font-black tracking-wide uppercase active:scale-95 transition-transform"
+              className="px-2.5 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-[10px] font-black uppercase tracking-wider shrink-0 active:scale-95 transition-transform cursor-pointer"
             >
               Yahin Rahein
             </button>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ── 4. POPUP MENU ON OPPOSITE SIDE OF PEDRO ── */}
-      {/* If Pedro is on the right, popup is fixed on the left. If Pedro is on the left, popup is fixed on the right. */}
-      <div
-        style={{
-          position: 'fixed',
-          [isPedroOnRight ? 'left' : 'right']: '14px',
-          bottom: '84px',
-          width: 'calc(100vw - 28px)',
-          maxWidth: '310px',
-          zIndex: 99980
-        }}
-        className="animate-in slide-in-from-bottom-3 fade-in duration-200 pointer-events-auto select-none"
-      >
-        <div className="bg-slate-950/92 dark:bg-slate-950/95 text-white rounded-2xl border border-purple-500/40 shadow-[0_12px_40px_rgba(0,0,0,0.6),0_0_20px_rgba(168,85,247,0.25)] backdrop-blur-xl overflow-hidden flex flex-col max-h-[70vh]">
-          {/* Header */}
-          <div className="bg-gradient-to-r from-violet-700 via-purple-700 to-pink-600 px-3.5 py-2.5 flex items-center justify-between border-b border-white/10 shrink-0">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-xl bg-white/20 flex items-center justify-center text-sm border border-white/30 shadow-xs">
-                🤖
+        {/* ── CARD CONTAINER ── */}
+        <div className="bg-slate-950/95 text-white rounded-3xl border border-purple-500/40 shadow-[0_12px_40px_rgba(0,0,0,0.85),0_0_20px_rgba(168,85,247,0.25)] backdrop-blur-2xl p-3 sm:p-3.5 relative overflow-hidden">
+          {/* ── 5% PEEK HANDLE (VISIBLE AT BOTTOM OF SCREEN WHEN MINIMIZED 95%) ── */}
+          {isMinimized && (
+            <div
+              onClick={() => setIsMinimized(false)}
+              className="h-10 px-3.5 flex items-center justify-between cursor-pointer bg-gradient-to-r from-amber-500/25 via-purple-600/30 to-amber-500/25 border-b border-amber-400/40 rounded-t-2xl -mx-3 -mt-3 sm:-mx-3.5 sm:-mt-3.5 mb-2 hover:bg-amber-500/35 active:scale-[0.99] transition-all"
+              title="Tap karke menu wapis upar layein"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-base animate-bounce">🤖</span>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping shrink-0" />
+                  <p className="text-xs font-black text-amber-300 truncate">
+                    Pedro dikha raha hai: <span className="text-white font-bold">{activeItemTitle || selectedCategory?.title || 'Feature'}</span>
+                    {simToast ? <span className="text-amber-200 text-[11px] ml-1.5 font-normal">({simToast.countdown}s)</span> : null}
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-xs font-black tracking-tight flex items-center gap-1.5 leading-tight">
-                  {customRobotName || 'Pedro'} Guide
-                  {isSpeaking && (
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                  )}
-                </h3>
-                <p className="text-[10px] text-purple-200 font-medium leading-none">
-                  {selectedCategory ? selectedCategory.title : pageConfig.pageTitle}
-                </p>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsMinimized(false);
+                  }}
+                  className="px-2.5 py-1 rounded-full text-[10.5px] font-black bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 flex items-center gap-1 shadow cursor-pointer active:scale-95 transition-transform"
+                >
+                  <ChevronUp size={12} className="stroke-[3]" />
+                  <span>Wapis Kholein</span>
+                </button>
               </div>
-            </div>
-
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => {
-                  if (isMuted) {
-                    setIsMuted(false);
-                    speakText('Voice chalu ho gaya!');
-                  } else {
-                    stopVoice();
-                    setIsMuted(true);
-                  }
-                }}
-                className={`p-1.5 rounded-lg transition-colors ${isMuted ? 'text-red-300 bg-red-500/20' : 'text-purple-200 hover:bg-white/10'}`}
-                title={isMuted ? "Unmute Voice" : "Mute Voice"}
-              >
-                {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
-              </button>
-              <button
-                onClick={onClose}
-                className="p-1.5 rounded-lg text-white/80 hover:text-white hover:bg-white/10 transition-colors"
-                title="Close Pedro"
-              >
-                <X size={16} />
-              </button>
-            </div>
-          </div>
-
-          {/* Active Speaking Status Bar */}
-          {isSpeaking && (
-            <div className="px-3 py-1.5 bg-purple-950/60 border-b border-purple-800/40 flex items-center gap-2 text-[10px] text-purple-200 font-semibold animate-pulse">
-              <span className="text-xs">🗣️</span>
-              <span className="truncate">Pedro live bol kar samjha raha hai...</span>
             </div>
           )}
 
-          {/* Body: Options List */}
-          <div className="p-2.5 space-y-1.5 overflow-y-auto max-h-[50vh] nst-scrollbar-none">
-            {/* SUB-OPTIONS VIEW (e.g. Inside Top Bar) */}
-            {selectedCategory ? (
-              <>
-                <button
-                  onClick={() => {
-                    setSelectedCategory(null);
-                    setActiveItemTitle(null);
-                    setSpotlightRect(null);
-                    setPointerHandPos(null);
-                    speakText('Home screen ke doosre options chuniye!');
-                  }}
-                  className="w-full mb-1 flex items-center gap-1.5 px-3 py-2 rounded-xl text-left bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold text-purple-200 transition-colors"
-                >
-                  <ArrowLeft size={14} />
-                  <span>Wapas Main Options Pe</span>
-                </button>
-
-                {selectedCategory.items.map(item => (
+          {selectedCategory ? (
+            /* ════════ SUB-MENU: LIST OF FEATURES FOR SELECTED CATEGORY (e.g. TOP BAR) ════════ */
+            <div className="space-y-2 animate-in fade-in duration-200">
+              {/* Header */}
+              <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-2">
+                <div className="flex items-center gap-2 min-w-0">
                   <button
-                    key={item.id}
-                    onClick={() => handleSelectItem(item)}
-                    className={`w-full flex items-center justify-between p-2.5 rounded-xl text-left transition-all border ${
-                      activeItemTitle === item.title
-                        ? 'bg-gradient-to-r from-amber-500/20 to-orange-500/20 border-amber-400 text-amber-200 shadow-md'
-                        : 'bg-white/5 hover:bg-white/10 border-white/5 text-slate-100'
-                    }`}
+                    onClick={() => {
+                      setSelectedCategory(null);
+                      setActiveItemTitle(null);
+                      setSpotlightRect(null);
+                      if (typeof window !== 'undefined') {
+                        window.dispatchEvent(new CustomEvent('nst-pedro-return-home'));
+                      }
+                      speakText('Home screen ke doosre options chuniye!');
+                    }}
+                    className="px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/20 text-purple-200 text-xs font-bold flex items-center gap-1 shrink-0 border border-white/15 active:scale-95 transition-all cursor-pointer"
+                    title="Wapas options par jayein"
                   >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span className="text-lg shrink-0">{item.icon}</span>
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold truncate leading-snug">{item.title}</p>
-                        <p className="text-[10px] text-slate-400 truncate">{item.summary}</p>
-                      </div>
-                    </div>
-                    <ChevronRight size={14} className="text-slate-400 shrink-0 ml-1" />
+                    <ArrowLeft size={13} />
+                    <span>Wapas</span>
                   </button>
-                ))}
-              </>
-            ) : (
-              /* TOP-LEVEL 6 CARDS FOR HOME (OR CURRENT PAGE CATEGORIES) */
-              <>
-                {pageConfig.categories.map(cat => (
-                  <button
-                    key={cat.id}
-                    onClick={() => handleSelectCategory(cat)}
-                    className={`w-full flex items-center justify-between p-2.5 rounded-xl text-left transition-all border ${
-                      activeItemTitle === cat.title
-                        ? 'bg-gradient-to-r from-purple-600/30 to-pink-600/30 border-purple-400 text-purple-200 shadow-md scale-[1.01]'
-                        : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-100 active:scale-[0.98]'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span className="text-lg shrink-0">{cat.icon}</span>
-                      <div className="min-w-0">
-                        <p className="text-xs font-black truncate leading-snug">{cat.title}</p>
-                        <p className="text-[10px] text-slate-400 truncate">{cat.description}</p>
-                      </div>
-                    </div>
-                    <span className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-white/10 text-purple-300 border border-white/10 shrink-0">
-                      Dekhein →
+
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="text-base shrink-0">{selectedCategory.icon}</span>
+                    <span className="font-black text-xs sm:text-sm text-white truncate">
+                      {selectedCategory.title} ke Features
                     </span>
-                  </button>
-                ))}
-              </>
-            )}
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-500/25 text-purple-300 border border-purple-400/30 shrink-0">
+                      {selectedCategory.items.length}
+                    </span>
+                  </div>
+                </div>
 
-            {/* "Aur kuch jaanna hai" Interactive Prompt Chip */}
-            {showAskMoreChip && (
-              <div className="pt-2 pb-1 text-center animate-in fade-in zoom-in-95 duration-200">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[11px] font-black">
-                  <span>✨</span>
-                  <span>Aur kuch jaanna hai? Upar se chuniye!</span>
-                </span>
+                <div className="flex items-center gap-1 shrink-0">
+                  {/* Minimize button */}
+                  <button
+                    onClick={() => setIsMinimized(true)}
+                    className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+                    title="Niche karein (95% down)"
+                  >
+                    <ChevronDown size={14} />
+                  </button>
+
+                  {/* Voice toggle */}
+                  <button
+                    onClick={() => {
+                      if (isMuted) {
+                        setIsMuted(false);
+                        speakText('Voice chalu ho gaya!');
+                      } else {
+                        stopVoice();
+                        setIsMuted(true);
+                      }
+                    }}
+                    className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+                      isMuted ? 'text-red-300 bg-red-500/20' : 'text-purple-200 bg-purple-500/20 hover:bg-purple-500/30'
+                    }`}
+                    title={isMuted ? "Unmute Voice" : "Mute Voice"}
+                  >
+                    {isMuted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                  </button>
+
+                  {/* Close button */}
+                  <button
+                    onClick={onClose}
+                    className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+                    title="Close"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
               </div>
-            )}
-          </div>
+
+              {/* Guide prompt */}
+              <div className="px-1 text-[11px] text-slate-300 flex items-center justify-between">
+                <span>🎯 Feature par tap karein, Pedro live point karega:</span>
+                {activeItemTitle && (
+                  <span className="text-[10px] font-bold text-amber-400 animate-pulse flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> Live Dekh Rahe Hain
+                  </span>
+                )}
+              </div>
+
+              {/* Scrollable Features List */}
+              <div className="max-h-56 sm:max-h-64 overflow-y-auto space-y-1.5 pr-0.5 nst-scrollbar-none">
+                {(selectedCategory?.items || []).map((item, index) => {
+                  const isActive = activeItemTitle === item.title;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => handleSelectItem(item)}
+                      className={`w-full text-left p-2 sm:p-2.5 rounded-2xl transition-all border flex items-center gap-2.5 active:scale-[0.98] cursor-pointer ${
+                        isActive
+                          ? 'bg-gradient-to-r from-amber-500/25 via-purple-500/20 to-amber-500/20 border-amber-400 text-white shadow-[0_0_15px_rgba(245,158,11,0.35)]'
+                          : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-200 hover:text-white'
+                      }`}
+                    >
+                      {/* Number & Icon badge */}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black ${
+                          isActive ? 'bg-amber-400 text-slate-950 font-black' : 'bg-white/10 text-slate-400'
+                        }`}>
+                          {index + 1}
+                        </span>
+                        <span className="text-lg leading-none">{item.icon}</span>
+                      </div>
+
+                      {/* Title & Summary */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <p className={`font-bold text-xs sm:text-[13px] leading-tight truncate ${
+                            isActive ? 'text-amber-300 font-black' : 'text-white'
+                          }`}>
+                            {item.title}
+                          </p>
+                        </div>
+                        {item.summary && (
+                          <p className="text-[10.5px] sm:text-[11px] text-slate-300/90 leading-tight mt-0.5 line-clamp-1">
+                            {item.summary}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Status pill */}
+                      <div className="shrink-0">
+                        {isActive ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-400 text-slate-950 shadow flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-ping" />
+                            Focus
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white/10 text-slate-300 hover:text-white">
+                            Dekhein ➔
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            /* ════════ MAIN MENU: TABS (GUIDE, POWERS, RULES, ENERGY) ════════ */
+            <div className="space-y-2 animate-in fade-in duration-200">
+              {/* Header */}
+              <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-1.5">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xl shrink-0 animate-pedro-hover">🤖</span>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <h4 className="font-black text-xs sm:text-sm text-white leading-tight">
+                        Pedro AI Assistant
+                      </h4>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-gradient-to-r from-amber-400 to-orange-500 text-slate-950 shadow-sm flex items-center gap-1">
+                        <span>⚡ L{effectiveLevel}</span>
+                        <span>{levelConfig.badge}</span>
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-300 truncate">
+                      {levelConfig.title} • {energyStatus.isSleeping ? '😴 Power Sleep' : '🔋 100% Active'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1 shrink-0">
+                  {/* Minimize button */}
+                  <button
+                    onClick={() => setIsMinimized(true)}
+                    className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+                    title="Niche karein (95% down)"
+                  >
+                    <ChevronDown size={14} />
+                  </button>
+
+                  {/* Voice toggle */}
+                  <button
+                    onClick={() => {
+                      if (isMuted) {
+                        setIsMuted(false);
+                        speakText('Voice chalu ho gaya!');
+                      } else {
+                        stopVoice();
+                        setIsMuted(true);
+                      }
+                    }}
+                    className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+                      isMuted ? 'text-red-300 bg-red-500/20' : 'text-purple-200 bg-purple-500/20 hover:bg-purple-500/30'
+                    }`}
+                    title={isMuted ? "Unmute Voice" : "Mute Voice"}
+                  >
+                    {isMuted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                  </button>
+
+                  {/* Close button */}
+                  <button
+                    onClick={onClose}
+                    className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+                    title="Close"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+
+              {/* PEDRO NARAJ ALERT BANNER (If streak broken in last 24 hours) */}
+              {penaltyState.hasPenalty && (
+                <div className="p-3 rounded-2xl bg-gradient-to-br from-red-950/90 via-orange-950/70 to-slate-950/90 border border-red-500/60 shadow-xl space-y-2 animate-in fade-in zoom-in-95 duration-200">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xl shrink-0 animate-bounce">😠</span>
+                      <div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <h5 className="font-black text-xs sm:text-sm text-red-300 leading-tight">
+                            Pedro Naraj Hai! (Muh Latka Liya)
+                          </h5>
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-red-500/30 text-red-200 border border-red-400/40 uppercase tracking-wider">
+                            Streak Toot Gayi
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-300 mt-0.5">
+                          24 ghante online na aane se Pedro ka level drop ho gaya: <b className="text-amber-300">Level {penaltyState.originalLevel} ➔ Level {penaltyState.currentPenaltyLevel}</b>
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Recovery Tracker */}
+                  <div className="p-2 rounded-xl bg-slate-950/80 border border-white/10 space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-amber-200 font-bold flex items-center gap-1">
+                        <span>📅</span>
+                        <span>Wapas Level {penaltyState.targetLevel} par jane ke liye:</span>
+                      </span>
+                      <span className="font-bold text-white text-[11px]">
+                        {penaltyState.daysCompleted} / {penaltyState.daysNeeded} din
+                      </span>
+                    </div>
+
+                    <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden border border-white/10">
+                      <div
+                        className="h-full bg-gradient-to-r from-red-500 via-amber-400 to-emerald-400 transition-all duration-500"
+                        style={{
+                          width: `${Math.min(100, Math.round((penaltyState.daysCompleted / penaltyState.daysNeeded) * 100))}%`
+                        }}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between text-[10px] text-slate-400">
+                      <span>Bache hue: <b className="text-white">{penaltyState.daysRemaining} din</b> daily streak</span>
+                      <span className="text-amber-300 font-medium">
+                        {penaltyState.daysCompleted >= penaltyState.daysNeeded ? 'Complete!' : `${Math.round((penaltyState.daysCompleted / penaltyState.daysNeeded) * 100)}% done`}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Quick Action buttons */}
+                  <div className="flex items-center gap-2 pt-0.5">
+                    <button
+                      onClick={() => {
+                        speakText(
+                          `Aapne 24 ghante online na aakar streak tod di! Mera level drop hokar Level ${penaltyState.currentPenaltyLevel} ho gaya hai aur main aapse naraj hoon! Ab wapas Level ${penaltyState.targetLevel} par jane ke liye lagatar ${penaltyState.daysNeeded} din daily study karke streak banayein!`
+                        );
+                      }}
+                      className="flex-1 py-1.5 px-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-200 border border-red-400/40 text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all"
+                    >
+                      <span>🗣️</span>
+                      <span>Pedro Ki Suniye</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        onClose();
+                        onOpenStudyRoom ? onOpenStudyRoom() : onTriggerAction?.('GO_HOME');
+                      }}
+                      className="flex-1 py-1.5 px-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-[11px] flex items-center justify-center gap-1 shadow cursor-pointer active:scale-95 transition-all"
+                    >
+                      <span>📚</span>
+                      <span>Study Karke Manayein</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Quick Info Pill: Pedro Guide moved to 3-Dot Menu */}
+              <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-purple-950/40 border border-purple-400/20 text-[11px] text-purple-200">
+                <span className="flex items-center gap-1.5 min-w-0">
+                  <span>💡</span>
+                  <span className="truncate">Pedro <b>Levels, Powers & Energy</b> Guide 3-Dot (⋮) Menu me hai</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    setInternalSystemGuideOpen(true);
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-amber-400/20 hover:bg-amber-400/30 text-amber-300 font-bold text-[10px] border border-amber-400/40 transition shrink-0 cursor-pointer"
+                >
+                  Kholein ➔
+                </button>
+              </div>
+
+              {/* SCREEN FEATURE GUIDE CATEGORIES */}
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-52 sm:max-h-56 overflow-y-auto pr-0.5 nst-scrollbar-none">
+                  {(pageConfig?.categories || []).map((cat) => {
+                    const isActive = activeItemTitle === cat.title;
+                    return (
+                      <button
+                        key={cat.id}
+                        onClick={() => handleSelectCategory(cat)}
+                        className={`p-2 rounded-2xl text-left border transition-all active:scale-95 flex flex-col justify-between cursor-pointer ${
+                          isActive
+                            ? 'bg-gradient-to-br from-purple-600/30 to-pink-600/30 border-purple-400 text-white shadow-md'
+                            : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-100 hover:text-white'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between w-full mb-1">
+                          <span className="text-xl">{cat.icon}</span>
+                          {(cat.items || []).length > 1 && (
+                            <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-purple-500/25 text-purple-300 border border-purple-400/25">
+                              {(cat.items || []).length} features
+                            </span>
+                          )}
+                        </div>
+                        <p className="font-bold text-xs leading-tight truncate text-white">
+                          {cat.title}
+                        </p>
+                        {cat.description && (
+                          <p className="text-[10px] text-slate-400 line-clamp-1 mt-0.5">
+                            {cat.description}
+                          </p>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+
+
+
+
+
+
+
+
+
+            </div>
+          )}
         </div>
       </div>
+
+      {/* ══════════════════ PEDRO SYSTEM GUIDE MODAL (3-DOT MENU) ══════════════════ */}
+      {effectiveSystemGuideOpen && (
+        <div
+          id="pedro-system-guide-modal-overlay"
+          className="fixed inset-0 z-[99999] flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              handleCloseSystemGuide();
+            }
+          }}
+        >
+          <div
+            id="pedro-system-guide-modal-card"
+            className="relative w-full max-w-lg bg-slate-900/95 border border-purple-500/30 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh] text-slate-100"
+          >
+            {/* Modal Header */}
+            <div className="p-3.5 sm:p-4 border-b border-white/10 flex items-center justify-between bg-gradient-to-r from-purple-950/60 via-slate-900 to-indigo-950/60 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-gradient-to-tr from-amber-400 to-purple-600 flex items-center justify-center text-lg shadow-md border border-white/20 shrink-0">
+                  🤖
+                </div>
+                <div>
+                  <h4 className="font-black text-sm sm:text-base text-white flex items-center gap-1.5">
+                    <span>Pedro System Guide</span>
+                    <span className="px-1.5 py-0.2 rounded text-[9.5px] font-black bg-purple-500/30 text-purple-200 border border-purple-400/30 uppercase">
+                      3-Dot
+                    </span>
+                  </h4>
+                  <p className="text-[10.5px] text-slate-400">
+                    Pedro Levels, Powers & Energy system guide
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                id="close-pedro-system-guide-btn"
+                onClick={handleCloseSystemGuide}
+                className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white flex items-center justify-center transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* 3 Main Tabs: Levels, Powers, Energy */}
+            <div className="grid grid-cols-3 p-1.5 bg-slate-950/70 border-b border-white/10 text-xs shrink-0 gap-1">
+              <button
+                type="button"
+                id="system-guide-tab-levels"
+                onClick={() => setSystemGuideTab('LEVELS')}
+                className={`py-2 px-1 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  systemGuideTab === 'LEVELS'
+                    ? 'bg-gradient-to-r from-amber-500/20 to-orange-500/20 border border-amber-400/50 text-amber-300 shadow-sm'
+                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <span>📈</span>
+                <span className="truncate">Levels</span>
+              </button>
+
+              <button
+                type="button"
+                id="system-guide-tab-powers"
+                onClick={() => setSystemGuideTab('POWERS')}
+                className={`py-2 px-1 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  systemGuideTab === 'POWERS'
+                    ? 'bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-400/50 text-purple-300 shadow-sm'
+                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <span>⚡</span>
+                <span className="truncate">Powers</span>
+              </button>
+
+              <button
+                type="button"
+                id="system-guide-tab-energy"
+                onClick={() => setSystemGuideTab('ENERGY')}
+                className={`py-2 px-1 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  systemGuideTab === 'ENERGY'
+                    ? 'bg-gradient-to-r from-emerald-500/20 to-teal-500/20 border border-emerald-400/50 text-emerald-300 shadow-sm'
+                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <span>🔋</span>
+                <span className="truncate">Energy</span>
+              </button>
+            </div>
+
+            {/* Content Area */}
+            <div className="p-3.5 sm:p-4 overflow-y-auto space-y-3.5 text-xs nst-scrollbar-none flex-1">
+              {/* ═════════ TAB 1: PEDRO LEVELS (HOW THEY INCREASE) ═════════ */}
+              {systemGuideTab === 'LEVELS' && (
+                <div className="space-y-3">
+                  {/* How Levels Increase Card */}
+                  <div className="p-3 rounded-2xl bg-gradient-to-br from-amber-950/40 via-purple-950/40 to-slate-950 border border-amber-400/30 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">📈</span>
+                      <h5 className="font-black text-xs sm:text-sm text-white">
+                        Pedro Ka Level Kaise Badhta Hai?
+                      </h5>
+                    </div>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      Pedro aapki study activity ka real-time companion hai. Jab aap app me padhte hain aur study tasks complete karte hain:
+                    </p>
+                    <ul className="text-[11px] text-slate-300 space-y-1 pl-4 list-disc">
+                      <li><b>Study Hours & XP:</b> Notes, PDF, Video, Audio aur Study Modes me padhne par XP milta hai.</li>
+                      <li><b>Tasks Completion:</b> Daily assignments aur quiz complete karne par Pedro ka progression speed up hota hai.</li>
+                      <li><b>Level 1 se 8:</b> Jaise XP threshold cross hoti hai, Pedro level-up ho kar new looks aur powers unlock karta hai!</li>
+                    </ul>
+                  </div>
+
+                  {/* Current Student Progress Card */}
+                  <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/10 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-2xl">{levelConfig.icon}</span>
+                        <div>
+                          <h6 className="font-black text-white text-xs">
+                            Aapka Current Pedro: Level {effectiveLevel} ({levelConfig.title})
+                          </h6>
+                          <p className="text-[10px] text-amber-200">{levelConfig.badge}</p>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                        {user?.studyXp || user?.totalScore || 0} XP
+                      </span>
+                    </div>
+
+                    {levelConfig.nextLevelXp && (
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[10px] text-slate-400">
+                          <span>Next Level Target:</span>
+                          <span className="text-white font-bold">{levelConfig.nextLevelXp} XP</span>
+                        </div>
+                        <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden border border-white/10">
+                          <div
+                            className="h-full bg-gradient-to-r from-amber-400 to-orange-500 transition-all duration-500"
+                            style={{
+                              width: `${Math.min(100, Math.round(((user?.studyXp || user?.totalScore || 0) / levelConfig.nextLevelXp) * 100))}%`
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Top Bar Migration Rules */}
+                  <div className="p-3 rounded-2xl bg-white/5 border border-cyan-400/20 space-y-1.5">
+                    <div className="flex items-center gap-2 text-cyan-300 font-bold">
+                      <span>🔝</span>
+                      <span>Level-Up Top Bar Automation:</span>
+                    </div>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      • <b>Level 1</b>: Top bar par Streak aur Mailbox dono buttons normal visible rehte hain.<br/>
+                      • <b>Level 2</b>: Streak button top bar se gayab ho jata hai aur Pedro khud daily streak announce karta hai.<br/>
+                      • <b>Level 5</b>: Mailbox button gayab ho jata hai kyunki Pedro background me automatic free mailbox rewards claim kar leta hai!
+                    </p>
+                  </div>
+
+                  {/* Streak Break Penalty & Proportional Recovery */}
+                  <div className="p-3 rounded-2xl bg-gradient-to-r from-red-950/40 to-slate-900/60 border border-red-500/30 space-y-1.5">
+                    <div className="flex items-center gap-2 text-red-300 font-bold">
+                      <span>😠</span>
+                      <span>Streak Break Penalty & Proportional Recovery:</span>
+                    </div>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      • <b>24 Ghante Miss Hone Par</b>: Streak break hoti hai aur Pedro ka level 1 step drop hota hai.<br/>
+                      • <b>Proportional Recovery Formula</b>: Wapas us level par pahuchne ke liye target level se 1 kam din (<b>Target Level - 1 din</b>) lagatar daily study karni hogi.<br/>
+                      • <b>Naraj Look</b>: Penalty ke dauran Pedro naraj muh latka leta hai jab tak recovery complete na ho.
+                    </p>
+                  </div>
+
+                  {/* All 8 Levels Roadmap */}
+                  <div className="space-y-1.5">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">
+                      📜 All 8 Levels Progression Roadmap:
+                    </span>
+                    {(PEDRO_LEVELS || []).map((lvl) => {
+                      const isUnlocked = effectiveLevel >= lvl.level;
+                      return (
+                        <div
+                          key={lvl.level}
+                          className={`p-2.5 rounded-xl border transition-all ${
+                            isUnlocked
+                              ? lvl.level === effectiveLevel
+                                ? 'bg-amber-500/15 border-amber-400/60 shadow-sm'
+                                : 'bg-white/5 border-emerald-500/30'
+                              : 'bg-white/[0.02] border-white/5 opacity-60'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-1.5 mb-1">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="text-base shrink-0">{lvl.icon}</span>
+                              <span className="font-bold text-white text-xs truncate">
+                                Level {lvl.level}: {lvl.title}
+                              </span>
+                            </div>
+                            <span
+                              className={`text-[9px] font-black px-1.5 py-0.5 rounded-full shrink-0 flex items-center gap-0.5 ${
+                                isUnlocked
+                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/30'
+                                  : 'bg-slate-800 text-slate-400 border border-white/10'
+                              }`}
+                            >
+                              {isUnlocked ? <Unlock size={10} /> : <Lock size={10} />}
+                              <span>{isUnlocked ? 'Unlocked' : `${lvl.minXp || lvl.minScore || 0} XP`}</span>
+                            </span>
+                          </div>
+                          <p className="text-[10.5px] text-slate-300 leading-snug">
+                            {lvl.description || lvl.summary}
+                          </p>
+                          {lvl.visualLook && (
+                            <div className="mt-1 flex items-center gap-1 text-[9.5px] text-amber-300/90 font-medium">
+                              <span className="shrink-0">🎨</span>
+                              <span>Mascot Look: {lvl.visualLook}</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* ═════════ TAB 2: POWERS (UNLOCKED POWERS & OVERDRIVE) ═════════ */}
+              {systemGuideTab === 'POWERS' && (
+                <div className="space-y-3">
+                  {/* Current Active Powers */}
+                  <div className="p-3 rounded-2xl bg-purple-950/40 border border-purple-400/30 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl">⚡</span>
+                        <h5 className="font-black text-xs sm:text-sm text-white">
+                          Level {effectiveLevel} Active Powers
+                        </h5>
+                      </div>
+                      <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-200 border border-purple-400/30">
+                        {levelConfig.title}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-1">
+                      {(levelConfig?.powers || (levelConfig as any)?.perks || []).map((perk: string, i: number) => (
+                        <div key={i} className="flex items-center gap-1.5 text-[11px] text-slate-200">
+                          <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+                          <span className="truncate">{perk}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Level 7: 3D Color Scheme Selector */}
+                  <div className="p-3 rounded-2xl bg-slate-950/70 border border-cyan-400/30 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-base">🎨</span>
+                        <span className="text-xs font-black text-white">Pedro 3D Color Scheme (Level 7 Perk)</span>
+                      </div>
+                      {effectiveLevel >= 7 ? (
+                        <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                          Unlocked
+                        </span>
+                      ) : (
+                        <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-white/10 flex items-center gap-1">
+                          <Lock size={9} />
+                          <span>Unlocks at Level 7</span>
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10.5px] text-slate-300">
+                      Level 7 aur Ultra VIP members Pedro ka 3D material color switch kar sakte hain:
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        disabled={effectiveLevel < 7}
+                        onClick={() => handleSetColorScheme('classic')}
+                        className={`p-2.5 rounded-xl border flex items-center gap-2 transition-all ${
+                          pedroColorScheme === 'classic'
+                            ? 'bg-purple-600/30 border-purple-400 shadow-md ring-1 ring-purple-400'
+                            : 'bg-white/5 border-white/10 hover:bg-white/10'
+                        } ${effectiveLevel < 7 ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                      >
+                        <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-purple-500 to-indigo-400 border border-white/40 shrink-0" />
+                        <div className="text-left min-w-0">
+                          <div className="text-[11px] font-bold text-white truncate">Cosmic Purple</div>
+                          <div className="text-[9.5px] text-purple-200">Classic Theme</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={effectiveLevel < 7}
+                        onClick={() => handleSetColorScheme('cyber')}
+                        className={`p-2.5 rounded-xl border flex items-center gap-2 transition-all ${
+                          pedroColorScheme === 'cyber'
+                            ? 'bg-cyan-600/30 border-cyan-400 shadow-md ring-1 ring-cyan-400'
+                            : 'bg-white/5 border-white/10 hover:bg-white/10'
+                        } ${effectiveLevel < 7 ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                      >
+                        <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-cyan-400 to-emerald-400 border border-white/40 shrink-0" />
+                        <div className="text-left min-w-0">
+                          <div className="text-[11px] font-bold text-white truncate">Cyber Cyan</div>
+                          <div className="text-[9.5px] text-cyan-200">Neon Future</div>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Level 8 Supreme Overdrive */}
+                  <div className={`p-3 rounded-2xl border transition-all ${
+                    l8Overdrive.isActive
+                      ? 'bg-gradient-to-br from-amber-950/70 via-orange-950/60 to-red-950/70 border-amber-400/60 shadow-lg shadow-amber-500/10 ring-1 ring-amber-400/40'
+                      : l8Overdrive.canActivate
+                      ? 'bg-gradient-to-br from-emerald-950/70 via-slate-900/90 to-teal-950/70 border-emerald-400/60 shadow-lg shadow-emerald-500/10'
+                      : 'bg-slate-900/90 border-slate-700/50'
+                  }`}>
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl shrink-0">
+                          {l8Overdrive.isActive ? '🔥' : l8Overdrive.canActivate ? '⚡' : '🔋'}
+                        </span>
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-black text-white">
+                              Level 8: Supreme Overdrive
+                            </span>
+                            {l8Overdrive.isActive && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-amber-400 text-slate-950 uppercase tracking-wider animate-pulse">
+                                24H Boost Active
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-slate-300">
+                            Primary Study Mode: <b>2x XP (Double Score)</b> + <b>100% Free Credits</b>
+                          </p>
+                        </div>
+                      </div>
+
+                      <div>
+                        {l8Overdrive.isActive ? (
+                          <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-400/40">
+                            Active
+                          </span>
+                        ) : l8Overdrive.canActivate ? (
+                          <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/40">
+                            Charged (100%)
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-white/10">
+                            Recharging
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {l8Overdrive.isActive && (
+                      <div className="mt-2 p-2 rounded-xl bg-slate-950/70 border border-amber-400/30 space-y-1">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-amber-200 font-bold flex items-center gap-1">
+                            <span>⏱️</span>
+                            <span>Overdrive Timer:</span>
+                          </span>
+                          <span className="font-mono font-black text-white bg-amber-500/20 px-2 py-0.5 rounded text-xs border border-amber-400/30">
+                            {String(l8Overdrive.hoursRemaining).padStart(2, '0')}h : {String(l8Overdrive.minutesRemaining).padStart(2, '0')}m : {String(l8Overdrive.secondsRemaining % 60).padStart(2, '0')}s
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-amber-100/90 leading-relaxed">
+                          ⚡ Saare study modes me har XP par <b>double XP</b> mil raha hai aur barabar <b>bonus credits</b> wallet me credit ho rahe hain!
+                        </p>
+                      </div>
+                    )}
+
+                    {l8Overdrive.isCharging && (
+                      <div className="mt-2 p-2 rounded-xl bg-slate-950/70 border border-white/10 space-y-1.5">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="text-slate-300">Recharge Cycle:</span>
+                          <span className="font-bold text-amber-300">
+                            {l8Overdrive.chargePercent}% Charged ({l8Overdrive.chargeDaysRemaining} din baaki)
+                          </span>
+                        </div>
+                        <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden border border-white/10">
+                          <div
+                            className="h-full bg-gradient-to-r from-amber-500 via-orange-500 to-emerald-400 transition-all duration-500"
+                            style={{ width: `${l8Overdrive.chargePercent}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {l8Overdrive.canActivate && (
+                      <div className="mt-2 p-2 rounded-xl bg-slate-950/70 border border-emerald-400/30 space-y-2">
+                        <p className="text-[10.5px] text-emerald-200">
+                          🌟 Overdrive 100% ready hai! Tap karke 24H boost shuru karein:
+                        </p>
+                        <button
+                          type="button"
+                          onClick={handleActivateL8Overdrive}
+                          className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-emerald-500 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg hover:brightness-110 active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          <span>🔥</span>
+                          <span>Activate 24H Level 8 Overdrive Now</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ═════════ TAB 3: ENERGY & POWER SLEEP ═════════ */}
+              {systemGuideTab === 'ENERGY' && (
+                <div className="space-y-3">
+                  {/* Energy Battery Card */}
+                  <div className={`p-3 rounded-2xl border transition-all ${
+                    energyStatus.isSleeping
+                      ? 'bg-gradient-to-br from-purple-950/70 to-slate-950 border-purple-500/50 shadow-lg'
+                      : 'bg-gradient-to-br from-emerald-950/50 to-slate-950 border-emerald-500/50 shadow-lg'
+                  }`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-2xl animate-bounce">
+                          {energyStatus.isSleeping ? '😴' : '⚡'}
+                        </span>
+                        <div>
+                          <h5 className="font-black text-sm text-white flex items-center gap-1.5">
+                            <span>Pedro Energy:</span>
+                            <span className={energyStatus.isSleeping ? 'text-amber-400' : 'text-emerald-400'}>
+                              {energyStatus.isSleeping ? 'Power Sleep (Zzz)' : '100% Full Power'}
+                            </span>
+                          </h5>
+                          <p className="text-[10.5px] text-slate-300">
+                            {energyStatus.message}
+                          </p>
+                        </div>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded-full font-black text-[10px] uppercase tracking-wider ${
+                        energyStatus.isSleeping
+                          ? 'bg-amber-400 text-slate-950 animate-pulse'
+                          : 'bg-emerald-500 text-slate-950'
+                      }`}>
+                        {energyStatus.energyPercent}%
+                      </span>
+                    </div>
+
+                    <div className="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden border border-white/10 mb-2">
+                      <div
+                        className={`h-full transition-all duration-500 ${
+                          energyStatus.isSleeping
+                            ? 'bg-gradient-to-r from-purple-600 to-amber-500'
+                            : 'bg-gradient-to-r from-emerald-400 via-teal-400 to-cyan-400'
+                        }`}
+                        style={{ width: `${Math.max(5, energyStatus.energyPercent)}%` }}
+                      />
+                    </div>
+
+                    {energyStatus.isSleeping && (
+                      <div className="p-2 rounded-xl bg-purple-900/30 border border-purple-400/30 space-y-1">
+                        <div className="flex items-center justify-between text-[10.5px]">
+                          <span className="text-purple-200 font-bold">Wake Up Study Goal:</span>
+                          <span className="font-black text-amber-300">
+                            {energyStatus.reviveStudyMinsDone} / {energyStatus.reviveStudyMinsRequired} Mins
+                          </span>
+                        </div>
+                        <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden border border-white/10">
+                          <div
+                            className="h-full bg-amber-400 transition-all duration-300"
+                            style={{
+                              width: `${Math.min(100, Math.round((energyStatus.reviveStudyMinsDone / energyStatus.reviveStudyMinsRequired) * 100))}%`
+                            }}
+                          />
+                        </div>
+                        <p className="text-[10px] text-slate-300">
+                          Study Mode me 15 minute padhein ya neeche diye button se jagayein!
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Energy Action Controls */}
+                  <div className="grid grid-cols-2 gap-2">
+                    {energyStatus.isSleeping ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            PedroEngine.revivePedro(user?.id);
+                            setEnergyStatus(PedroEngine.getEnergyStatus(user, studyTimerSeconds));
+                            speakText('Main jag gaya! Main bilkul energized hoon! Chalo study shuru karte hain!');
+                          }}
+                          className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all cursor-pointer"
+                        >
+                          <Zap size={14} className="fill-slate-950" />
+                          <span>Wake Up Pedro ⚡</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleCloseSystemGuide();
+                            onTriggerAction?.('NAVIGATE_STUDY_MODE');
+                            speakText('Study Mode khol diya hai! 15 minute padhte hi main jag jaunga!');
+                          }}
+                          className="py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/20 text-white font-black text-xs flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+                        >
+                          <BookOpen size={14} className="text-cyan-300" />
+                          <span>Study 15 Mins 📖</span>
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            PedroEngine.putPedroToSleep(user?.id, 'Student manual nap test');
+                            setEnergyStatus(PedroEngine.getEnergyStatus(user, studyTimerSeconds));
+                            speakText('Zzz... Pedro power nap par ja raha hai!');
+                          }}
+                          className="py-2.5 px-3 rounded-xl bg-purple-900/40 hover:bg-purple-900/60 border border-purple-500/40 text-purple-200 font-bold text-xs flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+                        >
+                          <Moon size={14} />
+                          <span>Power Nap Test 😴</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            speakText('Pedro 100% full stamina par hai aur aapke saath study karne ke liye tayyar hai!');
+                          }}
+                          className="py-2.5 px-3 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-bold text-xs flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+                        >
+                          <BatteryCharging size={14} />
+                          <span>Stamina Full ✅</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Ultra Auto-Shield Info */}
+                  <div className="p-3 rounded-2xl bg-slate-900/60 border border-white/10 flex items-start gap-2.5">
+                    <Shield size={18} className={energyStatus.isUltraShielded ? 'text-amber-400 shrink-0 mt-0.5' : 'text-slate-400 shrink-0 mt-0.5'} />
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-bold text-white leading-tight">
+                        {energyStatus.isUltraShielded
+                          ? '👑 Ultra VIP Auto-Shield: Permanent Full Stamina Active'
+                          : 'Ultra Membership waalo ko milta hai Unlimited Auto-Shield'}
+                      </p>
+                      <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">
+                        {energyStatus.isUltraShielded
+                          ? 'Aapki streak break hone par bhi Pedro sleep mode me nahi jayega.'
+                          : 'Streak Freeze item ya daily 15 minute continuous study se Pedro ka stamina hamesha 100% rehta hai.'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };
@@ -1679,6 +3243,9 @@ interface FloatingPedroWidgetProps {
   customRobotName?: string;
   hidden?: boolean;
   isActive?: boolean;
+  userName?: string;
+  user?: any;
+  studyTimerSeconds?: number;
 }
 
 export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
@@ -1687,8 +3254,76 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
   currentPageIcon = '🏠',
   customRobotName = 'Pedro',
   hidden = false,
-  isActive = false
+  isActive = false,
+  userName = 'Student',
+  user,
+  studyTimerSeconds = 0
 }) => {
+  // Pedro Level & Visual Look Progression (Levels 1 - 8)
+  const effectiveLevel = useMemo(() => PedroEngine.getEffectiveLevel(user), [user]);
+
+  // Pedro Streak Break Penalty ("Naraj") state in Floating Widget
+  const [penaltyState, setPenaltyState] = useState<PedroPenaltyState>(() =>
+    PedroEngine.getPenaltyState(user?.id, user?.level)
+  );
+
+  useEffect(() => {
+    const updatePenalty = () => {
+      setPenaltyState(PedroEngine.getPenaltyState(user?.id, user?.level));
+    };
+    updatePenalty();
+    window.addEventListener('nst-pedro-penalty-change', updatePenalty);
+    window.addEventListener('nst-pedro-naraj', updatePenalty);
+    return () => {
+      window.removeEventListener('nst-pedro-penalty-change', updatePenalty);
+      window.removeEventListener('nst-pedro-naraj', updatePenalty);
+    };
+  }, [user?.id, user?.level]);
+
+  // Level 8 Color Change Scheme ("level 8 pe color change karne ka option milega 2 color milenge")
+  const [pedroColorScheme, setPedroColorScheme] = useState<'classic' | 'cyber'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('pedro_color_scheme');
+      if (saved === 'classic' || saved === 'cyber') return saved;
+    }
+    return 'classic';
+  });
+
+  useEffect(() => {
+    const handleColorSchemeChange = (e: any) => {
+      const scheme = e?.detail?.scheme || (typeof window !== 'undefined' ? localStorage.getItem('pedro_color_scheme') : null);
+      if (scheme === 'classic' || scheme === 'cyber') {
+        setPedroColorScheme(scheme);
+      }
+    };
+    window.addEventListener('pedro-color-scheme-change', handleColorSchemeChange);
+    window.addEventListener('storage', handleColorSchemeChange);
+    return () => {
+      window.removeEventListener('pedro-color-scheme-change', handleColorSchemeChange);
+      window.removeEventListener('storage', handleColorSchemeChange);
+    };
+  }, []);
+
+  // Energy state for Option 1: Power Sleep
+  const [energyStatus, setEnergyStatus] = useState(() => {
+    return PedroEngine.getEnergyStatus(user, studyTimerSeconds);
+  });
+
+  useEffect(() => {
+    setEnergyStatus(PedroEngine.getEnergyStatus(user, studyTimerSeconds));
+  }, [user, studyTimerSeconds]);
+
+  useEffect(() => {
+    const handleEnergyUpdate = () => {
+      setEnergyStatus(PedroEngine.getEnergyStatus(user, studyTimerSeconds));
+    };
+    window.addEventListener('nst-pedro-refresh', handleEnergyUpdate);
+    window.addEventListener('nst-pedro-energy-change', handleEnergyUpdate);
+    return () => {
+      window.removeEventListener('nst-pedro-refresh', handleEnergyUpdate);
+      window.removeEventListener('nst-pedro-energy-change', handleEnergyUpdate);
+    };
+  }, [user, studyTimerSeconds]);
   const [position, setPosition] = useState<{ x: number; y: number }>(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -1711,6 +3346,8 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [hasMoved, setHasMoved] = useState(false);
   const [isHidden, setIsHidden] = useState(hidden);
+  const [speechBubbleText, setSpeechBubbleText] = useState<string | null>(null);
+  const [isSpeakingLive, setIsSpeakingLive] = useState(false);
   const dragStartRef = useRef<{ startX: number; startY: number; initX: number; initY: number }>({
     startX: 0,
     startY: 0,
@@ -1718,9 +3355,254 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
     initY: 0
   });
 
+  // Feature Demonstration Flight with Rocket Booster ("Booster tab kaam karega jab samjhega feature tab jaate time")
+  const homePosRef = useRef<{ x: number; y: number }>(position);
+  const [isDemonstrating, setIsDemonstrating] = useState<boolean>(false);
+  const [isPointingPose, setIsPointingPose] = useState<boolean>(false);
+
+  // ── 10-MINUTE EMOTE SLEEP SEQUENCE ──
+  // "pedro 10 min emote jarne ke baad apne sar apne haatho se uthkhar je fidega aur sar jayega top baar me jahan wo rahta hai wahai chala jayega aur phir body boostbkaga ke ur ke ja yega aur set ho jayega aur phir bulana oafega pedro ko kguki so jayega ab wo"
+  const [retirePhase, setRetirePhase] = useState<'none' | 'toss_head' | 'flying_head' | 'body_boost' | 'docked_sleep'>('none');
+  const [flyingHeadPos, setFlyingHeadPos] = useState<{ x: number; y: number } | null>(null);
+  const retireTimerRef = useRef<any>(null);
+
+  // ── GRAND AUTH WELCOME CINEMATIC SEQUENCE ──
+  // User Request: "Jab user auth use karega to home oage asambal dikhtabhai ushke baad dikhega petro wo bhi bas ushka mundi wo bhi 512×512 aur dekh ke smile karefa aankh matkayega aur phir real size me aayega aur ja ke ushka naam dekhega top baar oe ohir aayega bokega welcome ............. ußer ka naam padhega"
+  type AuthWelcomePhase = 
+    | 'none'
+    | 'speak_welcome';  // Normal mascot speaks friendly greeting from companion position (NO giant head)
+
+  const [authWelcomePhase, setAuthWelcomePhase] = useState<AuthWelcomePhase>('none');
+  const [targetStudentName, setTargetStudentName] = useState<string>(userName || 'Student');
+
+  const startPedroAuthWelcomeSequence = useCallback((customTargetName?: string) => {
+    let row2Name = '';
+    try {
+      const row2El = document.getElementById('topbar-row2-greeting');
+      if (row2El) {
+        row2Name = row2El.getAttribute('data-student-name') || row2El.innerText.replace(/Hey,|\s*👋/g, '').trim() || '';
+      }
+    } catch {}
+    const cleanName = (customTargetName || row2Name || userName || 'Student').trim();
+    setTargetStudentName(cleanName);
+
+    // 0. Ensure Pedro is awake & unhidden
+    setIsHidden(false);
+    setRetirePhase('none');
+    try {
+      localStorage.removeItem('nst_pedro_hidden');
+      localStorage.removeItem('nst_pedro_sleeping');
+      window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: false, isSleeping: false } }));
+    } catch {}
+
+    const companionX = typeof window !== 'undefined' ? Math.max(10, window.innerWidth - 80) : 280;
+    const companionY = typeof window !== 'undefined' ? Math.max(80, window.innerHeight - 150) : 480;
+
+    // Direct friendly greeting in normal companion position (NO giant 512 head, NO screen blackout!)
+    setPosition({ x: companionX, y: companionY });
+    setAuthWelcomePhase('speak_welcome');
+
+    const shortName = cleanName.split(' ')[0] || 'Dost';
+    const welcomeText = `Namaste ${shortName}! Main Pedro, aapki madad ke liye taiyar hoon! ✨`;
+    setSpeechBubbleText(welcomeText);
+    setIsSpeakingLive(true);
+
+    pedroSpeak(`Namaste ${shortName}! Main Pedro, aapka study dost!`, {
+      pitch: 1.15,
+      rate: 1.1,
+      onEnd: () => setIsSpeakingLive(false),
+    });
+
+    setTimeout(() => {
+      setAuthWelcomePhase('none');
+      setIsSpeakingLive(false);
+      setTimeout(() => {
+        setSpeechBubbleText(null);
+      }, 3500);
+    }, 4000);
+  }, [userName]);
+
+  // Listen for login/assembly auth welcome triggers and expose global test trigger
+  useEffect(() => {
+    const handleAuthWelcome = (e: any) => {
+      const uName = e?.detail?.userName || userName;
+      startPedroAuthWelcomeSequence(uName);
+    };
+
+    window.addEventListener('nst-trigger-pedro-auth-welcome', handleAuthWelcome);
+    (window as any).__triggerPedroAuthWelcome = (customName?: string) => {
+      startPedroAuthWelcomeSequence(customName);
+    };
+
+    return () => {
+      window.removeEventListener('nst-trigger-pedro-auth-welcome', handleAuthWelcome);
+      delete (window as any).__triggerPedroAuthWelcome;
+    };
+  }, [startPedroAuthWelcomeSequence, userName]);
+
+  const startRetireToSleepSequence = () => {
+    if (isHidden || isActive || retirePhase !== 'none') return;
+
+    // Phase 1: Pedro unhooks head and docks silently
+    // User request: MUTED (Audio 0%). Achanak aawaz nikaal kar darana nahi hai. Pedro silent animation ke sath chupke se top-bar me dock hokar so jaye.
+    setRetirePhase('toss_head');
+    setSpeechBubbleText(null);
+    setIsSpeakingLive(false);
+
+    const curX = position.x;
+    const curY = position.y;
+    const targetX = Math.max(10, (typeof window !== 'undefined' ? window.innerWidth : 400) - 72);
+    const targetY = 16;
+
+    // Phase 2: Detached head launches & flies towards top bar
+    setTimeout(() => {
+      setRetirePhase('flying_head');
+      setFlyingHeadPos({ x: curX + 12, y: curY - 30 });
+      requestAnimationFrame(() => {
+        setFlyingHeadPos({ x: targetX, y: targetY });
+      });
+    }, 1400);
+
+    // Phase 3: Body ignites boosters and rockets straight to top bar
+    setTimeout(() => {
+      setRetirePhase('body_boost');
+      setPosition({ x: targetX, y: targetY });
+    }, 2400);
+
+    // Phase 4: Head & body settle together in top bar, Pedro goes to sleep
+    setTimeout(() => {
+      setRetirePhase('docked_sleep');
+      setIsHidden(true);
+      setFlyingHeadPos(null);
+      setSpeechBubbleText(null);
+      setIsSpeakingLive(false);
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('nst_pedro_hidden', 'true');
+        localStorage.setItem('nst_pedro_sleeping', 'true');
+        window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: true, isSleeping: true } }));
+      }
+    }, 3600);
+  };
+
+  // Reset/arm 2-minute timer for Pedro sleep on Home screen (User request: "Aur 10 min wala jo system hai ab kato 2 min home screen pe rukne pe jayega")
+  useEffect(() => {
+    if (isHidden || isActive) {
+      if (retireTimerRef.current) clearTimeout(retireTimerRef.current);
+      return;
+    }
+    const TWO_MINUTES_MS = 2 * 60 * 1000;
+    if (retireTimerRef.current) clearTimeout(retireTimerRef.current);
+    retireTimerRef.current = setTimeout(() => {
+      startRetireToSleepSequence();
+    }, TWO_MINUTES_MS);
+
+    return () => {
+      if (retireTimerRef.current) clearTimeout(retireTimerRef.current);
+    };
+  }, [isHidden, isActive, position]);
+
+  // Allow immediate manual testing or trigger via event
+  useEffect(() => {
+    const handleManualSleep = () => startRetireToSleepSequence();
+    window.addEventListener('nst-pedro-trigger-sleep', handleManualSleep);
+    (window as any).__triggerPedroSleep = startRetireToSleepSequence;
+    return () => {
+      window.removeEventListener('nst-pedro-trigger-sleep', handleManualSleep);
+    };
+  }, [position, isHidden, isActive, retirePhase]);
+
   useEffect(() => {
     setIsHidden(hidden);
   }, [hidden]);
+
+  // Keep home position in sync when user isn't in demonstration mode or dragging
+  useEffect(() => {
+    if (!isDemonstrating && !isDragging && retirePhase === 'none') {
+      homePosRef.current = position;
+    }
+  }, [position, isDemonstrating, isDragging, retirePhase]);
+
+  // Listen to Pedro background speech bubbles
+  useEffect(() => {
+    let timer: any = null;
+    const handleBubble = (e: any) => {
+      const text = e.detail?.text;
+      if (text) {
+        setSpeechBubbleText(text);
+        setIsSpeakingLive(true);
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => {
+          setSpeechBubbleText(null);
+          setIsSpeakingLive(false);
+        }, 7500);
+      }
+    };
+    const handleBubbleEnd = () => {
+      setIsSpeakingLive(false);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        setSpeechBubbleText(null);
+      }, 3000);
+    };
+    window.addEventListener('nst_pedro_speech_bubble', handleBubble);
+    window.addEventListener('nst_pedro_speaking_end', handleBubbleEnd);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener('nst_pedro_speech_bubble', handleBubble);
+      window.removeEventListener('nst_pedro_speaking_end', handleBubbleEnd);
+    };
+  }, []);
+
+  // Listen to restore Pedro events (from top bar 3-dot docked Mascot, Wheel, or NSTA Logo)
+  useEffect(() => {
+    const handleRestore = () => {
+      setIsHidden(false);
+      setRetirePhase('none');
+      setFlyingHeadPos(null);
+      if (homePosRef.current) {
+        setPosition(homePosRef.current);
+      }
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('nst_pedro_hidden');
+        localStorage.removeItem('nst_pedro_sleeping');
+        window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: false, isSleeping: false } }));
+      }
+    };
+    window.addEventListener('nst-restore-pedro', handleRestore);
+    window.addEventListener('nst-show-pedro', handleRestore);
+    return () => {
+      window.removeEventListener('nst-restore-pedro', handleRestore);
+      window.removeEventListener('nst-show-pedro', handleRestore);
+    };
+  }, []);
+
+  // Listen to autonomous flight events ("jo bhi feature dikhayega khud ja ke dikhayega")
+  useEffect(() => {
+    const handleFlyTo = (e: any) => {
+      const { x, y, isPointing } = e.detail || {};
+      if (typeof x === 'number' && typeof y === 'number') {
+        setIsDemonstrating(true);
+        setIsPointingPose(!!isPointing);
+        setPosition({ x, y });
+      }
+    };
+
+    const handleReturnHome = () => {
+      setIsDemonstrating(false);
+      setIsPointingPose(false);
+      if (homePosRef.current) {
+        setPosition(homePosRef.current);
+      }
+    };
+
+    window.addEventListener('nst-pedro-fly-to', handleFlyTo);
+    window.addEventListener('nst-pedro-return-home', handleReturnHome);
+    return () => {
+      window.removeEventListener('nst-pedro-fly-to', handleFlyTo);
+      window.removeEventListener('nst-pedro-return-home', handleReturnHome);
+    };
+  }, []);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     dragStartRef.current = {
@@ -1743,8 +3625,8 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
       setHasMoved(true);
     }
 
-    const newX = Math.min(Math.max(10, dragStartRef.current.initX + deltaX), window.innerWidth - 65);
-    const newY = Math.min(Math.max(65, dragStartRef.current.initY + deltaY), window.innerHeight - 90);
+    const newX = Math.min(Math.max(10, dragStartRef.current.initX + deltaX), window.innerWidth - 75);
+    const newY = Math.min(Math.max(65, dragStartRef.current.initY + deltaY), window.innerHeight - 95);
 
     setPosition({ x: newX, y: newY });
   };
@@ -1759,90 +3641,205 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
     // Persist position and notify
     if (typeof window !== 'undefined') {
       localStorage.setItem('nst_pedro_position', JSON.stringify(position));
+      homePosRef.current = position;
       window.dispatchEvent(new Event('nst-pedro-pos-change'));
     }
 
     // Tap detected
     if (!hasMoved) {
+      if (energyStatus.isSleeping) {
+        pedroSpeak('Zzz... Main thak gaya hoon, thoda aaram karne dijiye.');
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('nst-pedro-open-energy'));
+        }
+        onOpen();
+        return;
+      }
       onOpen();
     }
   };
 
-  // Double tap to hide Pedro
+  // Double tap to hide Pedro ("Pedro jab disable hoga tab wo top baar ke 3 dot ke paas ja ke baithega")
   const lastTapRef = useRef<number>(0);
-  const handleDoubleTapCheck = () => {
+  const handleDoubleTapCheck = (e: React.MouseEvent) => {
+    e.stopPropagation();
     const now = Date.now();
-    if (now - lastTapRef.current < 350) {
+    if (now - lastTapRef.current < 380) {
       setIsHidden(true);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('nst_pedro_hidden', 'true');
+        window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: true } }));
+        // User request: Sound Effect Only (Soft chime) ya 0.5s audio: "Pedro paused."
+        playSoftChime();
+        pedroSpeak('Pedro paused.', { rate: 1.2, showBubble: false });
+      }
     }
     lastTapRef.current = now;
   };
 
-  if (isHidden) {
+  if (isHidden && authWelcomePhase === 'none') {
     return null;
   }
 
+  const isRetiringFlight = retirePhase === 'body_boost';
+  const effectiveBooster = isDemonstrating || isRetiringFlight;
+  const isTransitioning = isDemonstrating || isRetiringFlight;
+
+  const effectivePose: PedroMascotPose = retirePhase === 'toss_head'
+    ? 'toss_head'
+    : (retirePhase === 'flying_head' || retirePhase === 'body_boost')
+    ? 'headless_booster'
+    : isPointingPose
+    ? 'pointing'
+    : energyStatus.isSleeping
+    ? 'sleep'
+    : 'idle';
+
   return (
-    <div
-      style={{
-        position: 'fixed',
-        left: `${position.x}px`,
-        top: `${position.y}px`,
-        zIndex: 99998,
-        touchAction: 'none'
-      }}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onClick={handleDoubleTapCheck}
-      className={`group cursor-grab active:cursor-grabbing select-none transition-transform duration-75 ${
-        isDragging ? 'scale-110 shadow-2xl opacity-90' : 'hover:scale-105 active:scale-95'
-      }`}
-      title="Pedro Robot Guide — Tap karke koi bhi feature samjhein (Double tap to hide)"
-    >
-      {/* Floating Robot Avatar */}
-      <div className="relative flex items-center justify-center">
-        {/* Outer Glow Halo */}
-        <div className={`absolute -inset-1.5 rounded-2xl transition-all duration-300 pointer-events-none ${
-          isActive
-            ? 'bg-gradient-to-r from-amber-400 via-pink-500 to-violet-500 opacity-100 blur-[8px] animate-pulse'
-            : 'bg-gradient-to-r from-purple-500 via-pink-500 to-indigo-500 opacity-70 blur-[5px] group-hover:opacity-100'
-        }`} />
-
-        {/* Robot Body */}
-        <div className={`relative w-13 h-13 rounded-2xl bg-gradient-to-br from-slate-900 via-indigo-950 to-purple-950 border-2 shadow-2xl flex flex-col items-center justify-center p-1 overflow-visible ${
-          isActive ? 'border-amber-400 ring-2 ring-amber-300/60 scale-105' : 'border-pink-400/80'
-        }`}>
-          {/* Glowing Antenna */}
-          <div className="absolute -top-3 left-1/2 -translate-x-1/2 flex flex-col items-center">
-            <span className={`w-2.5 h-2.5 rounded-full border border-white ${
-              isActive ? 'bg-amber-400 shadow-[0_0_10px_#f59e0b] animate-ping' : 'bg-emerald-400 shadow-[0_0_8px_#34d399]'
-            }`} />
-            <span className="w-0.5 h-1.5 bg-white/70" />
-          </div>
-
-          {/* Robot Screen Face */}
-          <div className="w-9 h-7 bg-slate-950 rounded-lg flex flex-col items-center justify-center px-1 border border-cyan-400/60 shadow-inner">
-            <div className="flex items-center gap-1.5">
-              <span className={`w-1.5 h-1.5 rounded-full bg-cyan-300 ${isActive ? 'animate-bounce' : 'animate-pulse'}`} />
-              <span className={`w-1.5 h-1.5 rounded-full bg-cyan-300 ${isActive ? 'animate-bounce' : 'animate-pulse'}`} />
+    <>
+      <div
+        style={{
+          position: 'fixed',
+          left: `${position.x}px`,
+          top: `${position.y}px`,
+          zIndex: 99998,
+          touchAction: 'none',
+          transition: isTransitioning
+            ? 'left 0.95s cubic-bezier(0.34, 1.2, 0.64, 1), top 0.95s cubic-bezier(0.34, 1.2, 0.64, 1), opacity 0.4s ease'
+            : isDragging
+            ? 'none'
+            : 'transform 0.15s ease, opacity 0.4s ease'
+        }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onClick={handleDoubleTapCheck}
+        className={`group cursor-grab active:cursor-grabbing select-none ${
+          isDragging ? 'scale-110 opacity-90' : 'hover:scale-105 active:scale-95'
+        }`}
+        title="Pedro Robot Guide — Tap karke koi bhi feature samjhein (Double tap karke top bar me bhejein)"
+      >
+        {/* Floating 3D Robot Mascot */}
+        <div className="relative flex flex-col items-center justify-center">
+          {/* Pedro Live Speech Bubble (when speaking while dialog is closed) */}
+          {speechBubbleText && !isActive && (
+            <div
+              className={`absolute bottom-full mb-3 pointer-events-auto z-[99999] ${
+                position.x > (typeof window !== 'undefined' ? window.innerWidth / 2 : 200) ? 'right-0' : 'left-0'
+              } w-64 max-w-[85vw] p-3 rounded-2xl bg-slate-950/95 border-2 border-purple-500/80 shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-200`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setSpeechBubbleText(null);
+              }}
+            >
+              <div className="flex items-start gap-2">
+                <span className="text-base shrink-0 animate-bounce">🤖</span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-black text-purple-300 uppercase tracking-wider leading-none mb-1 flex items-center gap-1">
+                    <span>{customRobotName || 'Pedro'} Voice</span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                  </p>
+                  <p className="text-[11.5px] font-semibold text-white leading-snug break-words">
+                    {speechBubbleText}
+                  </p>
+                </div>
+              </div>
+              {/* Speech bubble pointer notch */}
+              <div
+                className={`absolute top-full w-2.5 h-2.5 bg-slate-950 border-r-2 border-b-2 border-purple-500/80 transform rotate-45 -mt-1.5 ${
+                  position.x > (typeof window !== 'undefined' ? window.innerWidth / 2 : 200) ? 'right-5' : 'left-5'
+                }`}
+              />
             </div>
-            <div className={`mt-0.5 bg-cyan-400/80 rounded-full transition-all ${
-              isActive ? 'w-3.5 h-1 bg-amber-300' : 'w-3 h-0.5'
-            }`} />
-          </div>
+          )}
 
-          {/* Robot Name Label */}
-          <span className="text-[9px] font-black text-pink-200 tracking-tighter leading-none mt-0.5 max-w-[48px] truncate">
-            {customRobotName || 'Pedro'}
-          </span>
+          {/* Outer Glow Halo: At Level 4+, background glow disappears ("level 4 background ka glow hat jayega aur bara ho jayega pedro") */}
+          {effectiveLevel < 4 && (
+            <div
+              className={`absolute -inset-2 rounded-full transition-all duration-300 pointer-events-none ${
+                isActive || isSpeakingLive || effectiveBooster
+                  ? 'bg-gradient-to-r from-amber-400 via-orange-500 to-purple-500 opacity-95 blur-[10px] animate-pulse'
+                  : 'bg-gradient-to-r from-purple-500/70 to-indigo-500/70 opacity-60 blur-[6px] group-hover:opacity-90'
+              }`}
+            />
+          )}
 
-          {/* Context Badge */}
-          <div className="absolute -bottom-2 px-1.5 py-0.5 rounded-full bg-white dark:bg-slate-900 border border-purple-400/60 text-[9px] font-extrabold text-purple-700 dark:text-purple-300 shadow-xs flex items-center gap-0.5 whitespace-nowrap">
-            <span>{currentPageIcon}</span>
+          {/* 3D Pedro Mascot Model */}
+          <div className="relative">
+            <Pedro3DMascot
+              size={effectiveLevel >= 4 ? 84 : 70}
+              pose={effectivePose}
+              isSpeaking={isSpeakingLive}
+              isPointing={isPointingPose || authWelcomePhase === 'inspect_name'}
+              isDragging={isDragging}
+              isBoosterActive={effectiveBooster}
+              isNaraj={penaltyState.isNaraj}
+              level={effectiveLevel}
+              colorScheme={pedroColorScheme}
+              className={effectiveBooster ? 'scale-110' : 'animate-pedro-hover'}
+            />
+
+            {/* Pedro Naraj / Streak Penalty Badge ("Muh latka liya hai") */}
+            {penaltyState.isNaraj && authWelcomePhase === 'none' && (
+              <div className="absolute -top-3.5 -left-2 pointer-events-none animate-bounce flex items-center gap-0.5 z-20">
+                <span className="px-2 py-0.5 rounded-full bg-red-950/95 border border-red-500 text-red-200 text-[10px] font-black shadow-xl flex items-center gap-1">
+                  <span>😠</span>
+                  <span>Naraj!</span>
+                </span>
+              </div>
+            )}
+
+            {/* Rocket Booster Exhaust Plume & Glow during feature flight */}
+            {effectiveBooster && (
+              <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 flex flex-col items-center pointer-events-none z-10 animate-in fade-in zoom-in duration-200">
+                <div className="w-5 h-7 bg-gradient-to-b from-amber-400 via-orange-500 to-transparent rounded-full blur-[3px] opacity-90 animate-pulse" />
+                <div className="w-2 h-4 -mt-5 bg-cyan-300 rounded-full blur-[1px] opacity-95 animate-ping" />
+              </div>
+            )}
+
+            {/* Demonstration Guide Badge ("Yahan Dekhein!") */}
+            {isPointingPose && authWelcomePhase === 'none' && (
+              <div className="absolute -top-2 -right-3 pointer-events-none animate-bounce flex items-center gap-0.5">
+                <span className="px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[9px] font-black shadow-lg">
+                  Yahan Dekhein! 👇
+                </span>
+              </div>
+            )}
+
+            {/* Energy Sleep Zzz Badge ("Option 1 Pedro Energy / Power Sleep") */}
+            {energyStatus.isSleeping && authWelcomePhase === 'none' && (
+              <div className="absolute -top-3.5 -right-2 pointer-events-none animate-bounce flex items-center gap-0.5 z-20">
+                <span className="px-2 py-0.5 rounded-full bg-purple-950/95 border border-amber-400 text-amber-300 text-[10px] font-black shadow-xl flex items-center gap-1">
+                  <span>😴</span>
+                  <span>Zzz</span>
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </div>
-    </div>
+
+      {/* Detached Head Flying to Top Bar during 10-min sleep retirement */}
+      {retirePhase === 'flying_head' && flyingHeadPos && (
+        <div
+          style={{
+            position: 'fixed',
+            left: `${flyingHeadPos.x}px`,
+            top: `${flyingHeadPos.y}px`,
+            zIndex: 999999,
+            pointerEvents: 'none',
+            transition: 'left 1.2s cubic-bezier(0.25, 1, 0.5, 1), top 1.2s cubic-bezier(0.25, 1, 0.5, 1)',
+          }}
+        >
+          <div className="relative flex flex-col items-center">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-amber-300 p-0.5 shadow-2xl animate-spin-slow">
+              <Pedro3DMascot size={44} isMini pose="idle" level={effectiveLevel} colorScheme={pedroColorScheme} />
+            </div>
+            <div className="absolute -inset-1.5 bg-cyan-400/60 rounded-2xl blur-md -z-10 animate-ping" />
+            <span className="absolute -top-2 -right-2 text-xs animate-bounce">✨</span>
+          </div>
+        </div>
+      )}
+    </>
   );
 };

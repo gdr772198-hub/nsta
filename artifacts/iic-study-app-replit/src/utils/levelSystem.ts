@@ -7,27 +7,33 @@ export interface LevelInfo {
   gradient: string;
   glowColor: string;
   discount: number;
+  coinReward: number; // Coins (credits) awarded upon reaching this level (Total ~1390 coins L2-L15)
   animationIntensity: 0 | 1 | 2 | 3 | 4;
   nameColor?: string;
 }
 
 export const LEVEL_INFO: LevelInfo[] = [
-  { level: 1,  minScore: 0,          label: 'Beginner',         emoji: '🌱', color: '#94a3b8', gradient: 'from-slate-400 to-slate-500',                  glowColor: 'rgba(148,163,184,0.35)', discount: 0,  animationIntensity: 0 },
-  { level: 2,  minScore: 1000,       label: 'Learner',          emoji: '🌿', color: '#6ee7b7', gradient: 'from-emerald-300 to-teal-400',                 glowColor: 'rgba(110,231,183,0.35)', discount: 0,  animationIntensity: 0 },
-  { level: 3,  minScore: 2500,       label: 'Active Learner',   emoji: '🔍', color: '#38bdf8', gradient: 'from-sky-400 to-cyan-500',                     glowColor: 'rgba(56,189,248,0.4)',   discount: 2,  animationIntensity: 1 },
-  { level: 4,  minScore: 5000,       label: 'Consistent Learner', emoji: '✨', color: '#06b6d4', gradient: 'from-cyan-400 to-sky-500',                   glowColor: 'rgba(6,182,212,0.45)',   discount: 3,  animationIntensity: 1, nameColor: '#06b6d4' },
-  { level: 5,  minScore: 10000,      label: 'Dedicated Student', emoji: '⚡', color: '#3b82f6', gradient: 'from-blue-400 to-indigo-500',                 glowColor: 'rgba(59,130,246,0.5)',   discount: 5,  animationIntensity: 2, nameColor: '#3b82f6' },
-  { level: 6,  minScore: 25000,      label: 'Rising Achiever',  emoji: '🔥', color: '#f97316', gradient: 'from-orange-400 to-red-500',                   glowColor: 'rgba(249,115,22,0.55)',  discount: 8,  animationIntensity: 2, nameColor: '#f97316' },
-  { level: 7,  minScore: 75000,      label: 'Expert Learner',   emoji: '💫', color: '#a855f7', gradient: 'from-violet-400 to-purple-600',                glowColor: 'rgba(168,85,247,0.6)',   discount: 10, animationIntensity: 2, nameColor: '#a855f7' },
-  { level: 8,  minScore: 200000,     label: 'Master Learner',   emoji: '💎', color: '#f59e0b', gradient: 'from-amber-400 to-yellow-500',                 glowColor: 'rgba(245,158,11,0.65)',  discount: 13, animationIntensity: 3, nameColor: '#f59e0b' },
-  { level: 9,  minScore: 500000,     label: 'Elite',            emoji: '🌟', color: '#eab308', gradient: 'from-yellow-400 to-amber-500',                 glowColor: 'rgba(234,179,8,0.75)',   discount: 17, animationIntensity: 3, nameColor: '#eab308' },
-  { level: 10, minScore: 1000000,    label: 'Champion',         emoji: '👑', color: '#f59e0b', gradient: 'from-amber-400 to-orange-400',                 glowColor: 'rgba(245,158,11,0.8)',   discount: 20, animationIntensity: 3, nameColor: '#f59e0b' },
-  { level: 11, minScore: 2500000,    label: 'Legend',           emoji: '🏆', color: '#10b981', gradient: 'from-emerald-400 via-cyan-400 to-violet-500',  glowColor: 'rgba(16,185,129,0.9)',   discount: 20, animationIntensity: 4, nameColor: '#10b981' },
-  { level: 12, minScore: 5000000,    label: 'Mythic',           emoji: '🔮', color: '#8b5cf6', gradient: 'from-violet-400 via-purple-500 to-pink-500',   glowColor: 'rgba(139,92,246,0.9)',   discount: 22, animationIntensity: 4, nameColor: '#8b5cf6' },
-  { level: 13, minScore: 10000000,   label: 'Supreme',          emoji: '⚜️', color: '#ec4899', gradient: 'from-pink-400 via-rose-500 to-red-500',        glowColor: 'rgba(236,72,153,0.9)',   discount: 25, animationIntensity: 4, nameColor: '#ec4899' },
-  { level: 14, minScore: 25000000,   label: 'Eternal',          emoji: '🌠', color: '#f43f5e', gradient: 'from-rose-400 via-red-500 to-orange-500',      glowColor: 'rgba(244,63,94,0.95)',   discount: 28, animationIntensity: 4, nameColor: '#f43f5e' },
-  { level: 15, minScore: 50000000,   label: 'Absolute Legend',  emoji: '💠', color: '#a5f3fc', gradient: 'from-white via-cyan-200 to-violet-400',         glowColor: 'rgba(165,243,252,0.95)', discount: 30, animationIntensity: 4, nameColor: '#7c3aed' },
+  { level: 1,  minScore: 0,          label: 'Beginner',         emoji: '🌱', color: '#94a3b8', gradient: 'from-slate-400 to-slate-500',                  glowColor: 'rgba(148,163,184,0.35)', discount: 0,  coinReward: 0,   animationIntensity: 0 },
+  { level: 2,  minScore: 1000,       label: 'Learner',          emoji: '🌿', color: '#6ee7b7', gradient: 'from-emerald-300 to-teal-400',                 glowColor: 'rgba(110,231,183,0.35)', discount: 0,  coinReward: 20,  animationIntensity: 0 },
+  { level: 3,  minScore: 2500,       label: 'Active Learner',   emoji: '🔍', color: '#38bdf8', gradient: 'from-sky-400 to-cyan-500',                     glowColor: 'rgba(56,189,248,0.4)',   discount: 2,  coinReward: 30,  animationIntensity: 1 },
+  { level: 4,  minScore: 5000,       label: 'Consistent Learner', emoji: '✨', color: '#06b6d4', gradient: 'from-cyan-400 to-sky-500',                   glowColor: 'rgba(6,182,212,0.45)',   discount: 3,  coinReward: 40,  animationIntensity: 1, nameColor: '#06b6d4' },
+  { level: 5,  minScore: 10000,      label: 'Dedicated Student', emoji: '⚡', color: '#3b82f6', gradient: 'from-blue-400 to-indigo-500',                 glowColor: 'rgba(59,130,246,0.5)',   discount: 5,  coinReward: 50,  animationIntensity: 2, nameColor: '#3b82f6' },
+  { level: 6,  minScore: 25000,      label: 'Rising Achiever',  emoji: '🔥', color: '#f97316', gradient: 'from-orange-400 to-red-500',                   glowColor: 'rgba(249,115,22,0.55)',  discount: 8,  coinReward: 60,  animationIntensity: 2, nameColor: '#f97316' },
+  { level: 7,  minScore: 75000,      label: 'Expert Learner',   emoji: '💫', color: '#a855f7', gradient: 'from-violet-400 to-purple-600',                glowColor: 'rgba(168,85,247,0.6)',   discount: 10, coinReward: 75,  animationIntensity: 2, nameColor: '#a855f7' },
+  { level: 8,  minScore: 200000,     label: 'Master Learner',   emoji: '💎', color: '#f59e0b', gradient: 'from-amber-400 to-yellow-500',                 glowColor: 'rgba(245,158,11,0.65)',  discount: 13, coinReward: 90,  animationIntensity: 3, nameColor: '#f59e0b' },
+  { level: 9,  minScore: 500000,     label: 'Elite',            emoji: '🌟', color: '#eab308', gradient: 'from-yellow-400 to-amber-500',                 glowColor: 'rgba(234,179,8,0.75)',   discount: 17, coinReward: 110, animationIntensity: 3, nameColor: '#eab308' },
+  { level: 10, minScore: 1000000,    label: 'Champion',         emoji: '👑', color: '#f59e0b', gradient: 'from-amber-400 to-orange-400',                 glowColor: 'rgba(245,158,11,0.8)',   discount: 20, coinReward: 130, animationIntensity: 3, nameColor: '#f59e0b' },
+  { level: 11, minScore: 2500000,    label: 'Legend',           emoji: '🏆', color: '#10b981', gradient: 'from-emerald-400 via-cyan-400 to-violet-500',  glowColor: 'rgba(16,185,129,0.9)',   discount: 20, coinReward: 150, animationIntensity: 4, nameColor: '#10b981' },
+  { level: 12, minScore: 5000000,    label: 'Mythic',           emoji: '🔮', color: '#8b5cf6', gradient: 'from-violet-400 via-purple-500 to-pink-500',   glowColor: 'rgba(139,92,246,0.9)',   discount: 22, coinReward: 170, animationIntensity: 4, nameColor: '#8b5cf6' },
+  { level: 13, minScore: 10000000,   label: 'Supreme',          emoji: '⚜️', color: '#ec4899', gradient: 'from-pink-400 via-rose-500 to-red-500',        glowColor: 'rgba(236,72,153,0.9)',   discount: 25, coinReward: 190, animationIntensity: 4, nameColor: '#ec4899' },
+  { level: 14, minScore: 25000000,   label: 'Eternal',          emoji: '🌠', color: '#f43f5e', gradient: 'from-rose-400 via-red-500 to-orange-500',      glowColor: 'rgba(244,63,94,0.95)',   discount: 28, coinReward: 225, animationIntensity: 4, nameColor: '#f43f5e' },
+  { level: 15, minScore: 50000000,   label: 'Absolute Legend',  emoji: '💠', color: '#a5f3fc', gradient: 'from-white via-cyan-200 to-violet-400',         glowColor: 'rgba(165,243,252,0.95)', discount: 30, coinReward: 250, animationIntensity: 4, nameColor: '#7c3aed' },
 ];
+
+export const getLevelCoinReward = (level: number): number => {
+  const item = LEVEL_INFO.find(l => l.level === level);
+  return item?.coinReward || 0;
+};
 
 export const MAX_LEVEL = 15;
 export const LEVEL_THRESHOLDS = LEVEL_INFO.map(l => l.minScore);
@@ -97,20 +103,15 @@ const _DAILY_LIMIT_BONUS_PER_BUCKET: Record<number, number> = {
   15: 50, // same cap as L14
 };
 
-export const DAILY_LIMIT_BONUS_MAX_PCT = 500;
+export const DAILY_LIMIT_BONUS_MAX_PCT = 0;
 
 /**
- * Returns the Daily Limit Bonus percentage (0–500) for a given level and
- * daily progress percentage (0–100). Applies only to L9+.
- * Scales linearly: each completed 10% of daily goal adds the level's bucket bonus.
- * L15 is capped at 500% (same as L14).
+ * Returns the Daily Limit Bonus percentage.
+ * Permanently disabled (returns 0) per user mandate:
+ * "multiplier level 14 se 15 tak jate jate 4x 5x ho jata hai uskiye permanent hatega ye"
  */
 export const getDailyLimitBonus = (level: number, dailyProgressPct: number): number => {
-  if (level < 9 || dailyProgressPct <= 0) return 0;
-  const effectiveLevel = Math.min(level, 15);
-  const perBucket = _DAILY_LIMIT_BONUS_PER_BUCKET[effectiveLevel] ?? 0;
-  const buckets = Math.min(10, Math.floor(dailyProgressPct / 10));
-  return Math.min(DAILY_LIMIT_BONUS_MAX_PCT, buckets * perBucket);
+  return 0;
 };
 
 /**
@@ -354,12 +355,12 @@ export const SUBSCRIPTION_BONUS: Record<string, { score: number; bonusCredits: n
 };
 
 // Returns max reading/watching seconds for time-based scoring (Notes, PDF, Video, Audio)
-// Base 300s (5 min) for all levels. Level 9+ gets +30s per level above 8.
-// L1–L8: 300s  L9: 330s  L10: 360s  L11: 390s  L12: 420s  ...
+// Base 600s (10 min) for all levels. Level 9+ gets +60s (1 min) per level above 8.
+// L1–L8: 600s (10m)  L9: 660s (11m)  L10: 720s (12m)  L11: 780s (13m)  L12: 840s (14m) ...
 export const getMaxReadingSeconds = (level: number): number => {
-  const base = 300;
+  const base = 600;
   if (level <= 8) return base;
-  return base + (level - 8) * 30;
+  return base + (level - 8) * 60;
 };
 
 export const getLevelTopBarEffects = (lvl: LevelInfo): Array<{id:string;enabled:boolean;color:string;speed?:number;opacity?:number}> => {

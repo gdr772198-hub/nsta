@@ -38,6 +38,8 @@ import { RoutineRevisionBadge } from './RoutineRevisionBadge';
 import { tryEarnScore, getActiveBoost } from '../utils/scoreSystem';
 import { DailyEventPage } from './DailyEventPage';
 import { useAppTheme } from '../utils/themeContext';
+import { pedroSpeak, stopPedroVoice } from '../utils/pedroVoiceManager';
+import { getRoutineSpeechSummary } from './PedroAssistant';
 
 const TASK_COMPLETE_PTS = 50; // (25 pts Notes + 25 pts MCQ per lesson)
 
@@ -2201,6 +2203,23 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, activeBoard, activeC
   const userLevel = getLevelInfo(user?.totalScore || 0).level;
   const allNotes: LucentEntry[] = useMemo(() => (lucentNotes || []), [lucentNotes]);
 
+  // Pedro Voice on-demand routine listener
+  const [isSpeakingRoutine, setIsSpeakingRoutine] = useState(false);
+  const handleSpeakPedroRoutine = () => {
+    if (isSpeakingRoutine) {
+      stopPedroVoice();
+      setIsSpeakingRoutine(false);
+      return;
+    }
+    const speech = getRoutineSpeechSummary(userId, user);
+    setIsSpeakingRoutine(true);
+    pedroSpeak(speech, {
+      pitch: 1.12,
+      rate: 1.08,
+      onEnd: () => setIsSpeakingRoutine(false)
+    });
+  };
+
   // data must be declared before routineNotes useMemo — dep array references data.routineMode
   // (declaring after causes TDZ crash in production builds)
   const [data, setDataRaw] = useState<RoutineData>(() => {
@@ -2763,10 +2782,24 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, activeBoard, activeC
           >
             <ChevronLeft size={20} />
           </button>
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 flex items-center gap-2">
             <h1 className="font-black text-sm flex items-center gap-1.5" style={{ color: theme.textPrimary || '#0f172a' }}>
               <CalendarCheck size={16} className="shrink-0" style={{ color: theme.primary }} /> My Routine
             </h1>
+            <button
+              id="routine-pedro-listen-btn"
+              onClick={handleSpeakPedroRoutine}
+              className="px-2 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 transition active:scale-95 border cursor-pointer shrink-0"
+              style={{
+                background: isSpeakingRoutine ? `${theme.primary}25` : `${theme.primary}10`,
+                borderColor: `${theme.primary}35`,
+                color: theme.primary,
+              }}
+              title="Pedro se routine summary suniye"
+            >
+              <span>{isSpeakingRoutine ? '🔊' : '🎙️'}</span>
+              <span>Pedro se suniye</span>
+            </button>
           </div>
           {/* Routine ON/OFF toggle — compact */}
           <button

@@ -1948,7 +1948,7 @@ export const LessonView: React.FC<Props> = ({
                   const newStreak = mcqStreak + 1;
                   setMcqStreak(newStreak);
                   const _mcqLabel = [subject?.name, chapter?.title].filter(Boolean).join(' · ') || undefined;
-                  const pts = tryEarnScore(user.id, 2, _tier, _subValid, 0, 'MCQ_CORRECT', undefined, undefined, _mcqLabel);
+                  const pts = tryEarnScore(user.id, 5, _tier, _subValid, 0, 'MCQ_CORRECT', undefined, undefined, _mcqLabel);
                   const bonus = getMcqStreakBonus(newStreak);
                   const bonusPts = bonus > 0 ? tryEarnScore(user.id, bonus, _tier, _subValid, 0, `MCQ_STREAK_${newStreak}`, undefined, undefined, _mcqLabel) : 0;
                   const totalPts = pts + bonusPts;
@@ -1967,14 +1967,14 @@ export const LessonView: React.FC<Props> = ({
                   }
               } else {
                   setMcqStreak(0);
-                  subtractDailyScore(user.id, 1);
+                  subtractDailyScore(user.id, 2);
                   const _u = userRef.current;
                   if (_u && onUpdateUserRef.current) {
-                      const updated = { ..._u, totalScore: Math.max(0, (_u.totalScore || 0) - 1) };
+                      const updated = { ..._u, totalScore: Math.max(0, (_u.totalScore || 0) - 2) };
                       onUpdateUserRef.current(updated);
                       saveUserToLive(updated);
                   }
-                  showMcqScore(-1);
+                  showMcqScore(-2);
               }
           }
 

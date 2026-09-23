@@ -3689,4 +3689,102 @@ body.force-desktop-mode {
   background: rgba(59, 130, 246, 0.8);
 }
 
+/* ── Pedro 3D Mascot Animations ── */
+@keyframes pedro-tail-wag {
+  0%, 100% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(-18deg) scale(1.06);
+  }
+  50% {
+    transform: rotate(6deg);
+  }
+  75% {
+    transform: rotate(-22deg) scale(1.09);
+  }
+}
+
+.animate-pedro-tail {
+  transform-origin: 12px 30px;
+  animation: pedro-tail-wag 1.4s ease-in-out infinite;
+}
+
+/* Arms up and down continuous motion ("haath upar niche karta rahega") */
+@keyframes pedro-arm-bob-left {
+  0%, 100% {
+    transform: rotate(0deg) translateY(0px);
+  }
+  50% {
+    transform: rotate(-14deg) translateY(-4px);
+  }
+}
+
+@keyframes pedro-arm-bob-right {
+  0%, 100% {
+    transform: rotate(0deg) translateY(0px);
+  }
+  50% {
+    transform: rotate(16deg) translateY(-4.5px);
+  }
+}
+
+.animate-pedro-arm-left {
+  transform-origin: 24px 57px;
+  animation: pedro-arm-bob-left 1.3s ease-in-out infinite;
+}
+
+.animate-pedro-arm-right {
+  transform-origin: 56px 57px;
+  animation: pedro-arm-bob-right 1.3s ease-in-out infinite 0.25s;
+}
+
+@keyframes pedro-wave-hand {
+  0%, 100% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(22deg);
+  }
+  50% {
+    transform: rotate(-8deg);
+  }
+  75% {
+    transform: rotate(24deg);
+  }
+}
+
+.animate-pedro-wave {
+  transform-origin: 70px 49px;
+  animation: pedro-wave-hand 0.8s ease-in-out infinite;
+}
+
+@keyframes pedro-hover-float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+.animate-pedro-hover {
+  animation: pedro-hover-float 2.6s ease-in-out infinite;
+}
+
+/* Smooth continuous 360 degree spin */
+@keyframes pedro-360-spin {
+  0% {
+    transform: perspective(700px) rotateY(0deg);
+  }
+  100% {
+    transform: perspective(700px) rotateY(360deg);
+  }
+}
+
+.animate-pedro-360 {
+  animation: pedro-360-spin 9s linear infinite;
+}
+
+
 

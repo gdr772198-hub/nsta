@@ -4,6 +4,7 @@ import {
   Play,
   Pause,
   RotateCcw,
+  RotateCw,
   BookOpen,
   MessageSquare,
   Sparkles,
@@ -43,6 +44,7 @@ import {
   Medal,
   Trash2,
   Crown,
+  LogOut,
   Loader2,
   Share2,
   Info,
@@ -50,6 +52,7 @@ import {
   ChevronUp,
   Settings,
 } from 'lucide-react';
+import { FaWhatsapp } from 'react-icons/fa';
 import {
   type GroupStudyRoom,
   type GroupStudyMember,
@@ -66,6 +69,7 @@ import {
   deleteGroupRoom,
   markRoomAsCreatedByMe,
   isRoomCreatedByMe,
+  findRoomByCodeOrId,
   getCachedRooms,
   saveCachedRoom,
   sendRoomMessage,
@@ -84,7 +88,12 @@ import {
   resetLiveMcqToWaiting,
   syncHostActivity,
   cleanRtdbPayload,
+  electAndPromoteHighestLevelHost,
+  awardRoomStudyXp,
+  syncMemberLiveStats,
 } from '../services/groupStudyService';
+import { getLevelFromScore } from '../utils/levelSystem';
+import { rotateScreen } from '../utils/displayPrefs';
 import { auth, getChapterData, saveUserToLive, subscribeMcqLessons, saveTestResult, saveUserHistory } from '../firebase';
 import { STATIC_SYLLABUS, ADMIN_EMAIL, LUCENT_SUBJECT_OPTIONS_BASE, getLucentSubjectOptions } from '../constants';
 import { parseMCQText, extractStatements } from '../utils/mcqParser';
@@ -338,6 +347,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [roomSearchQuery, setRoomSearchQuery] = useState<string>('');
   const [joinCodeInput, setJoinCodeInput] = useState<string>('');
+  const [joinPasswordInput, setJoinPasswordInput] = useState<string>('');
+  const [showJoinPasswordInput, setShowJoinPasswordInput] = useState<boolean>(false);
   const [joinCodeError, setJoinCodeError] = useState<string>('');
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'MCQ' | 'LEADERBOARD' | 'MEMBERS'>('MCQ');
@@ -459,6 +470,52 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
       setCurrentRoom(activeRoom);
     }
   }, [activeRoom?.id]);
+
+  // ── Screen Rotate & Orientation State ─────────────────────────────────────
+  const [isScreenRotated, setIsScreenRotated] = useState<boolean>(() => {
+    try {
+      return typeof window !== 'undefined' && window.innerWidth > window.innerHeight;
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    const checkOrientation = () => {
+      try {
+        setIsScreenRotated(window.innerWidth > window.innerHeight);
+      } catch {}
+    };
+    const handleRotateEvent = (e: any) => {
+      if (e.detail?.orientation) {
+        setIsScreenRotated(e.detail.orientation === 'landscape');
+      } else {
+        checkOrientation();
+      }
+    };
+    window.addEventListener('resize', checkOrientation);
+    window.addEventListener('orientationchange', checkOrientation);
+    window.addEventListener('nst-screen-rotate', handleRotateEvent);
+    return () => {
+      window.removeEventListener('resize', checkOrientation);
+      window.removeEventListener('orientationchange', checkOrientation);
+      window.removeEventListener('nst-screen-rotate', handleRotateEvent);
+    };
+  }, []);
+
+  const handleToggleRotate = async () => {
+    try {
+      const res = await rotateScreen();
+      if (res !== null) {
+        setIsScreenRotated(res === 'landscape');
+      } else {
+        setIsScreenRotated(prev => !prev);
+      }
+    } catch (err) {
+      console.error('Rotate error:', err);
+      setIsScreenRotated(prev => !prev);
+    }
+  };
 
   // ── Unified Real MCQ Lessons Actually Added in the App ────────────────────
   // STRICT: Only lessons that actually contain questions are included!
@@ -1204,6 +1261,11 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     if (!roomId) return;
     const unsub = subscribeToRoom(roomId, (room) => {
       if (!room) {
+        // Guard against momentary null glitches: only clear if cached room is also gone or deleted
+        const cached = getCachedRooms()[roomId];
+        if (cached && !cached.isDeleted) {
+          return;
+        }
         setCurrentRoom(null);
         onActiveRoomChangeRef.current?.(null);
         return;
@@ -1219,23 +1281,56 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
         return room;
       });
       onActiveRoomChangeRef.current?.(room);
+
+      // Host Off Hone Par Highest Level / XP User Ka Host Banna
+      if (room.hostId && room.members && !room.members[room.hostId]) {
+        electAndPromoteHighestLevelHost(room.id, room);
+      }
     });
 
     return () => unsub();
   }, [currentRoom?.id]);
+
+  // ── 2b. Live Room Study XP & Minutes Accumulation ────────────────────────
+  // Active in Study Room: 30 XP per minute (0 credit) per user mandate
+  useEffect(() => {
+    if (!currentRoom?.id || !user?.id) return;
+    const rId = currentRoom.id;
+    const uId = user.id;
+
+    const studyXpTimer = setInterval(() => {
+      awardRoomStudyXp(rId, uId, 30, 1);
+      if (onUserUpdate) {
+        const curXp = user.xp || user.totalScore || 0;
+        onUserUpdate({
+          ...user,
+          xp: curXp + 30,
+          totalScore: curXp + 30,
+        });
+      }
+    }, 60000);
+
+    return () => clearInterval(studyXpTimer);
+  }, [currentRoom?.id, user?.id, onUserUpdate]);
 
   // ── 3. Synchronized Room Expiry Countdown & Auto-Submit ──────────────────
   useEffect(() => {
     if (!currentRoom) return;
 
     const calculateRemaining = () => {
-      const expiry = currentRoom.expiresAt || (currentRoom.createdAt + (currentRoom.durationMinutes || 30) * 60 * 1000);
+      const createdTime = typeof currentRoom.createdAt === 'number'
+        ? currentRoom.createdAt
+        : (currentRoom.createdAt ? new Date(currentRoom.createdAt).getTime() : Date.now());
+      const expiresTime = typeof currentRoom.expiresAt === 'number'
+        ? currentRoom.expiresAt
+        : (currentRoom.expiresAt ? new Date(currentRoom.expiresAt).getTime() : 0);
+      const expiry = expiresTime > 0 ? expiresTime : (createdTime + (currentRoom.durationMinutes || 30) * 60 * 1000);
       const diffMs = expiry - Date.now();
       const remainingSec = Math.max(0, Math.floor(diffMs / 1000));
-      setRoomSecondsLeft(remainingSec);
+      setRoomSecondsLeft(isNaN(remainingSec) ? 0 : remainingSec);
 
       // Auto-submit when time expires!
-      if (remainingSec <= 0 && !currentRoom.isExpired) {
+      if (!isNaN(remainingSec) && remainingSec <= 0 && !currentRoom.isExpired && expiry > 0) {
         handleTimeExpiredAutoSubmit();
       }
     };
@@ -1472,9 +1567,9 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     const effectiveRoomName = newRoomName.trim() || `${user?.name || 'Live'} MCQ Arena`;
     const cleanPassword = newRoomPassword.trim();
 
-    // Mandated: Password cannot be empty and must be at least 2 characters!
-    if (!cleanPassword || cleanPassword.length < 2) {
-      alert('Room ka Secret Password compulsory hai! Kripya kam se kam 2 akshar/number ka password enter karein. Bina password ke room create nahi ho sakta.');
+    // Password is now optional: agar enter kiya to kam se kam 2 characters hone chahiye
+    if (cleanPassword && cleanPassword.length < 2) {
+      alert('Agar aap password rakh rahe hain to kripya kam se kam 2 akshar/number ka password enter karein. Ya phir khali chhod kar Public room banayein.');
       return;
     }
 
@@ -1497,6 +1592,9 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
 
       const durationMinutes = Math.min(newRoomDurationMinutes || 30, maxDurationMinutesAllowed);
 
+      const userXp = Number(user?.totalScore ?? (user as any)?.xp ?? 0);
+      const userLevel = Number(getLevelFromScore(userXp));
+
       const roomId = await createGroupRoom(
         {
           name: effectiveRoomName,
@@ -1506,13 +1604,14 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
           password: cleanPassword,
           durationMinutes,
           maxMembers: Math.min(newRoomMaxMembers || 30, maxRoomCapacityAllowed),
-          isPrivate: !!newRoomIsPrivate,
+          isPrivate: !!cleanPassword,
         },
         {
           id: effectiveUid,
           name: effectiveName,
           photoURL: user?.photoURL || auth.currentUser?.photoURL || '',
-          level: user?.level || 1,
+          level: userLevel,
+          xp: userXp,
         }
       );
 
@@ -1561,7 +1660,11 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
               joinedAt: Date.now(),
               lastSeen: Date.now(),
               isHost: true,
-              level: user?.level || 1,
+              level: userLevel,
+              xp: userXp,
+              totalXp: userXp,
+              roomXp: 0,
+              studyMinutes: 0,
             },
           },
         };
@@ -1599,22 +1702,6 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
         }
       }
       setSelectedPreloadLesson(null);
-
-      // Safely set the current room with one-shot subscription
-      let unsubRoom: (() => void) | null = null;
-      unsubRoom = subscribeToRoom(roomId, (room) => {
-        if (room) {
-          setCurrentRoom(room);
-          if (onActiveRoomChange) onActiveRoomChange(room);
-        }
-        if (unsubRoom) {
-          unsubRoom();
-        } else {
-          setTimeout(() => {
-            if (unsubRoom) unsubRoom();
-          }, 0);
-        }
-      });
     } catch (err: any) {
       console.error('Failed to create room:', err);
       alert('Could not create room: ' + (err.message || 'Unknown error'));
@@ -1644,12 +1731,21 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     e.preventDefault();
     if (!passwordModalRoom) return;
 
-    // Room password (or if legacy room had no password, room code is required)
-    const correctPassword = (passwordModalRoom.password?.trim() || passwordModalRoom.code?.trim() || '').toLowerCase();
+    const hasPassword = Boolean(passwordModalRoom.password && passwordModalRoom.password.trim().length > 0);
+    if (!hasPassword) {
+      // Password-free public room: confirm and join directly
+      const roomToJoin = passwordModalRoom;
+      setPasswordModalRoom(null);
+      await handleJoinRoom(roomToJoin);
+      return;
+    }
+
+    // Room password check
+    const correctPassword = (passwordModalRoom.password?.trim() || '').toLowerCase();
     const typedPassword = enteredPassword.trim().toLowerCase();
 
     if (!typedPassword) {
-      setPasswordError('Kripya Room Password enter karein. Bina password ke room me entry nahi hogi.');
+      setPasswordError('Kripya Room Password enter karein.');
       return;
     }
 
@@ -1664,16 +1760,22 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
 
   const handleJoinRoom = async (room: GroupStudyRoom) => {
     setIsLoading(true);
+    // Cache immediately so any background listener finds it locally
+    saveCachedRoom(room);
     // Instantly transition into room in UI so user is never blocked or left in lobby
     setCurrentRoom(room);
     if (onActiveRoomChange) onActiveRoomChange(room);
 
     try {
+      const userXp = Number(user?.totalScore ?? (user as any)?.xp ?? 0);
+      const userLevel = Number(getLevelFromScore(userXp));
+
       await joinGroupRoom(room.id, {
         id: user?.id || auth.currentUser?.uid || 'guest',
         name: user?.name || auth.currentUser?.displayName || 'Student',
         photoURL: user?.photoURL || auth.currentUser?.photoURL || '',
-        level: user?.level || 1,
+        level: userLevel,
+        xp: userXp,
       });
     } catch (err: any) {
       console.warn('[GroupStudy] Background join error:', err);
@@ -1682,22 +1784,54 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     }
   };
 
-  const handleJoinByCode = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleJoinByCode = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     const code = joinCodeInput.trim()?.toUpperCase();
-    if (!code) return;
+    if (!code) {
+      setJoinCodeError('Kripya 6-digit Room Code enter karein.');
+      return;
+    }
 
     setJoinCodeError('');
     setIsLoading(true);
     try {
-      const found = activeRooms.find((r) => r.code?.toUpperCase() === code);
+      // 1. Search in memory activeRooms
+      let found = activeRooms.find(
+        (r) =>
+          r.code?.toUpperCase() === code ||
+          r.id?.toUpperCase() === code ||
+          r.id?.slice(-6).toUpperCase() === code
+      );
+
+      // 2. Fallback to cache and RTDB
       if (!found) {
-        setJoinCodeError('Room not found or session has ended. Please check code.');
+        found = (await findRoomByCodeOrId(code)) || undefined;
+      }
+
+      if (!found) {
+        setJoinCodeError('Room nahi mila! Kripya Room Code check karein ya Host se confirm karein.');
         setIsLoading(false);
         return;
       }
-      setJoinCodeInput('');
-      handleInitiateJoin(found);
+
+      // Check if user has already entered a password in the join form
+      const typedPass = joinPasswordInput.trim().toLowerCase();
+      const actualPass = (found.password?.trim() || found.code?.trim() || '').toLowerCase();
+      const currentUid = auth.currentUser?.uid || user?.id;
+      const isCreator = Boolean(currentUid && found.hostId && currentUid === found.hostId);
+
+      if (isCreator || !found.password || (typedPass && typedPass === actualPass)) {
+        // Direct password match or creator: Join immediately!
+        setJoinCodeInput('');
+        setJoinPasswordInput('');
+        setJoinCodeError('');
+        await handleJoinRoom(found);
+      } else if (typedPass && typedPass !== actualPass) {
+        setJoinCodeError('Galat Password! Kripya sahi room password enter karein.');
+      } else {
+        // No password typed in the form: open the password prompt modal
+        handleInitiateJoin(found);
+      }
     } catch (err: any) {
       setJoinCodeError(err.message || 'Failed to join');
     } finally {
@@ -1707,21 +1841,31 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
 
   const handleLeaveRoom = async () => {
     if (!currentRoom) return;
+    const effectiveUid = auth.currentUser?.uid || user?.id || '';
+    const otherMembersCount = Object.keys(currentRoom.members || {}).filter(
+      (mid) => mid !== effectiveUid && mid !== user?.id
+    ).length;
+
     const isRoomHost =
       isHost ||
       (user?.id && currentRoom.hostId === user.id) ||
       isRoomCreatedByMe(currentRoom.id, currentRoom.hostId, user?.id) ||
       (auth.currentUser?.uid && currentRoom.hostId === auth.currentUser.uid);
 
-    const promptText = isRoomHost
-      ? '⚠️ Aap is Room ke HOST hain! Host ke jate hi room submit aur destroy ho jayega aur sabhi members room se bahar ho jayenge. Kya aap room destroy karke leave karna chahte hain?'
-      : 'Kya aap is Group Study Room se bahar aana chahte hain?';
+    let promptText = 'Kya aap is Group Study Room se bahar aana chahte hain?';
+    if (isRoomHost) {
+      if (otherMembersCount > 0) {
+        promptText = '⚠️ Aap is Room ke HOST hain! Aapke leave karte hi room band nahi hoga — Highest Level & XP wale user naye Host ban jayenge. Kya aap leave karna chahte hain?';
+      } else {
+        promptText = '⚠️ Aap is Room ke akele sadasya hain. Aapke leave karne par room close ho jayega. Kya aap leave karna chahte hain?';
+      }
+    }
 
     if (confirm(promptText)) {
       const rId = currentRoom.id;
       setCurrentRoom(null);
       if (onActiveRoomChange) onActiveRoomChange(null);
-      if (isRoomHost) {
+      if (isRoomHost && otherMembersCount === 0) {
         await deleteGroupRoom(rId);
       } else {
         await leaveGroupRoom(rId, user?.id || 'guest', user?.name || 'Student');
@@ -1749,37 +1893,73 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     }
   };
 
-  const handleCopyCode = () => {
-    if (!currentRoom?.code) return;
-    navigator.clipboard.writeText(currentRoom.code);
+  const handleCopyCode = async (targetRoom?: GroupStudyRoom | null) => {
+    const room = targetRoom || currentRoom;
+    if (!room) return;
+    const roomCode = (room.code || room.id?.slice(-6) || 'STUDY1').toUpperCase();
+    const roomPassword = (room.password || (room as any).pass || '1234').trim();
+    const textToCopy = `🔑 Room Code: ${roomCode} | 🔒 Password: ${roomPassword}`;
+    let copied = false;
+
+    // 1. Try modern navigator.clipboard
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(textToCopy);
+        copied = true;
+      } catch (err) {
+        console.warn('Clipboard writeText failed, falling back:', err);
+      }
+    }
+
+    // 2. Fallback via temporary textarea for iframes or unsupported browsers
+    if (!copied) {
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = textToCopy;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        textarea.style.top = '0';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        const successful = document.execCommand('copy');
+        document.body.removeChild(textarea);
+        if (successful) copied = true;
+      } catch (err) {
+        console.warn('execCommand copy fallback failed:', err);
+      }
+    }
+
     setCopiedCode(true);
-    setTimeout(() => setCopiedCode(false), 2000);
+    setTimeout(() => setCopiedCode(false), 2500);
   };
 
   // ── Share to WhatsApp ──
-  const getShareInviteMessage = () => {
-    if (!currentRoom) return '';
-    const roomName = currentRoom.name || 'Live Study Room';
-    const roomSubject = currentRoom.subject || 'All Subjects';
-    const roomCode = currentRoom.code || '';
-    const passwordText = currentRoom.password ? `\n🔒 *Password:* ${currentRoom.password}` : '';
-    const hostText = currentRoom.hostName ? `👑 *Host:* ${currentRoom.hostName}\n` : '';
+  const getShareInviteMessage = (targetRoom?: GroupStudyRoom | null) => {
+    const room = targetRoom || currentRoom;
+    if (!room) return '';
+    const roomName = room.name || 'Live Study Room';
+    const roomSubject = room.subject || 'All Subjects';
+    const roomCode = (room.code || room.id?.slice(-6) || 'STUDY1').toUpperCase();
+    const roomPassword = (room.password || (room as any).pass || '1234').trim();
+    const hostText = room.hostName ? `👑 *Host:* ${room.hostName}\n` : '';
 
     return `🔥 *IIC Live Group Study & MCQ Battle Room!*
 📚 *Room:* ${roomName}
 🎯 *Subject:* ${roomSubject}
-${hostText}🔑 *Room Code:* ${roomCode}${passwordText}
+${hostText}🔑 *Room Code:* ${roomCode}
+🔒 *Password:* ${roomPassword}
 
 👉 *Kaise Judein:*
 1. IIC App kholein
 2. "Group Study" section me jayein
-3. Room Code *${roomCode}* daal kar Join karein!
+3. Room Code *${roomCode}* aur Password *${roomPassword}* enter karke Join karein!
 
 Aao dekhte hain kisme kitna hai dum! 🏆`;
   };
 
-  const handleShareToWhatsApp = () => {
-    const text = getShareInviteMessage();
+  const handleShareToWhatsApp = (targetRoom?: GroupStudyRoom | null) => {
+    const text = getShareInviteMessage(targetRoom || currentRoom);
     if (!text) return;
     const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
     try {
@@ -2138,14 +2318,16 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
     // User requested: Answer dete time na dikhega kitna galat hua kitna sahi
     setShowXpBanner(false);
 
-    // Synchronize XP to user profile & localStorage & Firebase
+    // Synchronize XP and Level to user profile & localStorage & Firebase & local room state
     if (outcome.netXpChange !== 0 && user?.id) {
       const currentXp = user.xp || user.totalScore || 0;
       const newXp = Math.max(0, currentXp + outcome.netXpChange);
+      const newLevel = getLevelFromScore(newXp);
       const updatedUser = {
         ...user,
         xp: newXp,
         totalScore: newXp,
+        level: newLevel,
       };
 
       try {
@@ -2155,6 +2337,28 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
 
       saveUserToLive(updatedUser, { immediate: true }).catch(() => {});
       onUserUpdate?.(updatedUser);
+
+      // Instantly update currentRoom member object locally
+      setCurrentRoom((prev) => {
+        if (!prev || !prev.members || !prev.members[user.id]) return prev;
+        const currentMem = prev.members[user.id];
+        const updatedMem = {
+          ...currentMem,
+          xp: newXp,
+          totalXp: newXp,
+          level: newLevel,
+          roomXp: Math.max(0, (currentMem.roomXp || 0) + outcome.netXpChange),
+        };
+        const updated = {
+          ...prev,
+          members: {
+            ...prev.members,
+            [user.id]: updatedMem,
+          },
+        };
+        saveCachedRoom(updated);
+        return updated;
+      });
     }
   };
 
@@ -2228,13 +2432,17 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
         (r.name && r.name.toLowerCase().includes(q)) ||
         (r.subject && r.subject.toLowerCase().includes(q)) ||
         (r.hostName && r.hostName.toLowerCase().includes(q)) ||
-        (r.code && r.code.toLowerCase().includes(q))
+        (r.code && r.code.toLowerCase().includes(q)) ||
+        (r.id && r.id.toLowerCase().includes(q)) ||
+        (r.id && r.id.slice(-6).toLowerCase().includes(q)) ||
+        (r.password && r.password.toLowerCase().includes(q))
     );
   }, [activeRooms, roomSearchQuery]);
 
   const brandColor = tierTheme?.primary || '#6366f1';
 
   const formatSeconds = (sec: number) => {
+    if (typeof sec !== 'number' || isNaN(sec) || !isFinite(sec) || sec < 0) return '00:00';
     const m = Math.floor(sec / 60);
     const s = sec % 60;
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
@@ -2248,28 +2456,32 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
       id="group-study-modal-overlay"
     >
       <div
-        className="w-full h-full md:h-[92vh] md:max-w-4xl bg-slate-900 border border-slate-700/70 md:rounded-3xl shadow-2xl flex flex-col overflow-hidden text-slate-100"
+        className={`w-full h-full ${
+          isScreenRotated
+            ? 'md:h-full md:max-w-none md:rounded-none'
+            : 'md:h-[92vh] md:max-w-4xl md:rounded-3xl'
+        } bg-slate-900 border border-slate-700/70 shadow-2xl flex flex-col overflow-hidden text-slate-100 transition-all`}
         style={{
           boxShadow: `0 25px 50px -12px ${brandColor}33`,
         }}
       >
         {/* ── TOP NAV BAR ── */}
-        <div className="flex items-center justify-between px-4 py-3 bg-slate-950/90 border-b border-slate-800 shrink-0">
-          <div className="flex items-center gap-2.5">
+        <div className="flex items-center justify-between gap-2 px-3 sm:px-4 py-2.5 sm:py-3 bg-slate-950/90 border-b border-slate-800 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 pr-1 shrink-0">
             <div
               className="w-9 h-9 rounded-xl flex items-center justify-center font-black shadow-md text-white shrink-0"
               style={{ background: brandColor }}
             >
               <Trophy size={18} />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-black text-sm md:text-base tracking-wide text-white line-clamp-1">
-                  {currentRoom ? currentRoom.name : 'Study Room · Live MCQ Arena'}
+            <div className="min-w-0 flex flex-col justify-center">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="font-black text-xs sm:text-sm md:text-base tracking-wide text-white truncate max-w-[95px] sm:max-w-[170px] md:max-w-[260px]">
+                  {currentRoom ? ((currentRoom.name && currentRoom.name !== 'undefined') ? currentRoom.name : `${currentRoom.subject || 'Live'} Battle`) : 'Study Room · Live MCQ Arena'}
                 </span>
                 {currentRoom && (
                   <span
-                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                    className={`inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-black border shrink-0 ${
                       currentRoom.mcqType === 'REVISION_HUB'
                         ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
                         : 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
@@ -2281,84 +2493,112 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-slate-400 line-clamp-1">
+              <p className="text-[10px] sm:text-[11px] text-slate-400 truncate max-w-[110px] sm:max-w-[220px]">
                 {currentRoom
-                  ? `${currentRoom.subject} • ${Object.keys(currentRoom.members || {}).length} Online • Free MCQ Hosting`
-                  : 'Live peer MCQ battles, instant XP (+5 / -2), streak bonuses & projector mode'}
+                  ? `${currentRoom.subject || 'General'} • ${Object.keys(currentRoom.members || {}).length} Online`
+                  : 'Live peer MCQ battles, instant XP & streak bonuses'}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {!isMcqRunning && currentRoom && (
-              <div
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-xs font-mono font-bold ${
-                  roomSecondsLeft <= 120
-                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 animate-pulse'
-                    : 'bg-slate-800/80 text-amber-300 border-slate-700'
-                }`}
-                title="Room Auto-Submit Timer"
-              >
-                <Clock size={13} />
-                <span>{formatSeconds(roomSecondsLeft)}</span>
-              </div>
-            )}
+          {/* Horizontally Scrollable Buttons Bar - Same Size for All Buttons */}
+          <div
+            className="flex-1 flex items-center justify-end gap-2 overflow-x-auto no-scrollbar scrollbar-none flex-nowrap py-1 pl-2 scroll-smooth"
+            style={{
+              scrollbarWidth: 'none',
+              WebkitOverflowScrolling: 'touch',
+              msOverflowStyle: 'none',
+            }}
+            onWheel={(e) => {
+              if (e.deltaY !== 0 && e.currentTarget) {
+                e.currentTarget.scrollLeft += e.deltaY;
+              }
+            }}
+          >
+            {/* Rotate Screen Button (Always in Top Bar, Same Size as Other Buttons) */}
+            <button
+              type="button"
+              onClick={handleToggleRotate}
+              className={`h-9 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition shadow-sm cursor-pointer whitespace-nowrap shrink-0 ${
+                isScreenRotated
+                  ? 'bg-purple-600/30 text-purple-200 border-purple-500/60 shadow-purple-500/20'
+                  : 'bg-slate-800/90 hover:bg-slate-700 text-slate-200 border-slate-700'
+              }`}
+              title={isScreenRotated ? 'Switch to Portrait' : 'Rotate Screen (Landscape / Portrait)'}
+              aria-label="Rotate Screen"
+            >
+              <RotateCw size={14} className={`shrink-0 transition-transform ${isScreenRotated ? 'rotate-90 text-purple-300' : ''}`} />
+              <span>Rotate</span>
+            </button>
 
             {currentRoom && (
               <button
+                type="button"
                 onClick={handleCopyCode}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 active:scale-95 transition"
+                className="h-9 px-3 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 flex items-center justify-center gap-1.5 active:scale-95 transition shadow-sm cursor-pointer whitespace-nowrap shrink-0"
                 title="Room Code copy karein"
+                aria-label="Copy Room Code"
               >
-                {copiedCode ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-                <span className="font-mono text-[11px]">{copiedCode ? 'Copied!' : currentRoom.code}</span>
+                {copiedCode ? <Check size={14} className="text-emerald-400 shrink-0" /> : <Copy size={14} className="shrink-0" />}
+                <span className="font-mono text-xs">{copiedCode ? 'Copied!' : currentRoom.code}</span>
               </button>
             )}
 
             {currentRoom && isHost && !isMcqRunning && (
               <button
+                type="button"
                 onClick={() => setActiveTab('MCQ')}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 text-xs font-black active:scale-95 transition shadow cursor-pointer"
-                title="Wahi se koi bhi lesson ka MCQ start karein"
+                className="h-9 px-3 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 text-xs font-black flex items-center justify-center gap-1.5 active:scale-95 transition shadow-md cursor-pointer whitespace-nowrap shrink-0"
+                title="Live MCQ Battle start karein"
+                aria-label="Start Live MCQ"
               >
-                <Play size={13} />
+                <Play size={13} className="fill-slate-950 shrink-0" />
                 <span>Start MCQ</span>
               </button>
             )}
 
             {!isMcqRunning && currentRoom && isHost && (
               <button
+                type="button"
                 onClick={() => handleDestroyRoom()}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-600/90 hover:bg-rose-600 text-white text-xs font-black active:scale-95 transition shadow-md cursor-pointer border border-rose-500"
-                title="Host: Is Study Room ko destroy / delete karein"
+                className="h-9 px-3 rounded-xl bg-rose-600/90 hover:bg-rose-600 text-white text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition shadow-sm cursor-pointer border border-rose-500/80 whitespace-nowrap shrink-0"
+                title="Host: Room delete karein"
+                aria-label="Destroy Room"
               >
-                <Trash2 size={13} />
-                <span className="hidden sm:inline">Destroy</span>
+                <Trash2 size={14} className="shrink-0" />
+                <span>Destroy</span>
               </button>
             )}
 
             {currentRoom && (
               <button
+                type="button"
                 onClick={handleLeaveRoom}
-                className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 hover:text-white text-xs font-bold active:scale-95 transition cursor-pointer"
+                className="h-9 px-3 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition cursor-pointer whitespace-nowrap shrink-0"
                 title="Room se bahar aayein"
+                aria-label="Leave Room"
               >
-                Leave
+                <LogOut size={14} className="shrink-0" />
+                <span>Leave</span>
               </button>
             )}
 
             {!currentRoom && (
               <button
+                type="button"
                 onClick={handleOpenCreateModal}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-white text-xs font-black shadow-md active:scale-95 transition cursor-pointer"
+                className="h-9 px-3 rounded-xl text-white text-xs font-black shadow-md flex items-center justify-center gap-1.5 active:scale-95 transition cursor-pointer whitespace-nowrap shrink-0"
                 style={{ background: brandColor }}
+                title="Naya study room banayein"
+                aria-label="Create Room"
               >
-                <Plus size={14} />
+                <Plus size={14} className="shrink-0" />
                 <span>+ Room Banayein</span>
               </button>
             )}
 
             <button
+              type="button"
               onClick={() => {
                 if (currentRoom) {
                   handleLeaveRoom();
@@ -2366,10 +2606,12 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                   onClose();
                 }
               }}
-              className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center active:scale-90 transition shrink-0 cursor-pointer"
+              className="h-9 px-3 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition shrink-0 cursor-pointer whitespace-nowrap"
               title={currentRoom ? 'Leave Room' : 'Close'}
+              aria-label={currentRoom ? 'Leave Room' : 'Close'}
             >
-              <X size={16} />
+              <X size={15} className="shrink-0" />
+              <span>Close</span>
             </button>
           </div>
         </div>
@@ -2422,39 +2664,106 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                   <b>+10, +15, ya +20 XP Bonus</b>! Password enter karke room join karein ya apna room banayein.
                 </p>
 
-                <div className="flex flex-wrap items-center gap-3">
-                  {!isCreateRoomGloballyHidden && (
-                    <button
-                      onClick={handleOpenCreateModal}
-                      className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-white font-black text-xs md:text-sm shadow-xl active:scale-95 transition cursor-pointer"
-                      style={{ background: brandColor }}
-                    >
-                      <Plus size={16} /> Apna MCQ Room Banayein
-                    </button>
+                {/* Enhanced Join by Code & Password Box */}
+                <div className="mt-4 p-3.5 sm:p-4 rounded-2xl bg-slate-950/80 border border-slate-800 shadow-xl space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
+                        <Key size={14} />
+                      </div>
+                      <div>
+                        <h3 className="text-xs sm:text-sm font-black text-white">Join by Room Code & Password</h3>
+                        <p className="text-[11px] text-slate-400">Host dwara share kiya gaya Room Code aur Password enter karein</p>
+                      </div>
+                    </div>
+                    {!isCreateRoomGloballyHidden && (
+                      <button
+                        type="button"
+                        onClick={handleOpenCreateModal}
+                        className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-white font-black text-xs shadow-md active:scale-95 transition cursor-pointer shrink-0"
+                        style={{ background: brandColor }}
+                      >
+                        <Plus size={14} /> Apna Room Banayein
+                      </button>
+                    )}
+                  </div>
+
+                  <form onSubmit={handleJoinByCode} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                    {/* Code input */}
+                    <div className="sm:col-span-4 relative">
+                      <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-amber-400 pointer-events-none">
+                        <Key size={13} />
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="6-Digit Room Code"
+                        value={joinCodeInput}
+                        onChange={(e) => {
+                          setJoinCodeInput(e.target.value.toUpperCase());
+                          setJoinCodeError('');
+                        }}
+                        className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-xl pl-8 pr-3 py-2 text-xs font-mono uppercase font-bold text-white placeholder:text-slate-500 outline-none transition"
+                        maxLength={12}
+                      />
+                    </div>
+
+                    {/* Password input */}
+                    <div className="sm:col-span-5 relative">
+                      <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                        <Lock size={13} />
+                      </div>
+                      <input
+                        type={showJoinPasswordInput ? 'text' : 'password'}
+                        placeholder="Room Password (if protected)"
+                        value={joinPasswordInput}
+                        onChange={(e) => {
+                          setJoinPasswordInput(e.target.value);
+                          setJoinCodeError('');
+                        }}
+                        className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-xl pl-8 pr-9 py-2 text-xs text-white placeholder:text-slate-500 outline-none transition"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowJoinPasswordInput(!showJoinPasswordInput)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
+                        title={showJoinPasswordInput ? 'Hide Password' : 'Show Password'}
+                      >
+                        {showJoinPasswordInput ? <EyeOff size={13} /> : <Eye size={13} />}
+                      </button>
+                    </div>
+
+                    {/* Join button */}
+                    <div className="sm:col-span-3">
+                      <button
+                        type="submit"
+                        disabled={!joinCodeInput.trim() || isLoading}
+                        className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md active:scale-95 disabled:opacity-50 transition cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        {isLoading ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} className="fill-current" />}
+                        <span>Join Room</span>
+                      </button>
+                    </div>
+                  </form>
+
+                  {joinCodeError && (
+                    <p className="text-xs font-bold text-rose-400 flex items-center gap-1.5 pt-0.5">
+                      <AlertCircle size={13} className="shrink-0" /> {joinCodeError}
+                    </p>
                   )}
 
-                  <div className="flex items-center gap-1.5 bg-slate-950/70 border border-slate-700 rounded-xl px-2.5 py-1">
-                    <input
-                      type="text"
-                      placeholder="Enter 6-digit Code"
-                      value={joinCodeInput}
-                      onChange={(e) => setJoinCodeInput(e.target.value)}
-                      className="bg-transparent border-0 outline-none text-xs font-mono uppercase text-white px-1 py-1 w-32 placeholder:text-slate-500"
-                      maxLength={6}
-                    />
-                    <button
-                      onClick={handleJoinByCode}
-                      disabled={!joinCodeInput.trim() || isLoading}
-                      className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white active:scale-95 disabled:opacity-50 cursor-pointer"
-                    >
-                      Join
-                    </button>
-                  </div>
+                  {!isCreateRoomGloballyHidden && (
+                    <div className="sm:hidden pt-1">
+                      <button
+                        type="button"
+                        onClick={handleOpenCreateModal}
+                        className="w-full flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-white font-black text-xs shadow-md active:scale-95 transition cursor-pointer"
+                        style={{ background: brandColor }}
+                      >
+                        <Plus size={14} /> Apna Room Banayein
+                      </button>
+                    </div>
+                  )}
                 </div>
-
-                {joinCodeError && (
-                  <p className="text-xs font-bold text-rose-400 mt-2">{joinCodeError}</p>
-                )}
               </div>
             </div>
 
@@ -2470,11 +2779,11 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                 </div>
 
                 {/* Search Input */}
-                <div className="w-full sm:w-72 relative">
+                <div className="w-full sm:w-80 relative">
                   <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     type="text"
-                    placeholder="Search by room name, subject or host..."
+                    placeholder="Search by Room Code, Name, Subject or Host..."
                     value={roomSearchQuery}
                     onChange={(e) => setRoomSearchQuery(e.target.value)}
                     className="w-full bg-slate-950/80 border border-slate-700 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder:text-slate-500 outline-none focus:border-indigo-500 transition"
@@ -2482,7 +2791,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                   {roomSearchQuery && (
                     <button
                       onClick={() => setRoomSearchQuery('')}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs cursor-pointer"
                     >
                       ✕
                     </button>
@@ -2555,12 +2864,15 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                               </div>
                               <span>Host: {room.hostName}</span>
                             </div>
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-amber-300 bg-amber-950/60 border border-amber-500/40 px-2 py-0.5 rounded-md" title="Room Code">
+                                🔑 Code: {(room.code || room.id?.slice(-6) || 'STUDY1').toUpperCase()}
+                              </span>
                               {isMyRoom ? (
                                 <>
                                   {room.password && (
                                     <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-amber-300 bg-amber-950/60 border border-amber-500/40 px-2 py-0.5 rounded-md" title="Room password (sirf host ko dikhta hai)">
-                                      🔑 PW: {room.password}
+                                      🔒 PW: {room.password}
                                     </span>
                                   )}
                                   <button
@@ -2591,6 +2903,18 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                         </div>
 
                         <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleShareToWhatsApp(room);
+                            }}
+                            className="px-2.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1 shadow active:scale-95 transition cursor-pointer shrink-0"
+                            title="WhatsApp par Code aur Password share karein"
+                          >
+                            <FaWhatsapp size={14} />
+                            <span className="hidden sm:inline">Share</span>
+                          </button>
                           {isMyRoom ? (
                             <button
                               type="button"
@@ -2729,7 +3053,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                 </div>
               ) : (
                 <>
-                  {/* Top Banner: Expiry Countdown & Host Controls */}
+                  {/* Top Banner: Host Controls & Room Status */}
                   <div className="mb-4 p-3.5 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950/70 to-slate-900 border border-indigo-500/30 text-white">
                     <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                       <div className="flex items-center gap-2">
@@ -2738,7 +3062,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                           <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
                         </span>
                         <span className="text-xs font-black uppercase tracking-wider text-emerald-300">
-                          Live Room Auto-Submit: {formatSeconds(roomSecondsLeft)}
+                          Live Room Active
                         </span>
                       </div>
 
@@ -2787,17 +3111,32 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                     <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 whitespace-nowrap">
                       <span className="text-xs font-bold text-slate-300">👥 Doston ko bulayein:</span>
                       <span className="font-mono text-xs font-black text-amber-400 bg-amber-950/60 px-2 py-0.5 rounded-lg border border-amber-500/30">
-                        Code: {currentRoom.code}
+                        🔑 Code: {(currentRoom.code || currentRoom.id?.slice(-6) || 'STUDY1').toUpperCase()}
                       </span>
+                      {currentRoom.password && (
+                        <span className="font-mono text-xs font-black text-amber-300 bg-amber-950/40 px-2 py-0.5 rounded-lg border border-amber-500/30">
+                          🔒 PW: {currentRoom.password}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0 whitespace-nowrap">
                       <button
                         type="button"
-                        onClick={handleCopyCode}
+                        onClick={() => handleCopyCode(currentRoom)}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 active:scale-95 transition cursor-pointer shrink-0"
+                        title="Room Code aur Password copy karein"
                       >
                         {copiedCode ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
-                        <span>{copiedCode ? 'Copied' : 'Copy Code'}</span>
+                        <span>{copiedCode ? 'Copied' : 'Copy Details'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleShareToWhatsApp(currentRoom)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md active:scale-95 transition cursor-pointer shrink-0"
+                        title="Doston ko WhatsApp par invite karein (Code aur Password dono jayega)"
+                      >
+                        <FaWhatsapp size={14} className="text-emerald-100" />
+                        <span>WhatsApp Share</span>
                       </button>
                       {isHost && (
                         <button
@@ -2834,20 +3173,33 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               {/* Collapsible Invite during active MCQ */}
               {isMcqRunning && showMobileInvite && (
                 <div className="mb-3 p-3 rounded-2xl bg-slate-900 border border-emerald-500/40 flex flex-wrap items-center justify-between gap-2 animate-in slide-in-from-top duration-150">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs text-slate-300">Room Code:</span>
-                    <span className="font-mono text-xs font-black text-amber-400 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-500/30">{currentRoom.code}</span>
+                    <span className="font-mono text-xs font-black text-amber-400 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-500/30">
+                      {(currentRoom.code || currentRoom.id?.slice(-6) || 'STUDY1').toUpperCase()}
+                    </span>
                     {currentRoom.password && (
-                      <span className="font-mono text-xs font-bold text-amber-300">🔑 PW: {currentRoom.password}</span>
+                      <span className="font-mono text-xs font-bold text-amber-300 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-500/30">
+                        🔒 PW: {currentRoom.password}
+                      </span>
                     )}
                   </div>
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={handleCopyCode}
+                      onClick={() => handleCopyCode(currentRoom)}
                       className="px-2.5 py-1 rounded-xl bg-slate-800 text-slate-200 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+                      title="Code aur Password copy karein"
                     >
                       {copiedCode ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-                      <span>{copiedCode ? 'Copied' : 'Copy Code'}</span>
+                      <span>{copiedCode ? 'Copied' : 'Copy Details'}</span>
+                    </button>
+                    <button
+                      onClick={() => handleShareToWhatsApp(currentRoom)}
+                      className="px-2.5 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer shadow"
+                      title="WhatsApp par share karein"
+                    >
+                      <FaWhatsapp size={12} />
+                      <span>WhatsApp</span>
                     </button>
                     <button onClick={() => setShowMobileInvite(false)} className="text-slate-400 hover:text-white text-xs pl-1 cursor-pointer">✕</button>
                   </div>
@@ -3682,16 +4034,26 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                             <span className="text-[10px] text-indigo-400 font-black">(Aap)</span>
                                           )}
                                         </p>
-                                        <span className="text-[10px] text-slate-400">
-                                          {isMemberHost ? '👑 Room Host (Quiz Shuru Karega)' : '🎓 Vidhyarthi / Participant'}
-                                        </span>
+                                        <div className="flex items-center gap-2 mt-0.5">
+                                          <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold text-[9px] border border-amber-500/30">
+                                            Lvl {m.level || 1}
+                                          </span>
+                                          <span className="text-[10px] text-indigo-300 font-semibold">
+                                            ⭐ {m.xp ?? m.totalXp ?? 0} XP
+                                          </span>
+                                          {(m.roomXp || 0) > 0 && (
+                                            <span className="text-[9px] text-emerald-400 font-bold">
+                                              +{m.roomXp}
+                                            </span>
+                                          )}
+                                        </div>
                                       </div>
                                     </div>
 
                                     <div className="shrink-0 flex items-center gap-1.5">
                                       {isMemberHost ? (
                                         <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-black text-[10px] border border-amber-500/30">
-                                          Host
+                                          👑 Host
                                         </span>
                                       ) : (
                                         <span className="px-2 py-0.5 rounded-full bg-slate-700/70 text-slate-300 font-bold text-[10px]">
@@ -4582,7 +4944,24 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                 </span>
                               )}
                             </div>
-                            <span className="text-[10px] text-slate-400">Level {m.level || 1}</span>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold text-[9px] border border-amber-500/30">
+                                Lvl {m.level || 1}
+                              </span>
+                              <span className="text-[10px] text-indigo-300 font-semibold">
+                                ⭐ {m.xp ?? m.totalXp ?? 0} XP
+                              </span>
+                              {(m.roomXp || 0) > 0 && (
+                                <span className="text-[9px] text-emerald-400 font-bold">
+                                  (+{m.roomXp} Room XP)
+                                </span>
+                              )}
+                              {(m.studyMinutes || 0) > 0 && (
+                                <span className="text-[9px] text-slate-400">
+                                  ⏱️ {m.studyMinutes}m
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
 
@@ -4927,22 +5306,21 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                 />
               </div>
 
-              {/* Mandatory Password Field */}
+              {/* Optional Password Field */}
               <div>
                 <label className="block text-xs font-bold text-slate-300 mb-1 flex items-center justify-between">
                   <span>
-                    Room Password <span className="text-rose-400">* (Compulsory / Zaroori)</span>
+                    Room Password <span className="text-slate-400 font-normal">(Optional / Marzi Hai)</span>
                   </span>
-                  <span className="text-[10px] text-amber-400 font-bold">🔒 Entry ke liye zaroori</span>
+                  <span className="text-[10px] text-emerald-400 font-bold">🔓 Khali chhodne par Public</span>
                 </label>
                 <div className="relative">
                   <input
                     type={showCreatePassword ? 'text' : 'password'}
-                    required
-                    placeholder="Enter Secret Room Password (e.g. 1234)"
+                    placeholder="Khali chhodein ya secret password daalein (e.g. 1234)"
                     value={newRoomPassword}
                     onChange={(e) => setNewRoomPassword(e.target.value)}
-                    className="w-full bg-slate-950 border border-amber-500/50 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-amber-400 pr-10 shadow-inner"
+                    className="w-full bg-slate-950 border border-slate-700 focus:border-amber-400 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none pr-10 shadow-inner"
                   />
                   <button
                     type="button"
@@ -4953,7 +5331,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                   </button>
                 </div>
                 <p className="text-[10px] text-slate-400 mt-1">
-                  Bina is password ke koi bhi user room me enter nahi kar sakega.
+                  Agar password khali chhodenge to koi bhi student direct confirmation ke sath room me enter kar sakega.
                 </p>
               </div>
 
@@ -5025,17 +5403,19 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
         </div>
       )}
 
-      {/* ── JOIN ROOM WITH PASSWORD MODAL ── */}
+      {/* ── JOIN ROOM (PASSWORD OR CONFIRMATION) MODAL ── */}
       {passwordModalRoom && (
         <div className="fixed inset-0 z-[10001] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-in zoom-in-95 duration-150">
           <div className="w-full max-w-sm bg-slate-900 border border-amber-500/40 rounded-3xl p-6 shadow-2xl space-y-4 text-slate-100">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
-                  <Lock size={16} />
+                  {passwordModalRoom.password && passwordModalRoom.password.trim() ? <Lock size={16} /> : <Users size={16} />}
                 </div>
                 <div>
-                  <h3 className="text-sm font-black text-white">Enter Room Password</h3>
+                  <h3 className="text-sm font-black text-white">
+                    {passwordModalRoom.password && passwordModalRoom.password.trim() ? 'Enter Room Password' : 'Join Room Confirmation'}
+                  </h3>
                   <p className="text-[10px] text-slate-400">{passwordModalRoom.name}</p>
                 </div>
               </div>
@@ -5047,56 +5427,102 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               </button>
             </div>
 
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Yeh room password protected hai. Is room me entry karne ke liye Host dwara set kiya gaya password enter karein.
-            </p>
-
-            <form onSubmit={handleVerifyPasswordAndJoin} className="space-y-3">
-              <div className="relative">
-                <input
-                  type={showPasswordText ? 'text' : 'password'}
-                  required
-                  autoFocus
-                  placeholder="Room Password yahan likhein..."
-                  value={enteredPassword}
-                  onChange={(e) => {
-                    setEnteredPassword(e.target.value);
-                    setPasswordError('');
-                  }}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-amber-400 pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPasswordText(!showPasswordText)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
-                >
-                  {showPasswordText ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-              </div>
-
-              {passwordError && (
-                <p className="text-xs font-bold text-rose-400 flex items-center gap-1">
-                  <AlertCircle size={12} /> {passwordError}
+            {passwordModalRoom.password && passwordModalRoom.password.trim() ? (
+              <>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Yeh room password protected hai. Is room me entry karne ke liye Host dwara set kiya gaya password enter karein.
                 </p>
-              )}
 
-              <div className="flex gap-2 pt-1">
-                <button
-                  type="submit"
-                  disabled={!enteredPassword.trim()}
-                  className="flex-1 py-2.5 rounded-xl font-black text-xs text-slate-950 bg-amber-400 hover:bg-amber-300 shadow-md active:scale-95 transition cursor-pointer disabled:opacity-50"
-                >
-                  Unlock & Join Room
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPasswordModalRoom(null)}
-                  className="px-4 py-2.5 rounded-xl font-bold text-xs text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 active:scale-95 transition cursor-pointer"
-                >
-                  Cancel
-                </button>
+                <form onSubmit={handleVerifyPasswordAndJoin} className="space-y-3">
+                  <div className="relative">
+                    <input
+                      type={showPasswordText ? 'text' : 'password'}
+                      required
+                      autoFocus
+                      placeholder="Room Password yahan likhein..."
+                      value={enteredPassword}
+                      onChange={(e) => {
+                        setEnteredPassword(e.target.value);
+                        setPasswordError('');
+                      }}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-amber-400 pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPasswordText(!showPasswordText)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
+                    >
+                      {showPasswordText ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+
+                  {passwordError && (
+                    <p className="text-xs font-bold text-rose-400 flex items-center gap-1">
+                      <AlertCircle size={12} /> {passwordError}
+                    </p>
+                  )}
+
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="submit"
+                      disabled={!enteredPassword.trim()}
+                      className="flex-1 py-2.5 rounded-xl font-black text-xs text-slate-950 bg-amber-400 hover:bg-amber-300 shadow-md active:scale-95 transition cursor-pointer disabled:opacity-50"
+                    >
+                      Unlock & Join Room
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPasswordModalRoom(null)}
+                      className="px-4 py-2.5 rounded-xl font-bold text-xs text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 active:scale-95 transition cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              </>
+            ) : (
+              <div className="space-y-3">
+                <div className="p-3 bg-slate-950/60 rounded-2xl border border-slate-800 space-y-1 text-xs">
+                  <div className="flex justify-between text-slate-400">
+                    <span>Room Code:</span>
+                    <span className="font-mono font-bold text-amber-400">{passwordModalRoom.code}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-400">
+                    <span>Host:</span>
+                    <span className="font-bold text-slate-200">{passwordModalRoom.hostName}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-400">
+                    <span>Subject:</span>
+                    <span className="text-indigo-300">{passwordModalRoom.subject}</span>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-300">
+                  Yeh public room hai. Kya aap abhi is room me join karna chahte hain?
+                </p>
+
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const roomToJoin = passwordModalRoom;
+                      setPasswordModalRoom(null);
+                      handleJoinRoom(roomToJoin);
+                    }}
+                    className="flex-1 py-2.5 rounded-xl font-black text-xs text-slate-950 bg-emerald-400 hover:bg-emerald-300 shadow-md active:scale-95 transition cursor-pointer"
+                  >
+                    🚀 Ha, Room Join Karein
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPasswordModalRoom(null)}
+                    className="px-4 py-2.5 rounded-xl font-bold text-xs text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 active:scale-95 transition cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
-            </form>
+            )}
           </div>
         </div>
       )}

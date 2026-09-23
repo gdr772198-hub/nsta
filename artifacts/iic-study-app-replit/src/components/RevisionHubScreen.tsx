@@ -486,12 +486,13 @@ export const RevisionHubScreen: React.FC<Props> = ({
         saveTestResult(user.id, newEntry);
         saveUserHistory(user.id, newEntry);
       } catch (_) {}
-      // ── Pts: +2 sahi jawab, +1 galat jawab ──────────────────────────────
-      const ptsEarned = (totalCorrect * 2) + ((totalAnswered - totalCorrect) * 1);
+      // ── Pts: +5 sahi jawab, -2 galat jawab ──────────────────────────────
+      const wrongCount = Math.max(0, totalAnswered - totalCorrect);
+      const ptsEarned = (totalCorrect * 5) - (wrongCount * 2);
       const updatedUser = {
         ...user,
         mcqHistory: [...(user.mcqHistory || []), newEntry],
-        totalScore: (user.totalScore || 0) + ptsEarned,
+        totalScore: Math.max(0, (user.totalScore || 0) + ptsEarned),
       };
       onUpdateUser(updatedUser);
       try { saveUserToLive(updatedUser); } catch (_) {}

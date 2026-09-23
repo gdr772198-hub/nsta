@@ -72,9 +72,11 @@ import {
 import JSZip from 'jszip';
 import { User } from '../types';
 import { applyDeduction, getTotalCredits } from '../utils/creditSystem';
+import { logScoreActivity } from '../utils/scoreSystem';
 import { saveUserToLive, auth } from '../firebase';
 import { uploadImageToImgBB } from '../services/imgbbService';
 import { ImageCropper } from './ImageCropper';
+import { ProfileCameraModal } from './ProfileCameraModal';
 import { NstaChatLockPasswordModal } from './NstaChatLockPasswordModal';
 import {
   ChatContact,
@@ -251,6 +253,9 @@ interface Props {
   initialTab?: 'CHATS' | 'REQUESTS' | 'GROUPS' | 'BLOCKED' | 'PROFILE' | 'FIND_FRIENDS';
   themeColor?: string;
   onUpdateUser?: (updatedUser: User) => void;
+  isTopBarHidden?: boolean;
+  onToggleTopBar?: () => void;
+  isBottomNavHidden?: boolean;
 }
 
 export const WhatsAppChatModal: React.FC<Props> = ({
@@ -261,6 +266,9 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   initialGroupId,
   initialTab,
   onUpdateUser,
+  isTopBarHidden = false,
+  onToggleTopBar,
+  isBottomNavHidden = false,
 }) => {
   // Navigation State: CHATS, FIND_FRIENDS, REQUESTS, GROUPS, BLOCKED, PROFILE
   const [activeTab, setActiveTab] = useState<'CHATS' | 'FIND_FRIENDS' | 'REQUESTS' | 'GROUPS' | 'BLOCKED' | 'PROFILE'>(
@@ -301,6 +309,26 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       updateUserPresence(effectiveUserId, false);
     };
   }, [effectiveUserId]);
+
+  // Active in Nsta Messenger: 30 XP per active minute (0 credit) per user mandate
+  useEffect(() => {
+    if (!effectiveUserId) return;
+    const messengerXpTimer = setInterval(() => {
+      const curXp = user?.xp || user?.totalScore || 0;
+      if (onUpdateUser) {
+        onUpdateUser({
+          ...user,
+          xp: curXp + 30,
+          totalScore: curXp + 30,
+        });
+      }
+      try {
+        logScoreActivity(effectiveUserId, 'MESSENGER_ACTIVE_TIME', 30, 'Nsta Messenger Active Minute');
+      } catch (_) {}
+    }, 60000);
+
+    return () => clearInterval(messengerXpTimer);
+  }, [effectiveUserId, user, onUpdateUser]);
 
   // Real-time global presence map from RTDB for accurate online status
   const [presenceMap, setPresenceMap] = useState<Record<string, { isOnline: boolean; lastSeen: number }>>({});
@@ -349,6 +377,43 @@ export const WhatsAppChatModal: React.FC<Props> = ({
 
   const currentBlockTier = getUserBlockTier(currentUser);
   const currentTier = currentBlockTier;
+
+  // Profile Photo / Camera Modal state in Messenger Profile tab
+  const [showProfileCameraModal, setShowProfileCameraModal] = useState(false);
+
+  const handleSaveProfilePhoto = async (photoDataUrl: string) => {
+    const updatedUser: User = {
+      ...currentUser,
+      photoURL: photoDataUrl,
+      avatarChoice: 'custom',
+    };
+    setCurrentUser(updatedUser);
+    if (onUpdateUser) {
+      onUpdateUser(updatedUser);
+    }
+    try {
+      await saveUserToLive(updatedUser);
+    } catch (e) {
+      console.warn('Failed to sync updated profile to live:', e);
+    }
+  };
+
+  const handleRemoveProfilePhoto = async () => {
+    const updatedUser: User = {
+      ...currentUser,
+      photoURL: '',
+      avatarChoice: 'logo',
+    };
+    setCurrentUser(updatedUser);
+    if (onUpdateUser) {
+      onUpdateUser(updatedUser);
+    }
+    try {
+      await saveUserToLive(updatedUser);
+    } catch (e) {
+      console.warn('Failed to sync removed profile to live:', e);
+    }
+  };
 
   // 1. Purchased +10 block limit expansions count
   const [blockExpansions, setBlockExpansions] = useState<number>(() => {
@@ -2722,9 +2787,9 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                 <ArrowLeft size={16} />
               </button>
               <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
-                <span className="text-base leading-none select-none">👨‍🦱</span>
+                <UserPlus size={16} className="text-emerald-400" />
               </div>
-              <h3 className="font-bold text-xs md:text-sm">Classmates & Batchmates</h3>
+              <h3 className="font-bold text-xs md:text-sm">Naye Friend Banayein (Classmates)</h3>
             </div>
             <span className="text-[10px] bg-slate-800 text-slate-300 border border-slate-700 px-2 py-0.5 rounded-full font-bold">
               {onlineCount} Online · {offlineCount} Offline
@@ -3064,7 +3129,9 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-[300] bg-slate-950/70 backdrop-blur-md flex items-center justify-center p-0 md:p-4 animate-in fade-in duration-200">
+    <div className={`fixed inset-0 z-[550] bg-slate-950/70 backdrop-blur-md flex items-center justify-center p-0 md:p-4 animate-in fade-in duration-200 transition-all ${
+      !isBottomNavHidden ? 'pb-[64px] md:pb-0' : 'pb-0'
+    }`}>
       <div className="w-full h-full md:max-w-2xl md:h-[92vh] md:rounded-3xl bg-slate-100 dark:bg-slate-950 flex flex-col shadow-2xl overflow-hidden border border-purple-500/20">
 
         {/* ─── TOAST BANNER ────────────────────────────────────────── */}
@@ -3077,81 +3144,125 @@ export const WhatsAppChatModal: React.FC<Props> = ({
           </div>
         )}
 
-        {/* ─── NSTA MESSENGER MAIN HEADER ──────────────────────────── */}
+        {/* Subtle pill indicator when top bar is hidden */}
+        {isTopBarHidden && (
+          <div
+            onClick={onToggleTopBar}
+            className="w-full py-1.5 bg-gradient-to-r from-slate-950 via-purple-950 to-slate-950 border-b border-purple-500/30 flex items-center justify-center gap-2 cursor-pointer hover:bg-slate-900 transition-colors z-30 shadow-md select-none"
+            title="Top bar wapas dikhane ke liye tap karein"
+          >
+            <div className="w-8 h-1 rounded-full bg-gradient-to-r from-purple-400 via-pink-400 to-indigo-400 shadow-[0_0_8px_rgba(236,72,153,0.8)]" />
+            <span className="text-[10px] text-purple-200 font-bold tracking-wide flex items-center gap-1">
+              <span>Top Bar Wapas Dikhayein</span>
+              <span className="text-xs text-pink-400">▾</span>
+            </span>
+          </div>
+        )}
+
+        {/* ─── NSTA MESSENGER MAIN HEADER (Ultra-Premium Glass Aesthetic) ─── */}
         {!isCurrentChatActive ? (
-          <div className="bg-gradient-to-r from-slate-950 via-purple-950 to-slate-900 text-white px-4 pt-3 pb-0 shadow-lg border-b border-purple-500/20">
+          <div
+            className={`text-white shadow-2xl border-b border-purple-500/30 transition-all duration-200 ease-in-out relative select-none ${
+              isTopBarHidden ? '-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none p-0 border-none' : 'translate-y-0 opacity-100'
+            }`}
+            style={{
+              background: 'radial-gradient(ellipse at 50% -20%, #2e1065 0%, #0d0722 60%, #05020c 100%)',
+            }}
+          >
             {/* Top row */}
-            <div className="flex items-center justify-between pb-2">
+            <div className="px-3.5 pt-3 pb-2 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                {/* Nsta Messenger Gradient Icon */}
-                <div className="w-10 h-10 rounded-2xl p-[2px] bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 shadow-md">
-                  <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center">
-                    <MessageCircle size={20} className="text-pink-400 fill-pink-500/20" />
+                {/* Nsta Messenger Gradient Icon with Outer Glow */}
+                <div className="relative group">
+                  <div className="w-10 h-10 rounded-2xl p-[2px] bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 shadow-[0_0_15px_rgba(244,63,94,0.4)] transition-transform duration-200 group-hover:scale-105">
+                    <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center relative overflow-hidden">
+                      <div className="absolute inset-0 bg-gradient-to-b from-purple-500/20 to-transparent pointer-events-none" />
+                      <MessageCircle size={20} className="text-pink-400 fill-pink-500/20 drop-shadow-[0_2px_6px_rgba(244,63,94,0.6)]" />
+                    </div>
                   </div>
+                  <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-slate-950 shadow-[0_0_6px_rgba(16,185,129,0.8)]" />
                 </div>
+
                 <div>
-                  <h2 className="font-black text-lg tracking-tight leading-none flex items-center gap-1.5">
-                    <span className="bg-gradient-to-r from-rose-400 via-purple-300 to-indigo-300 bg-clip-text text-transparent font-black">
+                  <h2 className="font-black text-lg sm:text-xl tracking-tight leading-none flex items-center gap-1.5">
+                    <span className="bg-gradient-to-r from-pink-300 via-purple-200 to-indigo-200 bg-clip-text text-transparent font-black drop-shadow-sm">
                       Nsta Messenger
                     </span>
-                    <span className="text-[10px] bg-purple-500/30 text-purple-300 border border-purple-400/40 px-1.5 py-0.2 rounded-full font-bold uppercase tracking-wider">
-                      ⚡ LIVE
+                    <span className="text-[9px] sm:text-[10px] bg-gradient-to-r from-purple-600/50 to-pink-600/50 text-purple-100 border border-purple-400/50 px-2 py-0.5 rounded-full font-black uppercase tracking-wider shadow-[0_0_10px_rgba(168,85,247,0.4)] flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping inline-block" />
+                      LIVE
                     </span>
                   </h2>
-                  <p className="text-[11px] text-purple-200/80 font-medium mt-0.5">
-                    Friends, Direct Chats & Study Groups
+                  <p className="text-[11px] text-purple-200/80 font-medium mt-1 flex items-center gap-1.5">
+                    <span>Friends, Direct Chats & Study Groups</span>
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-1">
+              {/* Right Action Icons */}
+              <div className="flex items-center gap-1 sm:gap-1.5">
                 <button
+                  type="button"
                   onClick={() => setShowSearchInput(!showSearchInput)}
-                  className="p-2 rounded-full hover:bg-white/10 text-white/90 transition-colors"
-                  title="Search"
+                  className={`p-2 rounded-xl transition-all border ${
+                    showSearchInput
+                      ? 'bg-purple-600/30 border-purple-400/50 text-pink-300 shadow-[0_0_10px_rgba(168,85,247,0.3)]'
+                      : 'bg-white/5 hover:bg-white/15 border-white/10 text-white/90 hover:text-white'
+                  }`}
+                  title="Search contacts or groups"
                 >
-                  <Search size={18} />
+                  <Search size={17} />
                 </button>
+
                 <button
                   type="button"
                   onClick={() => setActiveTab('FIND_FRIENDS')}
-                  className={`p-2 rounded-full transition-all flex items-center justify-center cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95 border ${
                     activeTab === 'FIND_FRIENDS'
-                      ? 'bg-white/20 ring-2 ring-purple-300 text-white shadow-xs'
-                      : 'hover:bg-white/10 text-white/90'
+                      ? 'bg-gradient-to-r from-pink-500 via-rose-500 to-purple-600 text-white border-pink-300/80 ring-2 ring-purple-300/50 shadow-[0_0_15px_rgba(244,63,94,0.5)]'
+                      : 'bg-gradient-to-r from-rose-500/90 via-pink-600/90 to-purple-600/90 hover:from-rose-500 hover:to-purple-600 text-white border-pink-400/50 shadow-[0_0_12px_rgba(244,63,94,0.35)]'
                   }`}
-                  title="Find Classmates & Students"
+                  title="Dost Banayein / Naye Classmates Se Judein"
                 >
-                  <span className="text-xl leading-none select-none">👨‍🦱</span>
+                  <div className="relative flex items-center justify-center">
+                    <UserPlus size={14} className="text-amber-200 drop-shadow" />
+                    <span className="absolute -top-1 -right-1 w-2 h-2 bg-emerald-400 rounded-full animate-ping" />
+                    <span className="absolute -top-1 -right-1 w-2 h-2 bg-emerald-400 rounded-full" />
+                  </div>
+                  <span className="text-[11px] font-black tracking-tight text-white whitespace-nowrap drop-shadow-xs">
+                    +Dost
+                  </span>
                 </button>
+
                 <div className="relative">
                   <button
+                    type="button"
                     onClick={() => setShowMainMenu(!showMainMenu)}
-                    className="p-2 rounded-full hover:bg-white/10 text-white/90 transition-colors"
+                    className="p-2 rounded-xl bg-white/5 hover:bg-white/15 border border-white/10 text-white/90 transition-all hover:text-white"
                     title="Menu"
                   >
-                    <MoreVertical size={18} />
+                    <MoreVertical size={17} />
                   </button>
                   {showMainMenu && (
-                    <div className="absolute right-0 top-full mt-1 w-52 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 py-1.5 z-50 animate-in fade-in zoom-in-95">
+                    <div className="absolute right-0 top-full mt-1.5 w-52 bg-slate-900/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-purple-500/30 py-1.5 z-50 animate-in fade-in zoom-in-95">
                       <button
                         onClick={() => {
                           setShowMainMenu(false);
                           setActiveTab('FIND_FRIENDS');
                         }}
-                        className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
+                        className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-200 hover:bg-purple-900/40 flex items-center gap-2"
                       >
-                        <UserPlus size={15} className="text-emerald-500" />
-                        <span>Find Classmates</span>
+                        <UserPlus size={15} className="text-emerald-400" />
+                        <span>Dost Banayein (Find Friends)</span>
                       </button>
                       <button
                         onClick={() => {
                           setShowMainMenu(false);
                           setShowNewGroupModal(true);
                         }}
-                        className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
+                        className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-200 hover:bg-purple-900/40 flex items-center gap-2"
                       >
-                        <Plus size={15} className="text-purple-500" />
+                        <Plus size={15} className="text-purple-400" />
                         <span>New Study Group</span>
                       </button>
                       <button
@@ -3159,9 +3270,9 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                           setShowMainMenu(false);
                           setActiveTab('BLOCKED');
                         }}
-                        className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
+                        className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-200 hover:bg-purple-900/40 flex items-center gap-2"
                       >
-                        <Ban size={15} className="text-rose-500" />
+                        <Ban size={15} className="text-rose-400" />
                         <span>Blocked Contacts ({blockedUsers.length})</span>
                       </button>
                       <button
@@ -3169,34 +3280,36 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                           setShowMainMenu(false);
                           setShowChangePinModal(true);
                         }}
-                        className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 border-t border-slate-100 dark:border-slate-800"
+                        className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-200 hover:bg-purple-900/40 flex items-center gap-2 border-t border-purple-500/20"
                       >
-                        <Lock size={15} className="text-amber-500" />
+                        <Lock size={15} className="text-amber-400" />
                         <span>Chat PIN Lock</span>
                       </button>
                     </div>
                   )}
                 </div>
+
                 <button
+                  type="button"
                   onClick={onClose}
-                  className="p-2 rounded-full hover:bg-white/10 text-white/90 transition-colors ml-1"
-                  title="Close"
+                  className="p-2 rounded-xl bg-white/5 hover:bg-rose-500/20 border border-white/10 hover:border-rose-400/40 text-white/90 hover:text-rose-300 transition-all ml-0.5"
+                  title="Close Messenger"
                 >
-                  <X size={20} />
+                  <X size={18} />
                 </button>
               </div>
             </div>
 
             {/* Expandable Search Input */}
             {showSearchInput && (
-              <div className="pb-3 pt-1">
+              <div className="px-3.5 pb-2.5 pt-0.5">
                 <div className="relative">
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search friends, students or study groups..."
-                    className="w-full bg-slate-800/90 text-white placeholder-purple-200/50 rounded-xl px-9 py-2 text-xs md:text-sm border border-purple-500/30 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                    className="w-full bg-slate-900/90 text-white placeholder-purple-200/50 rounded-xl px-9 py-2 text-xs md:text-sm border border-purple-500/40 focus:outline-none focus:ring-2 focus:ring-purple-400 shadow-inner"
                     autoFocus
                   />
                   <Search size={15} className="absolute left-3 top-2.5 text-purple-300/70" />
@@ -3212,68 +3325,91 @@ export const WhatsAppChatModal: React.FC<Props> = ({
               </div>
             )}
 
-            {/* Navigation Tabs (WhatsApp 4 Clean Tabs) */}
-            <div className="flex text-center border-t border-purple-900/50">
+            {/* ── Navigation Tabs (Ultra-Premium "Patta" Strip with Glowing Neon Indicators) ── */}
+            <div className="bg-[#080415]/90 backdrop-blur-xl border-t border-purple-500/25 px-2 py-1.5 flex items-center justify-between gap-1 sm:gap-2">
               <button
+                type="button"
                 onClick={() => setActiveTab('CHATS')}
-                className={`flex-1 py-2.5 text-xs font-bold tracking-wider transition-colors relative flex items-center justify-center gap-1.5 ${
+                className={`flex-1 py-2 px-1 rounded-xl text-xs font-black tracking-wider transition-all duration-200 relative flex flex-col items-center justify-center gap-1 cursor-pointer ${
                   activeTab === 'CHATS'
-                    ? 'text-white border-b-2 border-emerald-400 bg-purple-950/40'
-                    : 'text-purple-300/70 hover:text-white'
+                    ? 'bg-gradient-to-r from-purple-950/90 via-indigo-950/90 to-purple-900/90 text-white border border-purple-400/50 shadow-[0_2px_12px_rgba(168,85,247,0.3)]'
+                    : 'text-purple-300/70 hover:text-white hover:bg-white/5 border border-transparent'
                 }`}
               >
-                <MessageCircle size={14} />
-                <span>CHATS</span>
-                {friends.length > 0 && (
-                  <span className="bg-emerald-500 text-white text-[9px] px-1.5 py-0.2 rounded-full font-black">
-                    {friends.length}
-                  </span>
+                <div className="flex items-center gap-1.5">
+                  <MessageCircle size={14} className={activeTab === 'CHATS' ? 'text-pink-400 fill-pink-500/30' : ''} />
+                  <span>CHATS</span>
+                  {friends.length > 0 && (
+                    <span className="bg-emerald-500 text-white text-[9px] px-1.5 py-0.2 rounded-full font-black shadow-[0_0_8px_rgba(16,185,129,0.7)]">
+                      {friends.length}
+                    </span>
+                  )}
+                </div>
+                {activeTab === 'CHATS' && (
+                  <span className="w-6 h-[2.5px] rounded-full bg-gradient-to-r from-emerald-400 to-teal-300 shadow-[0_0_8px_rgba(52,211,153,0.9)] animate-in zoom-in-75 duration-200" />
                 )}
               </button>
 
               <button
+                type="button"
                 onClick={() => setActiveTab('GROUPS')}
-                className={`flex-1 py-2.5 text-xs font-bold tracking-wider transition-colors relative flex items-center justify-center gap-1.5 ${
+                className={`flex-1 py-2 px-1 rounded-xl text-xs font-black tracking-wider transition-all duration-200 relative flex flex-col items-center justify-center gap-1 cursor-pointer ${
                   activeTab === 'GROUPS'
-                    ? 'text-white border-b-2 border-emerald-400 bg-purple-950/40'
-                    : 'text-purple-300/70 hover:text-white'
+                    ? 'bg-gradient-to-r from-purple-950/90 via-indigo-950/90 to-purple-900/90 text-white border border-purple-400/50 shadow-[0_2px_12px_rgba(168,85,247,0.3)]'
+                    : 'text-purple-300/70 hover:text-white hover:bg-white/5 border border-transparent'
                 }`}
               >
-                <Users size={14} />
-                <span>GROUPS</span>
-                <span className="bg-purple-800 text-purple-200 text-[9px] px-1.5 py-0.2 rounded-full font-bold">
-                  {groups.length}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <Users size={14} className={activeTab === 'GROUPS' ? 'text-indigo-400 fill-indigo-500/30' : ''} />
+                  <span>GROUPS</span>
+                  <span className="bg-purple-800/90 text-purple-200 text-[9px] px-1.5 py-0.2 rounded-full font-bold">
+                    {groups.length}
+                  </span>
+                </div>
+                {activeTab === 'GROUPS' && (
+                  <span className="w-6 h-[2.5px] rounded-full bg-gradient-to-r from-purple-400 to-indigo-300 shadow-[0_0_8px_rgba(168,85,247,0.9)] animate-in zoom-in-75 duration-200" />
+                )}
               </button>
 
               <button
+                type="button"
                 onClick={() => setActiveTab('REQUESTS')}
-                className={`flex-1 py-2.5 text-xs font-bold tracking-wider transition-colors relative flex items-center justify-center gap-1.5 ${
+                className={`flex-1 py-2 px-1 rounded-xl text-xs font-black tracking-wider transition-all duration-200 relative flex flex-col items-center justify-center gap-1 cursor-pointer ${
                   activeTab === 'REQUESTS'
-                    ? 'text-white border-b-2 border-emerald-400 bg-purple-950/40'
-                    : 'text-purple-300/70 hover:text-white'
+                    ? 'bg-gradient-to-r from-purple-950/90 via-indigo-950/90 to-purple-900/90 text-white border border-purple-400/50 shadow-[0_2px_12px_rgba(168,85,247,0.3)]'
+                    : 'text-purple-300/70 hover:text-white hover:bg-white/5 border border-transparent'
                 }`}
               >
-                <UserCheck size={14} />
-                <span>REQUESTS</span>
-                {friendRequests.length > 0 && (
-                  <span className="bg-amber-400 text-slate-950 text-[9px] px-1.5 py-0.2 rounded-full font-black animate-pulse">
-                    {friendRequests.length}
-                  </span>
+                <div className="flex items-center gap-1.5">
+                  <UserCheck size={14} className={activeTab === 'REQUESTS' ? 'text-amber-400' : ''} />
+                  <span>REQUESTS</span>
+                  {friendRequests.length > 0 && (
+                    <span className="bg-amber-400 text-slate-950 text-[9px] px-1.5 py-0.2 rounded-full font-black animate-pulse shadow-[0_0_8px_rgba(245,158,11,0.8)]">
+                      {friendRequests.length}
+                    </span>
+                  )}
+                </div>
+                {activeTab === 'REQUESTS' && (
+                  <span className="w-6 h-[2.5px] rounded-full bg-gradient-to-r from-amber-400 to-orange-400 shadow-[0_0_8px_rgba(245,158,11,0.9)] animate-in zoom-in-75 duration-200" />
                 )}
               </button>
 
               <button
                 type="button"
                 onClick={() => setActiveTab('PROFILE')}
-                className={`flex-1 py-2.5 text-xs font-bold tracking-wider transition-colors relative flex items-center justify-center gap-1.5 cursor-pointer ${
+                className={`flex-1 py-2 px-1 rounded-xl text-xs font-black tracking-wider transition-all duration-200 relative flex flex-col items-center justify-center gap-1 cursor-pointer ${
                   activeTab === 'PROFILE'
-                    ? 'text-white border-b-2 border-emerald-400 bg-purple-950/40'
-                    : 'text-purple-300/70 hover:text-white'
+                    ? 'bg-gradient-to-r from-purple-950/90 via-indigo-950/90 to-purple-900/90 text-white border border-purple-400/50 shadow-[0_2px_12px_rgba(168,85,247,0.3)]'
+                    : 'text-purple-300/70 hover:text-white hover:bg-white/5 border border-transparent'
                 }`}
               >
-                <UserIcon size={14} />
-                <span>PROFILE</span>
+                <div className="flex items-center gap-1.5">
+                  <UserIcon size={14} className={activeTab === 'PROFILE' ? 'text-pink-400' : ''} />
+                  <span>PROFILE</span>
+                </div>
+                {activeTab === 'PROFILE' && (
+                  <span className="w-6 h-[2.5px] rounded-full bg-gradient-to-r from-pink-400 to-rose-300 shadow-[0_0_8px_rgba(244,63,94,0.9)] animate-in zoom-in-75 duration-200" />
+                )}
               </button>
             </div>
           </div>
@@ -3383,7 +3519,9 @@ export const WhatsAppChatModal: React.FC<Props> = ({
           </div>
         ) : (
           /* ─── ACTIVE CHAT CONVERSATION HEADER ──────────────────────── */
-          <div className="bg-gradient-to-r from-slate-950 via-purple-950 to-slate-900 text-white px-3 py-2 flex items-center justify-between shadow-md border-b border-purple-500/20">
+          <div className={`bg-gradient-to-r from-slate-950 via-purple-950 to-slate-900 text-white flex items-center justify-between shadow-md border-b border-purple-500/20 transition-all duration-200 ease-in-out ${
+            isTopBarHidden ? '-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none p-0 border-none' : 'px-3 py-2 translate-y-0 opacity-100'
+          }`}>
             <div className="flex items-center gap-2 flex-1 min-w-0">
               <button
                 onClick={handleExitChat}
@@ -4918,27 +5056,49 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                   <div className="absolute -right-8 -bottom-8 w-36 h-36 bg-purple-600/15 rounded-full blur-2xl pointer-events-none" />
 
                   <div className="flex items-center gap-3.5 relative z-10">
-                    <div className="relative shrink-0">
-                      {user?.photoURL ? (
-                        <img
-                          src={user.photoURL}
-                          alt={user.name || 'User'}
-                          className="w-15 h-15 rounded-2xl object-cover border-2 border-purple-400/80 shadow-md"
-                        />
-                      ) : (
-                        <div className="w-15 h-15 rounded-2xl bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 p-[2px] shadow-md">
-                          <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center text-2xl font-black text-white">
-                            {(user?.name || 'S').charAt(0).toUpperCase()}
+                    {/* Interactive Profile Picture / DP with Camera Upload & Cropper */}
+                    <div className="relative shrink-0 group">
+                      <button
+                        type="button"
+                        onClick={() => setShowProfileCameraModal(true)}
+                        className="relative block rounded-2xl overflow-hidden focus:outline-none focus:ring-2 focus:ring-purple-400 transition-transform active:scale-95 group cursor-pointer"
+                        title="Click karke apni Profile Photo / DP badlein ya crop karein 📸"
+                      >
+                        {currentUser?.photoURL || user?.photoURL ? (
+                          <img
+                            src={currentUser?.photoURL || user?.photoURL}
+                            alt={currentUser?.name || user?.name || 'User'}
+                            className="w-16 h-16 rounded-2xl object-cover border-2 border-purple-400/80 shadow-md group-hover:brightness-90 transition-all"
+                          />
+                        ) : (
+                          <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 p-[2px] shadow-md">
+                            <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center text-2xl font-black text-white group-hover:bg-slate-900 transition-colors">
+                              {(currentUser?.name || user?.name || 'S').charAt(0).toUpperCase()}
+                            </div>
                           </div>
+                        )}
+
+                        {/* Hover Overlay Camera */}
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-2xl">
+                          <Camera size={18} className="text-white drop-shadow" />
                         </div>
-                      )}
-                      <span className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 border-2 border-slate-950 rounded-full shadow-xs" title="Active" />
+                      </button>
+
+                      {/* Prominent Camera Badge Button */}
+                      <button
+                        type="button"
+                        onClick={() => setShowProfileCameraModal(true)}
+                        className="absolute -bottom-1.5 -right-1.5 w-6 h-6 rounded-full bg-gradient-to-tr from-purple-600 to-pink-500 text-white flex items-center justify-center border-2 border-slate-900 shadow-lg hover:scale-110 active:scale-95 transition-transform cursor-pointer"
+                        title="DP Badlein"
+                      >
+                        <Camera size={11} className="text-white" />
+                      </button>
                     </div>
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="text-base font-black text-white truncate">
-                          {user?.name || 'Student'}
+                          {currentUser?.name || user?.name || 'Student'}
                         </h3>
                         {currentTier === 'ULTRA' ? (
                           <span className="text-[10px] bg-gradient-to-r from-amber-400 to-yellow-300 text-slate-950 px-2 py-0.5 rounded-full font-black flex items-center gap-1 shadow-xs">
@@ -4957,10 +5117,21 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                         )}
                       </div>
 
-                      <p className="text-xs text-purple-200/80 mt-0.5 truncate flex items-center gap-1.5">
-                        <ShieldCheck size={13} className="text-emerald-400 shrink-0" />
-                        <span>{user?.role || 'IIC Verified Student'}</span>
-                      </p>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        <p className="text-xs text-purple-200/80 truncate flex items-center gap-1.5">
+                          <ShieldCheck size={13} className="text-emerald-400 shrink-0" />
+                          <span>{currentUser?.role || user?.role || 'IIC Verified Student'}</span>
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setShowProfileCameraModal(true)}
+                          className="text-[10px] text-amber-300 hover:text-amber-200 font-bold bg-amber-400/10 hover:bg-amber-400/20 border border-amber-400/30 px-2 py-0.5 rounded-full flex items-center gap-1 transition-colors cursor-pointer"
+                          title="Profile Photo / DP badlein"
+                        >
+                          <Camera size={9} />
+                          <span>Change DP</span>
+                        </button>
+                      </div>
 
                       <div className="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-purple-500/20 text-[11px] text-purple-200">
                         <span className="flex items-center gap-1 bg-white/10 px-2 py-0.5 rounded-md">
@@ -7773,6 +7944,18 @@ export const WhatsAppChatModal: React.FC<Props> = ({
               </div>
             </div>
           </div>
+        )}
+
+        {/* ─── MODAL: PROFILE CAMERA & PHOTO CROPPER MODAL ────────────────── */}
+        {showProfileCameraModal && (
+          <ProfileCameraModal
+            isOpen={showProfileCameraModal}
+            onClose={() => setShowProfileCameraModal(false)}
+            currentPhotoURL={currentUser?.photoURL || user?.photoURL}
+            userName={currentUser?.name || user?.name}
+            onSavePhoto={handleSaveProfilePhoto}
+            onRemovePhoto={handleRemoveProfilePhoto}
+          />
         )}
 
         {/* ─── MODAL: IN-APP INTERACTIVE IMAGE CROPPER ─────────────────── */}

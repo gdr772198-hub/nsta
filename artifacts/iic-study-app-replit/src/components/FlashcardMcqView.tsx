@@ -4,7 +4,7 @@ import {
   ArrowLeft, ChevronRight, ChevronLeft, RotateCw, Volume2, Square, Shuffle,
   Lightbulb, Edit2, X, MoreVertical, RefreshCw, BookOpen, Tv, CheckCircle,
   Maximize2, Minimize2, LayoutGrid, Users, Radio, Sun, Moon, Scroll,
-  Timer, VolumeX, Eye, EyeOff, Slash, HelpCircle, Sparkles, Award, Bookmark
+  Timer, VolumeX, Eye, EyeOff, Slash, HelpCircle, Sparkles, Award, Bookmark, Scissors
 } from 'lucide-react';
 import type { MCQItem } from '../types';
 import type { User, SystemSettings } from '../types';
@@ -58,6 +58,14 @@ interface Props {
   hideProjectorLabel?: boolean;
   /** Trigger to open Group Study / Live Room modal for this flashcard set */
   onOpenGroupStudy?: () => void;
+  /** Optional competition lesson ID for syncing stats back to lesson cards */
+  compLessonId?: string;
+  /** True when practicing mistaken questions */
+  isMistakeMode?: boolean;
+  /** Original question indices for mistakes */
+  rawIndices?: number[];
+  /** Callback when stats are updated */
+  onStatsUpdate?: (stats: { total: number; attempted: number; score: number; wrongIndices: number[] }) => void;
 }
 
 const CREDIT_COST = 5;
@@ -94,7 +102,8 @@ const addTodayCount = (userId: string, n: number) => {
 };
 
 export const FlashcardMcqView: React.FC<Props> = ({
-  questions, title, subtitle, subject, onBack, user, settings, onUpdateUser, sourceMeta, sourceKey, startInProjectorMode, onProjectorModeChange, tabBar, bottomNav, hideProjectorLabel, onOpenGroupStudy
+  questions, title, subtitle, subject, onBack, user, settings, onUpdateUser, sourceMeta, sourceKey, startInProjectorMode, onProjectorModeChange, tabBar, bottomNav, hideProjectorLabel, onOpenGroupStudy,
+  compLessonId, isMistakeMode, rawIndices, onStatsUpdate
 }) => {
   const isMountedRef = useRef(true);
   const [pickedIndices, setPickedIndices] = useState<number[]>([]);
@@ -495,7 +504,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
     }
     // ── Award score + credits when "Easy" (student knew the answer) ───────
     if (level === 'easy' && user?.id && !isAdmin) {
-      const pts = tryEarnScore(user.id, 1, userTier, userTier !== 'FREE', 0, 'FLASHCARD_MCQ_CORRECT');
+      const pts = tryEarnScore(user.id, 2, userTier, userTier !== 'FREE', 0, 'FLASHCARD_MCQ_CORRECT');
       if (pts > 0) {
         showMcqScore(pts);
         if (onUpdateUser) {
@@ -602,7 +611,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
     if (previousSelection === undefined && isCorrect) {
       setProjectorCorrect(c => c + 1);
       if (user?.id && !isAdmin) {
-        const pts = tryEarnScore(user.id, 1, userTier, userTier !== 'FREE', 0, 'FLASHCARD_MCQ_CORRECT');
+        const pts = tryEarnScore(user.id, 2, userTier, userTier !== 'FREE', 0, 'FLASHCARD_MCQ_CORRECT');
         if (pts > 0) {
           showMcqScore(pts);
           if (onUpdateUser) {
@@ -617,7 +626,54 @@ export const FlashcardMcqView: React.FC<Props> = ({
     } else if (previousSelection === undefined) {
       setProjectorWrong(w => w + 1);
     }
-  }, [projectorShowReview, questions, projectorQIndex, projectorSelections, projectorAnswered, user, sourceKey, isAdmin, userTier, onUpdateUser]);
+
+    // Synchronize stats for competition MCQ lesson if applicable
+    if (compLessonId && user?.id) {
+      try {
+        const statsKey = `comp_mcq_stats_${user.id}_${compLessonId}`;
+        const raw = localStorage.getItem(statsKey);
+        const currentSaved = raw ? JSON.parse(raw) : null;
+
+        if (isMistakeMode && rawIndices) {
+          const rawIdx = rawIndices[projectorQIndex];
+          if (isCorrect && currentSaved && Array.isArray(currentSaved.wrongIndices)) {
+            const updatedWrong = currentSaved.wrongIndices.filter((idx: number) => idx !== rawIdx);
+            const newStats = {
+              ...currentSaved,
+              wrongIndices: updatedWrong,
+              score: Math.min(currentSaved.total || questions.length, (currentSaved.score || 0) + 1),
+            };
+            localStorage.setItem(statsKey, JSON.stringify(newStats));
+            onStatsUpdate?.(newStats);
+          }
+        } else {
+          const updatedSelections = { ...projectorSelections, [projectorQIndex]: oi };
+          let rightCount = 0;
+          const wrongList: number[] = [];
+          questions.forEach((q, idx) => {
+            const sel = updatedSelections[idx];
+            if (sel !== undefined) {
+              if (sel === q.correctAnswer) {
+                rightCount++;
+              } else {
+                wrongList.push(idx);
+              }
+            }
+          });
+          const newStats = {
+            total: questions.length,
+            attempted: Object.keys(updatedSelections).length,
+            score: rightCount,
+            wrongIndices: wrongList,
+          };
+          localStorage.setItem(statsKey, JSON.stringify(newStats));
+          onStatsUpdate?.(newStats);
+        }
+      } catch (err) {
+        console.error('Failed to sync comp mcq stats:', err);
+      }
+    }
+  }, [projectorShowReview, questions, projectorQIndex, projectorSelections, projectorAnswered, user, sourceKey, isAdmin, userTier, onUpdateUser, compLessonId, isMistakeMode, rawIndices, onStatsUpdate]);
 
   const toggleProjectorNativeFullscreen = async () => {
     try {
@@ -708,6 +764,32 @@ export const FlashcardMcqView: React.FC<Props> = ({
     const correct = answered.filter(index => projectorSelections[index] === questions[index]?.correctAnswer).length;
     setProjectorCorrect(correct);
     setProjectorWrong(answered.length - correct);
+    if (compLessonId && user?.id) {
+      try {
+        const statsKey = `comp_mcq_stats_${user.id}_${compLessonId}`;
+        const answeredKeys = Object.keys(projectorSelections);
+        let rightCount = 0;
+        const wrongList: number[] = [];
+        questions.forEach((q, idx) => {
+          const sel = projectorSelections[idx];
+          if (sel !== undefined) {
+            if (sel === q.correctAnswer) {
+              rightCount++;
+            } else {
+              wrongList.push(idx);
+            }
+          }
+        });
+        const newStats = {
+          total: questions.length,
+          attempted: answeredKeys.length,
+          score: rightCount,
+          wrongIndices: wrongList,
+        };
+        localStorage.setItem(statsKey, JSON.stringify(newStats));
+        onStatsUpdate?.(newStats);
+      } catch {}
+    }
     setReviewSnapshot({
       answered,
       selections: { ...projectorSelections },
@@ -1328,7 +1410,20 @@ export const FlashcardMcqView: React.FC<Props> = ({
 
             {/* Standard Comprehensive Top Bar (Hidden only in full focus mode) */}
             {!projectorFocused && (
-              <div style={{ display:'flex', alignItems:'center', gap:8, padding:'9px 14px', borderBottom:`1px solid ${headerBorder}`, background:headerBg, flexShrink:0, boxShadow:'0 1px 6px rgba(0,0,0,0.06)', zIndex:20 }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '9px 14px',
+                borderBottom: `1px solid ${headerBorder}`,
+                background: headerBg,
+                flexShrink: 0,
+                boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
+                zIndex: 20,
+                overflowX: 'auto',
+                WebkitOverflowScrolling: 'touch',
+                scrollbarWidth: 'none',
+              }}>
                 {/* Back Button */}
                 <button
                   onClick={() => {
@@ -1351,7 +1446,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
                 </button>
 
                 {/* Title and Projector Badge */}
-                <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ flex:1, minWidth:120, flexShrink:0 }}>
                   <div style={{ fontSize:13, fontWeight:900, color:headerText, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', lineHeight:1.2 }}>
                     {sourceMeta?.lessonTitle || title || 'MCQ Practice'}
                   </div>
@@ -1360,8 +1455,8 @@ export const FlashcardMcqView: React.FC<Props> = ({
                   </div>
                 </div>
 
-                {/* Live Accuracy HUD */}
-                <div className="hidden md:flex" style={{ flexShrink:0, alignItems:'center', gap:6, background:pillBg, border:`1px solid ${pillBorder}`, borderRadius:12, padding:'5px 10px', fontSize:11, fontWeight:800 }}>
+                {/* Live Accuracy HUD (Visible on all viewports) */}
+                <div style={{ flexShrink:0, display:'flex', alignItems:'center', gap:5, background:pillBg, border:`1px solid ${pillBorder}`, borderRadius:12, padding:'5px 9px', fontSize:11, fontWeight:800 }}>
                   <span style={{ color:'#10b981' }}>✓ {projectorCorrect}</span>
                   <span style={{ color:headerSubtext }}>·</span>
                   <span style={{ color:'#ef4444' }}>✗ {projectorWrong}</span>
@@ -1429,6 +1524,47 @@ export const FlashcardMcqView: React.FC<Props> = ({
                 >
                   {projectorReveal ? <EyeOff size={14} /> : <Eye size={14} />}
                   <span className="hidden sm:inline">{projectorReveal ? 'Hide Ans' : 'Show Ans'}</span>
+                </button>
+
+                {/* 50:50 Lifeline Eliminate Button */}
+                <button
+                  onClick={() => {
+                    if (!showEliminateTool && !projectorEliminated[projectorQIndex]?.size) {
+                      const q = questions[projectorQIndex];
+                      if (q && q.options && q.options.length > 2) {
+                        const wrongIndices = q.options
+                          .map((_, i) => i)
+                          .filter(i => i !== q.correctAnswer);
+                        const toEliminate = sampleN(wrongIndices, Math.min(2, wrongIndices.length));
+                        setProjectorEliminated(prev => ({
+                          ...prev,
+                          [projectorQIndex]: new Set(toEliminate)
+                        }));
+                      }
+                    }
+                    setShowEliminateTool(s => !s);
+                    playSoundClick();
+                  }}
+                  title="50:50 Lifeline: Strike-off 2 wrong options"
+                  aria-label="50:50 Lifeline"
+                  style={{
+                    flexShrink:0,
+                    height:36,
+                    padding:'0 10px',
+                    background: showEliminateTool ? (isThemeDark ? '#311042' : '#fce7f3') : pillBg,
+                    border: `1px solid ${showEliminateTool ? '#ec4899' : pillBorder}`,
+                    borderRadius:12,
+                    color: showEliminateTool ? '#ec4899' : pillText,
+                    fontSize:11,
+                    fontWeight:900,
+                    cursor:'pointer',
+                    display:'flex',
+                    alignItems:'center',
+                    gap:5,
+                  }}
+                >
+                  <Scissors size={14} />
+                  <span className="hidden sm:inline">50:50</span>
                 </button>
 
                 {/* Theme Switcher Button */}
@@ -1601,6 +1737,39 @@ export const FlashcardMcqView: React.FC<Props> = ({
                   onToggleEliminate={(oi) => toggleEliminateOption(projectorQIndex, oi)}
                   showEliminateTool={showEliminateTool}
                   onSelect={handleProjectorOptionSelect}
+                  actions={
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (speaking) {
+                          stopSpeech();
+                          setSpeaking(false);
+                        } else {
+                          const _stmts = (pq.statements || []).join(' ');
+                          const _opts = (pq.options || []).map((o, i) => `Option ${String.fromCharCode(65 + i)}: ${o}`).join('. ');
+                          const text = [pq.question, _stmts, _opts].filter(Boolean).join(' ');
+                          speakText(text, null, 1.0, 'hi-IN', () => setSpeaking(true), () => setSpeaking(false));
+                        }
+                      }}
+                      title={speaking ? 'Stop Speaking' : 'Read Question Aloud (Hindi/English)'}
+                      aria-label="Read Question Aloud"
+                      style={{
+                        width: 32,
+                        height: 32,
+                        borderRadius: 10,
+                        border: `1px solid ${pillBorder}`,
+                        background: speaking ? '#fee2e2' : pillBg,
+                        color: speaking ? '#ef4444' : pillText,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {speaking ? <Square size={13} style={{ fill: 'currentColor' } as React.CSSProperties} /> : <Volume2 size={15} />}
+                    </button>
+                  }
                 />
               </div>
 
@@ -2075,7 +2244,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
                         {/* Explanation */}
                         {rq.explanation && (
                           <div style={{ margin:'0 12px 12px', background:'#fefce8', border:'1.5px solid #fef08a', borderRadius:10, padding:'9px 12px', fontSize:12, color:'#713f12', lineHeight:1.5 }}>
-                            💡 <strong>Explanation:</strong>{' '}
+                            ������ <strong>Explanation:</strong>{' '}
                             <span dangerouslySetInnerHTML={{ __html: formatExplanationHtml(rq.explanation) }} />
                           </div>
                         )}

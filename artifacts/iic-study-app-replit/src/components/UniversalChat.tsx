@@ -9,6 +9,7 @@ import { TopBarEffectsLayer } from '../utils/topBarEffects';
 import { CommunityPostFeed } from './CommunityPostFeed';
 import { McqHub } from './McqHub';
 import { extractStatements } from '../utils/mcqParser';
+import { logScoreActivity } from '../utils/scoreSystem';
 
 interface Props {
     user: User;
@@ -108,6 +109,26 @@ export const UniversalChat: React.FC<Props> = ({ user, onClose, isAdmin, targetU
             setShowMcqBuilder(true);
         }
     }, [initialMcqDraft]);
+
+    // Active in Community: 30 XP per active minute (0 credit) per user mandate
+    useEffect(() => {
+        if (!user?.id) return;
+        const communityXpTimer = setInterval(() => {
+            const curXp = user?.xp || user?.totalScore || 0;
+            if (onUpdateUser) {
+                onUpdateUser({
+                    ...user,
+                    xp: curXp + 30,
+                    totalScore: curXp + 30,
+                });
+            }
+            try {
+                logScoreActivity(user.id, 'COMMUNITY_ACTIVE_TIME', 30, 'Community Active Minute');
+            } catch (_) {}
+        }, 60000);
+
+        return () => clearInterval(communityXpTimer);
+    }, [user?.id, user, onUpdateUser]);
     const [showMcqLeaderboard, setShowMcqLeaderboard] = useState(true);
     const [isAdminOnly, setIsAdminOnly] = useState(false);
     const [selectedUserProfile, setSelectedUserProfile] = useState<{name: string; id: string; role: string} | null>(null);

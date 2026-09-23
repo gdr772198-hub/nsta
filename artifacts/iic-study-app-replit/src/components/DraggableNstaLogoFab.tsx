@@ -206,9 +206,12 @@ export const DraggableNstaLogoFab: React.FC<DraggableNstaLogoFabProps> = ({
       } catch {}
     }
 
-    // If user tapped without moving, trigger the toggle action
+    // If user tapped without moving, trigger the toggle action & restore Pedro if hidden
     if (!isMovedRef.current) {
       hapticLight();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('nst-restore-pedro'));
+      }
       onToggle();
     }
   };

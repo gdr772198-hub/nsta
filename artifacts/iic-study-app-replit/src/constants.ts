@@ -10,6 +10,8 @@ export const BUILD_NUMBER = "20260716.01";
 export const SUPPORT_PHONE = "8227070298"; // Admin support number — update here instead of in code
 export const ADMIN_EMAIL = "nadiman0636indo@gmail.com";
 export const SUPPORT_EMAIL = "nadiman0636indo@gmail.com";
+export const DEVELOPER_INSTAGRAM = "thenadimanwarx";
+export const SUPPORT_INSTAGRAM_URL = "https://instagram.com/thenadimanwarx";
 
 export const DEFAULT_CONTENT_INFO_CONFIG = {
     freeNotes: {

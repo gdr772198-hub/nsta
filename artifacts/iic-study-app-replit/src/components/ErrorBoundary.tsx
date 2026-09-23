@@ -164,7 +164,9 @@ export class ErrorBoundary extends Component<Props, State> {
           title={this.props.maintenanceTitle}
           message={this.props.maintenanceMessage}
           retryMinutes={this.props.maintenanceRetryMinutes}
+          pageName={this.props.fallbackLabel}
           onRetry={this.handleRetry}
+          onGoHome={this.handleGoHome}
         />
       );
     }

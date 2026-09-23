@@ -7,6 +7,7 @@ export interface NstaQuickWheelModalProps {
   onClose: () => void;
   onOpenMessenger: () => void;
   onQuickAccess: (action: 'VIDEO' | 'PROGRESS' | 'STARRED' | 'READING' | 'FLASHCARDS' | 'OFFLINE' | 'ACTIVITY' | 'CREDITS' | 'MISTAKES' | 'LEADERBOARD') => void;
+  onOpenPedro?: () => void;
   onGoHome?: () => void;
   mistakeCount?: number;
   appName?: string;
@@ -25,7 +26,7 @@ interface WheelToolItem {
   borderGlow: string;
   badge?: string;
   isPremium?: boolean;
-  type: 'MESSENGER' | 'QUICK';
+  type: 'MESSENGER' | 'QUICK' | 'PEDRO';
   action?: 'VIDEO' | 'PROGRESS' | 'STARRED' | 'READING' | 'FLASHCARDS' | 'OFFLINE' | 'ACTIVITY' | 'CREDITS' | 'MISTAKES' | 'LEADERBOARD';
 }
 
@@ -34,6 +35,7 @@ export const NstaQuickWheelModal: React.FC<NstaQuickWheelModalProps> = ({
   onClose,
   onOpenMessenger,
   onQuickAccess,
+  onOpenPedro,
   onGoHome,
   mistakeCount = 0,
   appName = 'NSTA',
@@ -151,17 +153,27 @@ export const NstaQuickWheelModal: React.FC<NstaQuickWheelModalProps> = ({
   ];
 
   const totalTools = tools.length;
-  const anglePerItem = 360 / totalTools; // 36 degrees per item
+  const anglePerItem = 360 / totalTools;
 
   const handleLaunch = useCallback((tool: WheelToolItem) => {
     hapticStrong();
     onClose();
     if (tool.type === 'MESSENGER') {
       onOpenMessenger();
+    } else if (tool.type === 'PEDRO') {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('nst_pedro_hidden');
+        window.dispatchEvent(new CustomEvent('nst-restore-pedro'));
+        window.dispatchEvent(new CustomEvent('nst-show-pedro'));
+        window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: false } }));
+      }
+      if (onOpenPedro) {
+        onOpenPedro();
+      }
     } else if (tool.action) {
       onQuickAccess(tool.action);
     }
-  }, [onClose, onOpenMessenger, onQuickAccess]);
+  }, [onClose, onOpenMessenger, onQuickAccess, onOpenPedro]);
 
   // Pointer drag to rotate wheel
   const handlePointerDown = (e: React.PointerEvent) => {

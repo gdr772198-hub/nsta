@@ -8,6 +8,7 @@ import {
 import { renderMathInHtml } from '../utils/mathUtils';
 import { hapticLight, hapticMedium, hapticStrong } from '../utils/haptic';
 import McqQuestionDisplay from './McqQuestionDisplay';
+import { tryEarnScore } from '../utils/scoreSystem';
 
 export interface UnifiedMcqPracticeProps {
   questions: any[];
@@ -103,6 +104,12 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
       setTimeElapsed(prev => {
         const next = prev + 1;
         if (onTimeUpdate) onTimeUpdate(next);
+        // Active in MCQ Practice: 30 XP per active minute (0 credit) per user mandate
+        if (next > 0 && next % 60 === 0 && user?.id) {
+          try {
+            tryEarnScore(user.id, 30, user.subscriptionLevel, user.isPremium, 0, 'MCQ_ACTIVE_TIME', undefined, undefined, 'MCQ Practice Active Minute');
+          } catch (_) {}
+        }
         return next;
       });
     }, 1000);

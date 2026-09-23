@@ -113,7 +113,9 @@ export interface RoutineTask {
 export interface User {
   id: string; // Login ID (Firebase UID)
   displayId?: string; // Visible ID (IIC-XXX)
-  password: string;
+  password?: string;
+  displayName?: string;
+  photoUrl?: string;
   name: string;
   mobile: string;
   email: string;
@@ -142,7 +144,10 @@ export interface User {
   customAnimation?: UserCustomAnimation;
   activeThemeAppliedUntil?: string;
   activeAnimationAppliedUntil?: string;
-  level?: number; // Current Level (Default 1)
+  level?: number; // User Study Level (Default 1)
+  pedroLevel?: number; // Pedro Mascot Level (1 to 8) - distinct from user study level, updates Pedro's 3D look & saved in profile
+  pedroXp?: number; // Pedro interaction/bonding XP
+  pedroColorScheme?: 'classic' | 'cyber'; // Pedro 3D mascot color styling
   xp?: number; // Current XP
   lastLoginDate: string; // ISO Date string YYYY-MM-DD
   lastActiveTime?: string; // ISO String for "Online" status
@@ -226,6 +231,10 @@ export interface User {
   giftedCredits?: number; // Admin-gifted credits (separate from earned/bonus)
   giftedCreditsExpiry?: string; // ISO date when gifted credits expire
   lastLevelNotified?: number; // Last level the user was shown a level-up celebration for
+  pedroLevel?: number; // Pedro mascot's own independent companion level (1-8), distinct from student academic level
+  pedroXp?: number; // Pedro's companion experience points
+  pedroColorScheme?: 'classic' | 'cyber'; // Saved Pedro 3D color scheme
+  claimedLevelRewards?: number[]; // Array of level numbers (2..15) whose coin rewards have been claimed
   dailyMcqDate?: string; // YYYY-MM-DD for daily MCQ tracking
   dailyMcqCount?: number; // MCQs attempted today
   dailyMcqCorrect?: number; // Correct MCQs today
@@ -806,6 +815,8 @@ export interface PedroSystemConfig {
   defaultRate?: number;
   pages?: Record<string, PedroPageConfig>;
 }
+
+export type AppSettings = SystemSettings;
 
 export interface SystemSettings {
   pedroConfig?: PedroSystemConfig; // NEW: Admin-controlled Pedro AI Robot Guide & Voice script

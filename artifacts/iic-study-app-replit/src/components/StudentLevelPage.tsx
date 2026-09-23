@@ -616,8 +616,8 @@ export const StudentLevelPage: React.FC<StudentLevelPageProps> = ({
                 </p>
                 <p className="text-[9px] text-slate-400">
                   {userLvl.level >= 9
-                    ? `Level 9+ Bonus: +${(userLvl.level - 8) * 30}s extra reading time`
-                    : 'Notes/PDF/Video study time window'}
+                    ? `Level 9+ Bonus: +${userLvl.level - 8} min extra reading time`
+                    : 'Notes/PDF/Video study time window (10 min base)'}
                 </p>
               </div>
             </div>
@@ -789,22 +789,6 @@ export const StudentLevelPage: React.FC<StudentLevelPageProps> = ({
             const readingSecs = getMaxReadingSeconds(lvl.level);
             const animIntensity = lvl.animationIntensity;
 
-            // Progress Bonus (L4+) or Daily Limit Multiplier (L9+)
-            const bonusText = (() => {
-              if (lvl.level >= 14) return 'Daily Limit Multiplier: Up to 500%';
-              if (lvl.level === 13) return 'Daily Limit Multiplier: Up to 400%';
-              if (lvl.level === 12) return 'Daily Limit Multiplier: Up to 320%';
-              if (lvl.level === 11) return 'Daily Limit Multiplier: Up to 250%';
-              if (lvl.level === 10) return 'Daily Limit Multiplier: Up to 200%';
-              if (lvl.level === 9) return 'Daily Limit Multiplier: Up to 100%';
-              if (lvl.level >= 8) return 'Progress Bonus: Up to 45%';
-              if (lvl.level === 7) return 'Progress Bonus: Up to 38%';
-              if (lvl.level === 6) return 'Progress Bonus: Up to 30%';
-              if (lvl.level === 5) return 'Progress Bonus: Up to 22%';
-              if (lvl.level === 4) return 'Progress Bonus: Up to 15%';
-              return 'Progress Bonus: Level 4 se start';
-            })();
-
             return (
               <div
                 key={lvl.level}
@@ -969,26 +953,26 @@ export const StudentLevelPage: React.FC<StudentLevelPageProps> = ({
                       <div>
                         <p className="text-[11px] font-black text-white">
                           {lvl.level >= 9
-                            ? `Reading Window: ${readingSecs}s (${Math.floor(readingSecs / 60)}m ${readingSecs % 60}s)`
-                            : 'Reading Window: 300s (5 min)'}
+                            ? `Reading Window: ${readingSecs}s (${Math.floor(readingSecs / 60)} min)`
+                            : `Reading Window: ${readingSecs}s (${Math.floor(readingSecs / 60)} min)`}
                         </p>
                         <p className="text-[9px] text-slate-400">
                           {lvl.level >= 9
-                            ? `L9+ Bonus: +${(lvl.level - 8) * 30} sec extra reading time window`
-                            : 'Notes, PDF, Video study scoring window'}
+                            ? `L9+ Bonus: +${lvl.level - 8} min extra reading time window`
+                            : 'Notes, PDF, Video study scoring window (Base 10 min)'}
                         </p>
                       </div>
                     </div>
 
-                    {/* Progress Bonus or Limit Boost */}
-                    <div className="bg-[#12192b] rounded-xl p-2.5 border border-white/10 flex items-start gap-2.5">
-                      <span className="text-base mt-0.5">🚀</span>
+                    {/* Level Coin Reward */}
+                    <div className="bg-[#12192b] rounded-xl p-2.5 border border-amber-500/30 flex items-start gap-2.5">
+                      <span className="text-base mt-0.5">🪙</span>
                       <div>
-                        <p className="text-[11px] font-black text-amber-400">
-                          {bonusText}
+                        <p className="text-[11px] font-black text-amber-300">
+                          {lvl.coinReward > 0 ? `+${lvl.coinReward} Coins Reward` : 'Starting Level (0 Coins)'}
                         </p>
                         <p className="text-[9px] text-slate-400">
-                          Daily study consistency par extra boost
+                          {isUnlocked && lvl.coinReward > 0 ? '✓ Reached & Added to Wallet' : 'Level unlock hone par seedhe wallet me'}
                         </p>
                       </div>
                     </div>

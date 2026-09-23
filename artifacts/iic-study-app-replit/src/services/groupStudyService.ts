@@ -5,6 +5,7 @@
 
 import { ref, set, get, update, remove, onValue, onDisconnect, push } from 'firebase/database';
 import { rtdb, auth } from '../firebase';
+import { getLevelFromScore } from '../utils/levelSystem';
 
 export interface GroupStudyMember {
   id: string;
@@ -14,8 +15,12 @@ export interface GroupStudyMember {
   lastSeen: number;
   isHost: boolean;
   level?: number;
+  xp?: number;
+  totalXp?: number;
   handRaised?: boolean;
   statusText?: string;
+  roomXp?: number;
+  studyMinutes?: number;
 }
 
 export interface GroupStudyMessage {
@@ -124,6 +129,7 @@ export interface GroupStudyRoom {
   durationMinutes: number;
   expiresAt: number;
   isExpired?: boolean;
+  totalRoomXp?: number;
   timer: {
     durationMinutes: number;
     startTime: number | null;
@@ -425,9 +431,15 @@ export const getCachedRooms = (): Record<string, GroupStudyRoom> => {
 };
 
 export const saveCachedRoom = (room: GroupStudyRoom) => {
+  if (!room || !room.id) return;
   try {
     const map = getCachedRooms();
-    map[room.id] = room;
+    const ensuredRoom: GroupStudyRoom = {
+      ...room,
+      code: (room.code || room.id.slice(-6) || 'STUDY1').toUpperCase(),
+      password: (room.password || '1234').trim(),
+    };
+    map[room.id] = ensuredRoom;
     localStorage.setItem(LOCAL_ROOMS_KEY, JSON.stringify(map));
   } catch {}
 };
@@ -475,7 +487,12 @@ export const subscribeToActiveRooms = (callback: (rooms: GroupStudyRoom[]) => vo
     if (val && typeof val === 'object') {
       Object.entries(val).forEach(([k, v]: [string, any]) => {
         if (v && !v.isDeleted) {
-          const roomObj = { ...v, id: v.id || k };
+          const roomObj: GroupStudyRoom = {
+            ...v,
+            id: v.id || k,
+            code: (v.code || (v.id || k).slice(-6) || 'STUDY1').toUpperCase(),
+            password: (v.password || '1234').trim(),
+          };
           merged[k] = roomObj;
           saveCachedRoom(roomObj);
         } else if (v?.isDeleted) {
@@ -506,31 +523,94 @@ export const subscribeToActiveRooms = (callback: (rooms: GroupStudyRoom[]) => vo
 // ── Subscribe to a Single Room ────────────────────────────────────────────────
 export const subscribeToRoom = (roomId: string, callback: (room: GroupStudyRoom | null) => void): (() => void) => {
   const roomRef = ref(rtdb, `group_study_rooms/${roomId}`);
+  let hasReceivedFirstSnapshot = false;
+
   const unsubscribe = onValue(roomRef, (snap) => {
     const val = snap.val();
     if (val && !val.isDeleted) {
-      const roomWithId = { ...val, id: val.id || roomId };
+      hasReceivedFirstSnapshot = true;
+      const roomWithId: GroupStudyRoom = {
+        ...val,
+        id: val.id || roomId,
+        code: (val.code || (val.id || roomId).slice(-6) || 'STUDY1').toUpperCase(),
+        password: (val.password || '1234').trim(),
+      };
       saveCachedRoom(roomWithId);
       callback(roomWithId);
     } else if (val?.isDeleted) {
       removeCachedRoom(roomId);
       callback(null);
     } else {
-      // RTDB value is null; check local cache before assuming deleted
+      // RTDB value is null or pending; check local cache before assuming deleted
       const cached = getCachedRooms()[roomId];
       if (cached && !cached.isDeleted) {
         callback(cached);
-      } else {
+      } else if (hasReceivedFirstSnapshot) {
+        // Only emit null if we previously had a valid snapshot and it was truly removed
         callback(null);
       }
     }
   }, (err) => {
     console.warn(`RTDB subscribe error for room ${roomId}, using cache:`, err);
     const cached = getCachedRooms()[roomId];
-    callback(cached || null);
+    if (cached && !cached.isDeleted) {
+      callback(cached);
+    }
   });
 
   return () => unsubscribe();
+};
+
+// ── Find a Room by Code or ID ────────────────────────────────────────────────
+export const findRoomByCodeOrId = async (query: string): Promise<GroupStudyRoom | null> => {
+  if (!query) return null;
+  const clean = query.trim().toUpperCase();
+
+  // 1. Search in local cache first
+  try {
+    const localMap = getCachedRooms();
+    for (const r of Object.values(localMap)) {
+      if (r && !r.isDeleted) {
+        const c = (r.code || r.id?.slice(-6) || '').toUpperCase();
+        if (c === clean || r.id?.toUpperCase() === clean || r.id?.slice(-6).toUpperCase() === clean) {
+          return {
+            ...r,
+            code: c || clean,
+            password: (r.password || '1234').trim(),
+          };
+        }
+      }
+    }
+  } catch {}
+
+  // 2. Query Firebase RTDB
+  try {
+    const snap = await get(ref(rtdb, 'group_study_rooms'));
+    if (snap.exists()) {
+      const data = snap.val();
+      if (data && typeof data === 'object') {
+        for (const [k, v] of Object.entries(data as Record<string, any>)) {
+          if (v && !v.isDeleted) {
+            const c = (v.code || k.slice(-6) || '').toUpperCase();
+            if (c === clean || k.toUpperCase() === clean || k.slice(-6).toUpperCase() === clean) {
+              const matchedRoom: GroupStudyRoom = {
+                ...v,
+                id: v.id || k,
+                code: c || clean,
+                password: (v.password || '1234').trim(),
+              };
+              saveCachedRoom(matchedRoom);
+              return matchedRoom;
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[GroupStudy] findRoomByCodeOrId query error:', err);
+  }
+
+  return null;
 };
 
 // ── Create a New Group Room ───────────────────────────────────────────────────
@@ -538,7 +618,7 @@ export const createGroupRoom = async (
   roomData: {
     name: string;
     subject: string;
-    password: string;
+    password?: string;
     description?: string;
     isPrivate?: boolean;
     maxMembers?: number;
@@ -551,12 +631,11 @@ export const createGroupRoom = async (
     name: string;
     photoURL?: string;
     level?: number;
+    xp?: number;
   }
 ): Promise<string> => {
   const cleanPassword = (roomData.password || '').trim();
-  if (!cleanPassword) {
-    throw new Error('Room Password is required to create and start a room!');
-  }
+  const isPrivate = roomData.isPrivate !== undefined ? roomData.isPrivate : (cleanPassword.length > 0);
 
   const roomsRef = ref(rtdb, 'group_study_rooms');
   const newRoomRef = push(roomsRef);
@@ -565,6 +644,9 @@ export const createGroupRoom = async (
   const code = generateRoomCode();
   const effectiveHostId = auth.currentUser?.uid || host.id || 'host';
 
+  const hostXp = host.xp || 0;
+  const hostLevel = host.level || (hostXp > 0 ? getLevelFromScore(hostXp) : 1);
+
   const hostMember: GroupStudyMember = {
     id: effectiveHostId,
     name: host.name || 'Host',
@@ -572,9 +654,13 @@ export const createGroupRoom = async (
     joinedAt: now,
     lastSeen: now,
     isHost: true,
-    level: host.level || 1,
+    level: hostLevel,
+    xp: hostXp,
+    totalXp: hostXp,
     handRaised: false,
     statusText: 'Hosting Room',
+    roomXp: 0,
+    studyMinutes: 0,
   };
 
   const durationMinutes = roomData.durationMinutes && roomData.durationMinutes > 0 ? roomData.durationMinutes : 30;
@@ -588,7 +674,7 @@ export const createGroupRoom = async (
     description: roomData.description?.trim() || '',
     code,
     password: cleanPassword,
-    isPrivate: !!roomData.isPrivate,
+    isPrivate: isPrivate,
     hostId: effectiveHostId,
     hostName: host.name,
     hostPhotoURL: host.photoURL,
@@ -600,6 +686,7 @@ export const createGroupRoom = async (
     durationMinutes,
     expiresAt,
     isExpired: false,
+    totalRoomXp: 0,
     timer: {
       durationMinutes,
       startTime: now,
@@ -645,10 +732,10 @@ export const createGroupRoom = async (
   try {
     await set(newRoomRef, initialRoom);
 
-    // Setup onDisconnect for host presence: if host disconnects, room is destroyed
+    // Setup onDisconnect for host member presence (does NOT destroy entire room so host migration can occur)
     try {
-      const roomRef = ref(rtdb, `group_study_rooms/${roomId}`);
-      onDisconnect(roomRef).remove();
+      const hostMemberRef = ref(rtdb, `group_study_rooms/${roomId}/members/${effectiveHostId}`);
+      onDisconnect(hostMemberRef).remove();
     } catch {}
   } catch (err: any) {
     console.warn('[GroupStudy] RTDB write error, room kept in local session:', err);
@@ -665,6 +752,7 @@ export const joinGroupRoom = async (
     name: string;
     photoURL?: string;
     level?: number;
+    xp?: number;
   }
 ): Promise<boolean> => {
   const roomRef = ref(rtdb, `group_study_rooms/${roomId}`);
@@ -691,6 +779,9 @@ export const joinGroupRoom = async (
 
   const now = Date.now();
   const effectiveUserId = auth.currentUser?.uid || user.id;
+  const userXp = user.xp || 0;
+  const userLevel = user.level || (userXp > 0 ? getLevelFromScore(userXp) : 1);
+
   const newMember: GroupStudyMember = {
     id: effectiveUserId,
     name: user.name,
@@ -698,7 +789,11 @@ export const joinGroupRoom = async (
     joinedAt: now,
     lastSeen: now,
     isHost: room.hostId === effectiveUserId,
-    level: user.level || 1,
+    level: userLevel,
+    xp: userXp,
+    totalXp: userXp,
+    roomXp: 0,
+    studyMinutes: 0,
     handRaised: false,
     statusText: 'Studying',
   };
@@ -764,10 +859,57 @@ export const leaveGroupRoom = async (roomId: string, userId: string, userName: s
 
       const remainingMembers = Object.keys(room.members || {}).filter((id) => id !== effectiveUserId);
 
-      // "Room se host ke jate hi room submit ho jayega ya agar user na honge to destroy ho jayega apne aap"
-      if (isHost || remainingMembers.length === 0) {
-        // Destroy / Delete the room completely
+      // "Room management: host ke off jane pe room closed na hoga — highest level user naya host ban jayega!"
+      if (remainingMembers.length === 0) {
+        // Destroy / Delete the room completely only when 0 members remain
         await deleteGroupRoom(roomId);
+      } else if (isHost) {
+        // HOST MIGRATION: Promote the highest-level and highest-XP remaining member to new Host!
+        const memberList: GroupStudyMember[] = remainingMembers
+          .map((mid) => room.members?.[mid])
+          .filter((m): m is GroupStudyMember => !!m);
+
+        memberList.sort((a, b) => {
+          const lvlA = a.level || 1;
+          const lvlB = b.level || 1;
+          if (lvlB !== lvlA) return lvlB - lvlA;
+          const xpA = a.xp ?? a.totalXp ?? a.roomXp ?? 0;
+          const xpB = b.xp ?? b.totalXp ?? b.roomXp ?? 0;
+          if (xpB !== xpA) return xpB - xpA;
+          return (a.joinedAt || 0) - (b.joinedAt || 0);
+        });
+
+        const newHost = memberList[0];
+        if (newHost) {
+          try {
+            await update(ref(rtdb, `group_study_rooms/${roomId}`), {
+              hostId: newHost.id,
+              hostName: newHost.name,
+              hostPhotoURL: newHost.photoURL || '',
+              lastActive: Date.now(),
+            });
+            await update(ref(rtdb, `group_study_rooms/${roomId}/members/${newHost.id}`), {
+              isHost: true,
+              statusText: 'Hosting Room',
+            });
+
+            // Announce new host in room chat
+            const chatRef = ref(rtdb, `group_study_rooms/${roomId}/chat`);
+            const newMsgRef = push(chatRef);
+            await set(newMsgRef, {
+              id: newMsgRef.key,
+              userId: 'system',
+              userName: 'System',
+              text: `👑 Host left the room. ${newHost.name} (Highest Level ${newHost.level || 1}, ${newHost.xp ?? newHost.totalXp ?? 0} XP) is now the new Host!`,
+              timestamp: Date.now(),
+              type: 'SYSTEM',
+            });
+          } catch (migrateErr) {
+            console.warn('[GroupStudy] Host migration error:', migrateErr);
+          }
+        } else {
+          await deleteGroupRoom(roomId);
+        }
       } else {
         // Send leave message
         const chatRef = ref(rtdb, `group_study_rooms/${roomId}/chat`);
@@ -787,6 +929,76 @@ export const leaveGroupRoom = async (roomId: string, userId: string, userName: s
   } catch (err) {
     console.error('Error leaving group room:', err);
     removeCachedRoom(roomId);
+  }
+};
+
+/**
+ * Elects and promotes the highest Level & XP member to host if the current host went offline or disconnected.
+ * Ensures room never closes when host drops out.
+ */
+export const electAndPromoteHighestLevelHost = async (
+  roomId: string,
+  room?: GroupStudyRoom | null
+): Promise<GroupStudyMember | null> => {
+  try {
+    let targetRoom = room;
+    if (!targetRoom) {
+      const snap = await get(ref(rtdb, `group_study_rooms/${roomId}`));
+      if (snap.exists()) {
+        targetRoom = snap.val();
+      }
+    }
+    if (!targetRoom || !targetRoom.members) return null;
+
+    const memberList = Object.values(targetRoom.members).filter((m): m is GroupStudyMember => !!m);
+    if (memberList.length === 0) return null;
+
+    // If host is still in members and active, nothing to do
+    if (targetRoom.hostId && targetRoom.members[targetRoom.hostId]) {
+      return targetRoom.members[targetRoom.hostId];
+    }
+
+    // Host is disconnected / gone! Sort by highest level, then highest XP
+    memberList.sort((a, b) => {
+      const lvlA = a.level || 1;
+      const lvlB = b.level || 1;
+      if (lvlB !== lvlA) return lvlB - lvlA;
+      const xpA = a.xp ?? a.totalXp ?? a.roomXp ?? 0;
+      const xpB = b.xp ?? b.totalXp ?? b.roomXp ?? 0;
+      if (xpB !== xpA) return xpB - xpA;
+      return (a.joinedAt || 0) - (b.joinedAt || 0);
+    });
+
+    const newHost = memberList[0];
+    if (!newHost) return null;
+
+    await update(ref(rtdb, `group_study_rooms/${roomId}`), {
+      hostId: newHost.id,
+      hostName: newHost.name,
+      hostPhotoURL: newHost.photoURL || '',
+      lastActive: Date.now(),
+    });
+    await update(ref(rtdb, `group_study_rooms/${roomId}/members/${newHost.id}`), {
+      isHost: true,
+      statusText: 'Hosting Room',
+    });
+
+    // Announce promotion in chat
+    const chatRef = ref(rtdb, `group_study_rooms/${roomId}/chat`);
+    const newMsgRef = push(chatRef);
+    await set(newMsgRef, {
+      id: newMsgRef.key,
+      userId: 'system',
+      userName: 'System',
+      text: `👑 Host went offline. ${newHost.name} (Highest Level ${newHost.level || 1}, ${newHost.xp ?? newHost.totalXp ?? 0} XP) has been elected as the new Host!`,
+      timestamp: Date.now(),
+      type: 'SYSTEM',
+    });
+
+    return newHost;
+  } catch (err) {
+    console.warn('[GroupStudy] electAndPromoteHighestLevelHost error:', err);
+    return null;
   }
 };
 
@@ -1209,6 +1421,44 @@ export const submitMcqAnswer = async (
       lastAnswerTime: Date.now(),
       selectedOption,
     });
+
+    // Synchronize member live Level & XP in RTDB so all room participants see realtime updates
+    try {
+      const memberRef = ref(rtdb, `group_study_rooms/${roomId}/members/${userId}`);
+      const memSnap = await get(memberRef);
+      if (memSnap.exists()) {
+        const memData = memSnap.val() as GroupStudyMember;
+        const currentMemberRoomXp = memData.roomXp || 0;
+        const newMemberRoomXp = Math.max(0, currentMemberRoomXp + netXpChange);
+        const currentMemberTotalXp = memData.xp ?? memData.totalXp ?? 0;
+        const newMemberTotalXp = Math.max(0, currentMemberTotalXp + netXpChange);
+        const newMemberLevel = getLevelFromScore(newMemberTotalXp);
+
+        await update(memberRef, {
+          roomXp: newMemberRoomXp,
+          xp: newMemberTotalXp,
+          totalXp: newMemberTotalXp,
+          level: newMemberLevel,
+          lastSeen: Date.now(),
+        });
+      }
+
+      // Also update total room XP
+      if (netXpChange > 0) {
+        const roomRef = ref(rtdb, `group_study_rooms/${roomId}`);
+        const roomSnap = await get(roomRef);
+        if (roomSnap.exists()) {
+          const roomVal = roomSnap.val();
+          const currentTotalRoomXp = roomVal.totalRoomXp || 0;
+          await update(roomRef, {
+            totalRoomXp: currentTotalRoomXp + netXpChange,
+            lastActive: Date.now(),
+          });
+        }
+      }
+    } catch (syncErr) {
+      console.warn('[GroupStudy] Member live XP sync notice:', syncErr);
+    }
   } catch (err: any) {
     const msg = String(err?.message || err || '');
     if (!msg.includes('PERMISSION_DENIED') && !msg.includes('Permission denied')) {
@@ -1546,6 +1796,115 @@ export const closeHostMcq = async (roomId: string): Promise<void> => {
       return;
     }
     console.warn('Failed to close host MCQ:', err);
+  }
+};
+
+/**
+ * Award XP to a member within a Group Study Room and accumulate in room totals.
+ * Implements Room Management XP tracking requested by the user.
+ */
+export const awardRoomStudyXp = async (
+  roomId: string,
+  userId: string,
+  xpPoints: number,
+  studyMinutesIncrement: number = 0
+): Promise<{ newMemberXp: number; newTotalRoomXp: number }> => {
+  const cached = getCachedRooms()[roomId];
+  let newMemberRoomXp = xpPoints;
+  let newTotalRoomXp = xpPoints;
+  let newMemberTotalXp = xpPoints;
+  let newMemberLevel = 1;
+
+  if (cached) {
+    cached.totalRoomXp = (cached.totalRoomXp || 0) + xpPoints;
+    newTotalRoomXp = cached.totalRoomXp;
+    if (cached.members && cached.members[userId]) {
+      cached.members[userId].roomXp = (cached.members[userId].roomXp || 0) + xpPoints;
+      cached.members[userId].studyMinutes = (cached.members[userId].studyMinutes || 0) + studyMinutesIncrement;
+      cached.members[userId].xp = (cached.members[userId].xp ?? cached.members[userId].totalXp ?? 0) + xpPoints;
+      cached.members[userId].totalXp = cached.members[userId].xp;
+      cached.members[userId].level = getLevelFromScore(cached.members[userId].xp);
+      newMemberRoomXp = cached.members[userId].roomXp || 0;
+      newMemberTotalXp = cached.members[userId].xp || 0;
+      newMemberLevel = cached.members[userId].level || 1;
+    }
+    saveCachedRoom(cached);
+  }
+
+  try {
+    const memRef = ref(rtdb, `group_study_rooms/${roomId}/members/${userId}`);
+    const memSnap = await get(memRef);
+    if (memSnap.exists()) {
+      const mem = memSnap.val() as GroupStudyMember;
+      newMemberRoomXp = (mem.roomXp || 0) + xpPoints;
+      newMemberTotalXp = (mem.xp ?? mem.totalXp ?? 0) + xpPoints;
+      newMemberLevel = getLevelFromScore(newMemberTotalXp);
+      const newStudyMinutes = (mem.studyMinutes || 0) + studyMinutesIncrement;
+
+      await update(memRef, {
+        roomXp: newMemberRoomXp,
+        xp: newMemberTotalXp,
+        totalXp: newMemberTotalXp,
+        level: newMemberLevel,
+        studyMinutes: newStudyMinutes,
+        lastSeen: Date.now(),
+      });
+    }
+
+    const roomSnap = await get(ref(rtdb, `group_study_rooms/${roomId}`));
+    if (roomSnap.exists()) {
+      const room = roomSnap.val();
+      newTotalRoomXp = (room.totalRoomXp || 0) + xpPoints;
+      await update(ref(rtdb, `group_study_rooms/${roomId}`), {
+        totalRoomXp: newTotalRoomXp,
+        lastActive: Date.now(),
+      });
+    }
+  } catch (e) {
+    console.warn('[GroupStudy] Error syncing room XP:', e);
+  }
+
+  return { newMemberXp: newMemberRoomXp, newTotalRoomXp };
+};
+
+/**
+ * Directly sync a member's live stats (Level, XP, Room XP, study minutes) to RTDB
+ */
+export const syncMemberLiveStats = async (
+  roomId: string,
+  userId: string,
+  stats: {
+    roomXpDelta?: number;
+    totalXp?: number;
+    level?: number;
+    studyMinutesDelta?: number;
+  }
+): Promise<void> => {
+  try {
+    const memberRef = ref(rtdb, `group_study_rooms/${roomId}/members/${userId}`);
+    const memSnap = await get(memberRef);
+    if (memSnap.exists()) {
+      const mem = memSnap.val() as GroupStudyMember;
+      const newRoomXp = stats.roomXpDelta !== undefined 
+        ? Math.max(0, (mem.roomXp || 0) + stats.roomXpDelta) 
+        : (mem.roomXp || 0);
+      const newTotalXp = stats.totalXp !== undefined 
+        ? stats.totalXp 
+        : (stats.roomXpDelta !== undefined ? Math.max(0, (mem.xp ?? mem.totalXp ?? 0) + stats.roomXpDelta) : (mem.xp ?? mem.totalXp ?? 0));
+      const newLevel = stats.level !== undefined ? stats.level : getLevelFromScore(newTotalXp);
+      const newStudyMins = stats.studyMinutesDelta !== undefined ? (mem.studyMinutes || 0) + stats.studyMinutesDelta : (mem.studyMinutes || 0);
+
+      await update(memberRef, {
+        roomXp: newRoomXp,
+        xp: newTotalXp,
+        totalXp: newTotalXp,
+        level: newLevel,
+        studyMinutes: newStudyMins,
+        lastSeen: Date.now(),
+      });
+    }
+  } catch (e) {
+    console.warn('[GroupStudy] Error in syncMemberLiveStats:', e);
   }
 };
 

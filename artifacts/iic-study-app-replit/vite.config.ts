@@ -10,11 +10,7 @@ const basePath = process.env.BASE_PATH || '/';
 export default defineConfig({
   base: basePath,
   plugins: [
-    react({
-      babel: {
-        compact: true,
-      },
-    }),
+    react(),
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
@@ -86,6 +82,9 @@ export default defineConfig({
     dedupe: ['react', 'react-dom'],
   },
   root: path.resolve(import.meta.dirname),
+  esbuild: {
+    jsx: 'automatic',
+  },
   build: {
     outDir: path.resolve(import.meta.dirname, '../../dist'),
     emptyOutDir: true,
@@ -94,6 +93,8 @@ export default defineConfig({
     minify: 'esbuild',
     target: 'esnext',
     rollupOptions: {
+      maxParallelFileOps: 2,
+      cache: false,
       onwarn(warning, warn) {
         if (
           warning.code === 'MODULE_LEVEL_DIRECTIVE' ||
@@ -105,15 +106,16 @@ export default defineConfig({
         }
         warn(warning);
       },
-      cache: false,
-      maxParallelFileOps: 2,
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {
+            if (id.includes('three')) return 'vendor-three';
+            if (id.includes('lucide-react')) return 'vendor-icons';
             if (id.includes('react-pdf') || id.includes('pdfjs-dist')) return 'vendor-pdf';
             if (id.includes('jspdf') || id.includes('html2canvas') || id.includes('jszip')) return 'vendor-export';
             if (id.includes('firebase')) return 'vendor-firebase';
             if (id.includes('recharts') || id.includes('d3')) return 'vendor-charts';
+            return 'vendor';
           }
         },
       },

@@ -84,7 +84,7 @@ import { McqLimitLockedPopup } from './components/McqLimitLockedPopup';
 import { StreakLoginPopup } from './components/StreakLoginPopup';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { logErrorToFirebase, setErrorLoggerUser } from './utils/errorLogger';
-import { MaintenanceBanner, AdminCrashPopup } from './components/MaintenanceScreen';
+import { MaintenanceBanner, AdminCrashPopup, MaintenanceScreen } from './components/MaintenanceScreen';
 import { subscribeToMaintenance, markCrashFixed, reportCrash as reportMaintenanceCrash } from './utils/maintenanceManager';
 import { initPerfMode } from './utils/performanceMode';
 import { CreditToast } from './components/CreditToast';
@@ -98,12 +98,15 @@ import { generateDailyChallengeQuestions, getChallengeDateKey, getChallengeWeekK
 import { BrainCircuit, Globe, LogOut, LayoutDashboard, BookOpen, Headphones, HelpCircle, Newspaper, KeyRound, Lock, X, ShieldCheck, FileText, UserPlus, EyeOff, WifiOff, Cloud, ArrowLeft, ExternalLink } from 'lucide-react'; // eslint-disable-line @typescript-eslint/no-unused-vars
 import { SUPPORT_EMAIL, APP_VERSION } from './constants';
 import { StudentTab, PendingReward, MCQResult, SubscriptionHistoryEntry } from './types';
+import { PedroEngine } from './utils/engines/pedroEngine';
+import { pedroSpeak } from './utils/pedroVoiceManager';
 
 const App: React.FC = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [maintenanceState, setMaintenanceState] = useState<any>(null);
   const [adminDashCrashed, setAdminDashCrashed] = useState(false);
   const [showAdminCrashPopup, setShowAdminCrashPopup] = useState(false);
+  const [showFullMaintenanceModal, setShowFullMaintenanceModal] = useState(false);
 
   const [appMcqCommunityDraft, setAppMcqCommunityDraft] = useState<{question: string; statements?: string[]; options: [string,string,string,string]; correctAnswer: number; explanation: string} | null>(null);
 
@@ -155,7 +158,13 @@ const App: React.FC = () => {
   // TESTING OVERRIDE: Render component directly bypassing auth
   useEffect(() => {
       const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.get('mock') === 'dashboard' || urlParams.get('mock') === 'dashboard_with_inbox') {
+        if (urlParams.get('view') === 'login' || urlParams.get('view') === 'auth' || urlParams.get('auth') === '1' || urlParams.get('preview') === 'login') {
+            setState(prev => ({
+                ...prev,
+                user: null
+            }));
+            return;
+        } else if (urlParams.get('mock') === 'dashboard' || urlParams.get('mock') === 'dashboard_with_inbox') {
             setState(prev => ({
                 ...prev,
                 user: {
@@ -486,6 +495,14 @@ const App: React.FC = () => {
             setStudentTab(saved);
         }
     });
+
+    const handleNavHome = () => {
+      setStudentTab('HOME');
+      setState(prev => ({ ...prev, view: 'STUDENT_DASHBOARD' as any }));
+      setShowFullMaintenanceModal(false);
+    };
+    window.addEventListener('nst-navigate-home', handleNavHome);
+    return () => window.removeEventListener('nst-navigate-home', handleNavHome);
   }, []);
 
   const [activeReward, setActiveReward] = useState<PendingReward | null>(null);
@@ -979,6 +996,12 @@ const App: React.FC = () => {
                   localStorage.setItem('nst_streak_popup_date', today);
                   setStreakLoginPopup({ newStreak: updatedUser.streak, prevStreak: prev, isNewRecord: updatedUser.streak > prevLongest && prevLongest > 0 });
               }
+              // Advance Pedro penalty recovery if active
+              try {
+                  PedroEngine.checkAndAdvancePenaltyStreak(updatedUser.id, updatedUser.streak);
+              } catch (e) {
+                  console.error('[PedroPenalty] Error advancing penalty streak:', e);
+              }
               
           } else {
               const prev = updatedUser.streak || 0;
@@ -994,6 +1017,27 @@ const App: React.FC = () => {
                   let lvl = 0;
                   for (let i = 0; i < thresholds.length; i++) { if (cs >= thresholds[i]) lvl = i; else break; }
                   if (lvl > 0) updatedUser.totalScore = thresholds[lvl - 1];
+
+                  // Trigger Pedro Streak Break Penalty ("Aapne streak tod di! Mera level drop ho gaya aur naraj ho gaya!")
+                  try {
+                      const effUserLevel = updatedUser.level || getLevelInfo(updatedUser.totalScore || 0).level || 1;
+                      const penalty = PedroEngine.triggerStreakBreakPenalty(updatedUser.id, effUserLevel);
+                      pedroSpeak(
+                          `Aapne 24 ghante online na aakar streak tod di! Mera level drop hokar Level ${penalty.currentPenaltyLevel} ho gaya! Main aapse naraj hoon! Ab wapas Level ${penalty.targetLevel} par aane ke liye lagatar ${penalty.daysNeeded} din daily study karke streak banayein!`,
+                          { rate: 1.05, pitch: 1.15, showBubble: true }
+                      );
+                      const narajAlert: any = {
+                          id: `pedro-naraj-${today}`,
+                          text: `😠 Pedro Naraj Hai! (Level Dropped)\n\nAapne 24 ghante tak online na aakar daily streak tod di!\n\nPedro ka level drop hokar Level ${penalty.currentPenaltyLevel} ho gaya hai aur usne muh latka liya hai.\n\n⏳ Ab wapas Level ${penalty.targetLevel} par pahuchne ke liye lagatar ${penalty.daysNeeded} din daily study karke streak maintain karni hogi!`,
+                          date: new Date().toISOString(),
+                          read: false,
+                          type: 'ALERT',
+                          isClaimed: false,
+                      };
+                      updatedUser.inbox = deduplicateInbox([narajAlert, ...(updatedUser.inbox || [])]);
+                  } catch (err) {
+                      console.error('[PedroPenalty] Error triggering streak penalty:', err);
+                  }
               }
           }
 
@@ -1569,10 +1613,14 @@ const App: React.FC = () => {
       
       const queue: ('TRACKER' | 'CHALLENGE' | 'WELCOME' | 'THREE_TIER')[] = [];
       const loggedInUserStr = localStorage.getItem('nst_current_user');
+      const isForceLogin = new URLSearchParams(window.location.search).get('view') === 'login' || 
+                           new URLSearchParams(window.location.search).get('view') === 'auth' || 
+                           new URLSearchParams(window.location.search).get('auth') === '1' ||
+                           new URLSearchParams(window.location.search).get('preview') === 'login';
 
       setPopupQueue(queue);
 
-    if (loggedInUserStr) {
+    if (loggedInUserStr && !isForceLogin) {
       try {
         let user: User = JSON.parse(loggedInUserStr);
         if (user && user.inbox) {
@@ -2052,6 +2100,14 @@ const App: React.FC = () => {
       setState(prev => ({ ...prev, user: activeUser, view: 'ADMIN_DASHBOARD' }));
       return;
     }
+
+    // Reset assembly seen state on new auth login so the home page assembly and Pedro Welcome animation trigger cleanly
+    try {
+      sessionStorage.removeItem('nsta_home_assembly_seen');
+      localStorage.removeItem('nsta_first_assembly_seen');
+      sessionStorage.setItem('nst_trigger_pedro_auth_welcome', 'true');
+      sessionStorage.setItem('nst_trigger_pedro_vip_check', 'true');
+    } catch {}
 
     // Show the regular dashboard immediately. School/coaching membership is
     // uncommon and can be detected in the background without blocking login.
@@ -3221,7 +3277,7 @@ const App: React.FC = () => {
 
   return (
     <ErrorBoundary>
-    <div className="min-h-[100dvh] flex flex-col font-sans relative pt-[env(safe-area-inset-top,24px)] pb-[env(safe-area-inset-bottom,0px)]" style={{
+    <div className={`${!state.user ? 'h-[100dvh] max-h-[100dvh] overflow-hidden' : 'min-h-[100dvh]'} flex flex-col font-sans relative pt-[env(safe-area-inset-top,24px)] pb-[env(safe-area-inset-bottom,0px)]`} style={{
       background: `var(--app-bar-color, ${state.settings?.appBackground || '#ffffff'})`,
       backgroundImage: bgImageStyle,
       backgroundSize: bgImageStyle ? 'cover' : undefined,
@@ -3469,16 +3525,15 @@ const App: React.FC = () => {
                            </div>
                        </div>
                    )}
-                   <div className="text-right hidden md:block">
-                       <div className="text-xs font-bold text-slate-800">{state.user.name}</div>
-                   </div>
                </div>
            )}
         </div>
       </header>
       )}
 
-      <main id="main-content" className={`flex-1 w-full ${!state.user ? 'p-0 max-w-none' : (isFullScreen || state.view === ('STUDENT_DASHBOARD' as any) ? 'p-0 max-w-6xl mx-auto' : 'p-4 mb-8 max-w-6xl mx-auto')}`}>
+      {/* Removed Pedro Login Page floating test button */}
+
+      <main id="main-content" className={`flex-1 w-full ${!state.user ? 'p-0 max-w-none h-full overflow-hidden flex flex-col' : (isFullScreen || state.view === ('STUDENT_DASHBOARD' as any) ? 'p-0 max-w-6xl mx-auto' : 'p-4 mb-8 max-w-6xl mx-auto')}`}>
         {!state.user ? (
             <ErrorBoundary fallbackLabel="Login" compact>
               <Auth onLogin={handleLogin} logActivity={logActivity} appSettings={state.settings} />
@@ -3559,8 +3614,23 @@ const App: React.FC = () => {
                           <MaintenanceBanner
                             title={maintenanceState.config.title || 'System Maintenance'}
                             message={maintenanceState.config.message || 'We are updating our system.'}
-                            onClick={() => {}}
+                            onClick={() => setShowFullMaintenanceModal(true)}
                           />
+                        )}
+                        {showFullMaintenanceModal && (
+                          <div className="fixed inset-0 z-[99999]">
+                            <MaintenanceScreen
+                              title={maintenanceState?.config?.title}
+                              message={maintenanceState?.config?.message}
+                              pageName={studentTab}
+                              retryMinutes={maintenanceState?.config?.retryMinutes}
+                              onGoHome={() => {
+                                setShowFullMaintenanceModal(false);
+                                setStudentTab('HOME');
+                              }}
+                              onRetry={() => window.location.reload()}
+                            />
+                          </div>
                         )}
                         <ErrorBoundary
                           fallbackLabel="Student Dashboard"
@@ -3733,7 +3803,7 @@ const App: React.FC = () => {
       )}
 </main>
       
-      {!isFullScreen && state.view !== 'STUDENT_DASHBOARD' && state.settings.showFooter !== false && !isLessonImmersive && (
+      {!isFullScreen && state.view !== 'STUDENT_DASHBOARD' && state.settings.showFooter !== false && !isLessonImmersive && state.user && (
       <footer className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 py-1 text-center z-[40]">
           <p
             className="text-[10px] font-black uppercase tracking-widest"
@@ -3746,7 +3816,7 @@ const App: React.FC = () => {
 
       {state.settings.bannerConfig?.bottom?.enabled && showBottomBanner && (
           <div
-            className={`banner-premium-shimmer fixed bottom-6 left-0 right-0 text-[11px] font-black tracking-widest uppercase py-1.5 overflow-hidden relative whitespace-nowrap z-[39] transition-all duration-500 ease-in-out ${state.settings.bannerConfig.bottom.clickUrl ? 'cursor-pointer active:opacity-70' : ''}`}
+            className={`banner-premium-shimmer fixed ${!state.user ? 'bottom-0' : 'bottom-6'} left-0 right-0 text-[11px] font-black tracking-widest uppercase py-1.5 overflow-hidden relative whitespace-nowrap z-[39] transition-all duration-500 ease-in-out ${state.settings.bannerConfig.bottom.clickUrl ? 'cursor-pointer active:opacity-70' : ''}`}
             style={{
                 background: state.settings.bannerConfig.bottom.bgColor
                     ? `linear-gradient(90deg, ${state.settings.bannerConfig.bottom.bgColor}ee, ${state.settings.bannerConfig.bottom.bgColor}cc, ${state.settings.bannerConfig.bottom.bgColor}ee)`

@@ -5,8 +5,8 @@ import { CustomPlayer } from './CustomPlayer';
 import { createPortal } from "react-dom";
 import { FeatureHints, FeatureTipsList } from "./FeatureHints";
 import { TopBarEffectsLayer } from "../utils/topBarEffects";
-import { getLevelInfo, getNextLevelInfo, getLevelProgress, LEVEL_INFO, ACTIVITY_SCORES, getLevelTopBarEffects, getLevelLimitBonus, getLevelDailyLimits, getLevelDailyLimitsWithOverride, getEffectiveDailyLimit, UNLIMITED, getMaxReadingSeconds } from "../utils/levelSystem";
-import { tryEarnScore, awardMilestone, getDailyScoreEarned, DAILY_SCORE_LIMIT, getDailyScoreLimit, getActiveBoost, getCombinedBoost, logScoreActivity, getUserScoreMultiplier } from "../utils/scoreSystem";
+import { getLevelInfo, getNextLevelInfo, getLevelProgress, LEVEL_INFO, ACTIVITY_SCORES, getLevelTopBarEffects, getLevelLimitBonus, getLevelDailyLimits, getLevelDailyLimitsWithOverride, getEffectiveDailyLimit, UNLIMITED, getMaxReadingSeconds, getLevelCoinReward } from "../utils/levelSystem";
+import { tryEarnScore, awardMilestone, getDailyScoreEarned, DAILY_SCORE_LIMIT, getDailyScoreLimit, getActiveBoost, getCombinedBoost, logScoreActivity, getUserScoreMultiplier, subtractDailyScore } from "../utils/scoreSystem";
 import { ScoreHistoryDashboard } from "./ScoreHistoryDashboard";
 import { StudentProgressDashboard } from "./StudentProgressDashboard";
 import { SuggestionsPanel } from "./SuggestionsPanel";
@@ -79,6 +79,7 @@ import { clearAllRecentReads, saveRecentHomework, getRecentHomeworks, removeRece
 import { markRoutinePageRead, markRoutineMcqDone, isRoutinePageRead, isRoutineMcqDone, updateRoutineMcqScore, recordMistake, addPageTime, resetPageTime, calculatePageRequiredReadingSec, isLessonAutoComplete, isLessonRewarded, markLessonRewarded, markRoutinePageMcqDone, updateRoutinePageMcqScore, isRoutinePageMcqDone, getRoutinePageMcqScore, getAutoPageBoxState, getPageTime, getLessonStats, getMultiLessonStats, getProgressColor5, getProgressTicks } from "../utils/routineAutoTrack";
 import { loadRoutineData, saveRoutineData, checkAndResetDaily, generateDailyTask, advanceLessonInCycle, getDiscountFactor, hasActiveDiscount, getPageReadReward, LESSON_COMPLETE_REWARD, unlockRevisionLesson, getUserSubTier, getDailyClaimAmount, getUnclaimedCoins, ensureTodayClaimEntry, claimAllPendingCoins } from "../utils/routineStorage";
 import { SubscriptionEngine } from "../utils/engines/subscriptionEngine";
+import { PedroEngine } from "../utils/engines/pedroEngine";
 import { recalculateSubscriptionStatus } from "../utils/subscriptionUtils";
 import { RewardEngine } from "../utils/engines/rewardEngine";
 import {
@@ -230,8 +231,9 @@ import {
   Tv,
   Loader2,
   Radio,
+  Camera,
 } from "lucide-react";
-import { FaWhatsapp, FaYoutube } from "react-icons/fa";
+import { FaWhatsapp, FaYoutube, FaInstagram } from "react-icons/fa";
 import { SiGmail } from "react-icons/si";
 import { speakText, stopSpeech, stripHtml } from "../utils/textToSpeech";
 import { parseMCQText, normalizeMcqPaste, extractStatements } from "../utils/mcqParser";
@@ -298,7 +300,11 @@ import { PerformanceGraph } from "./PerformanceGraph";
 import { StudentSidebar } from "./StudentSidebar";
 import { StudyGoalTimer } from "./StudyGoalTimer";
 import { ExplorePage } from "./ExplorePage";
-import { PedroAssistant, FloatingPedroWidget } from "./PedroAssistant";
+import { PedroAssistant, FloatingPedroWidget, speakPedroVoice, getRoutineSpeechSummary, formatTimeMinSecHindi } from "./PedroAssistant";
+import { pedroSpeak } from "../utils/pedroVoiceManager";
+import { PedroVipExpiryModal } from "./PedroVipExpiryModal";
+import { Pedro3DMascot } from "./Pedro3DMascot";
+import { ProfileCameraModal } from "./ProfileCameraModal";
 import { StudentHistoryModal } from "./StudentHistoryModal";
 import { AdminWhiteBoard } from "./AdminWhiteBoard";
 import { generateDailyRoutine } from "../utils/routineGenerator";
@@ -317,6 +323,8 @@ import {
   syncHostActivity,
   broadcastHostMcq,
   leaveGroupRoom,
+  deleteGroupRoom,
+  isRoomCreatedByMe,
   cleanRtdbPayload
 } from "../services/groupStudyService";
 // @ts-ignore
@@ -764,6 +772,69 @@ export const StudentDashboard: React.FC<Props> = ({
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
+
+  // ── PEDRO VIP EXPIRY WARNING (LEVEL 1+ POWER) ─────────────────────────
+  // User Request: "Level 1 Se VIP 24-Hour Expiry Warning Har Login Par:
+  // actual login ke waqt agar student ka VIP plan 24 ghante mein expire hone wala ho,
+  // to Pedro ka popup/voice alert fire hone ka live logic abhi connect nahi hai. Ye lagu kar do"
+  const [showPedroVipExpiryModal, setShowPedroVipExpiryModal] = useState<boolean>(false);
+  const [pedroVipExpiryData, setPedroVipExpiryData] = useState<{
+    hoursRemaining: number;
+    isExpired: boolean;
+    message: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const performVipExpiryCheck = () => {
+      const vipAlert = PedroEngine.checkVipExpiryWarning(user);
+      if (vipAlert.needsWarning) {
+        const singleLineSpeech = vipAlert.isExpired
+          ? 'Aapka VIP plan expire ho chuka hai.'
+          : 'Aapka VIP plan kal expire ho raha hai.';
+
+        setPedroVipExpiryData({
+          hoursRemaining: vipAlert.hoursRemaining,
+          isExpired: !!vipAlert.isExpired,
+          message: singleLineSpeech,
+        });
+
+        // Trigger Pedro VIP popup & voice alert once per day on first login
+        const todayStr = new Date().toDateString();
+        const hasAlertedToday = typeof window !== 'undefined' && localStorage.getItem('nst_pedro_vip_alert_date') === todayStr;
+        if (!hasAlertedToday) {
+          if (typeof window !== 'undefined') localStorage.setItem('nst_pedro_vip_alert_date', todayStr);
+          setTimeout(() => {
+            setShowPedroVipExpiryModal(true);
+            try {
+              pedroSpeak(singleLineSpeech);
+            } catch {}
+          }, 2000);
+        }
+      }
+    };
+
+    // Check on login trigger or on component mount for logged in student
+    const isLoginTrigger = sessionStorage.getItem('nst_trigger_pedro_vip_check') === 'true';
+    const isAuthWelcome = sessionStorage.getItem('nst_trigger_pedro_auth_welcome') === 'true';
+    const sessionKey = `nst_vip_checked_session_${user.id || 'usr'}`;
+
+    if (isLoginTrigger || isAuthWelcome || !sessionStorage.getItem(sessionKey)) {
+      sessionStorage.removeItem('nst_trigger_pedro_vip_check');
+      sessionStorage.setItem(sessionKey, 'true');
+      performVipExpiryCheck();
+    }
+
+    // Expose global trigger for manual tests
+    const handleManualTrigger = () => performVipExpiryCheck();
+    window.addEventListener('nst-trigger-pedro-vip-expiry', handleManualTrigger);
+    (window as any).__triggerPedroVipExpiryCheck = handleManualTrigger;
+
+    return () => {
+      window.removeEventListener('nst-trigger-pedro-vip-expiry', handleManualTrigger);
+    };
+  }, [user?.id, user?.subscriptionEndDate, user?.isPremium]);
 
   // ── Tier Theme (Ultra=navy · Basic=blue · Free=sky) ─────────────────────
   // Priority:
@@ -1677,16 +1748,12 @@ export const StudentDashboard: React.FC<Props> = ({
       const currentStreak = parseInt(localStorage.getItem(streakKey) || '0');
 
       if (!isCorrect) {
-        // Wrong answer → +1 score, reset streak
+        // Wrong answer → -2 score, reset streak
         localStorage.setItem(streakKey, '0');
-        const earned = tryEarnScore(freshUser.id, 1, freshUser.subscriptionLevel, freshUser.isPremium, boost, 'MCQ_WRONG', limitBoost, limitBoostExpiry);
-        if (earned > 0) {
-          const routineOn = loadRoutineData(freshUser.id).enabled;
-          deferMcqCreditsFromXp(freshUser.id, earned, routineOn);
-          handleUserUpdate({ ...freshUser, totalScore: (freshUser.totalScore || 0) + earned });
-        }
+        subtractDailyScore(freshUser.id, 2);
+        handleUserUpdate({ ...freshUser, totalScore: Math.max(0, (freshUser.totalScore || 0) - 2) });
       } else {
-        // Correct answer → +2 base score
+        // Correct answer → +5 base score
         const newStreak = currentStreak + 1;
         localStorage.setItem(streakKey, newStreak.toString());
         let totalBonus = 0;
@@ -1701,7 +1768,7 @@ export const StudentDashboard: React.FC<Props> = ({
           bonusMsg = `🔥 ${newStreak} Streak! +5 Bonus Score!`;
         }
         // MCQ ke andar notifications suppress hain — score HomeStatsToast mein dikhega
-        const baseEarned = tryEarnScore(freshUser.id, 2, freshUser.subscriptionLevel, freshUser.isPremium, boost, 'MCQ_CORRECT', limitBoost, limitBoostExpiry);
+        const baseEarned = tryEarnScore(freshUser.id, 5, freshUser.subscriptionLevel, freshUser.isPremium, boost, 'MCQ_CORRECT', limitBoost, limitBoostExpiry);
         const totalEarned = baseEarned + totalBonus;
         if (totalEarned > 0) {
           const routineOn = loadRoutineData(freshUser.id).enabled;
@@ -2537,26 +2604,27 @@ export const StudentDashboard: React.FC<Props> = ({
     if (!activeGroupStudyRoom || !autoFollowHost) return;
     const isHost =
       activeGroupStudyRoom.hostId === user.id ||
-      Boolean(auth.currentUser?.uid && activeGroupStudyRoom.hostId === auth.currentUser.uid);
+      Boolean(auth.currentUser?.uid && activeGroupStudyRoom.hostId === auth.currentUser.uid) ||
+      isRoomCreatedByMe(activeGroupStudyRoom.id, activeGroupStudyRoom.hostId, user?.id);
     if (isHost) return;
 
     const hostSync = activeGroupStudyRoom.hostSync;
     if (!hostSync || !hostSync.timestamp) return;
 
+    // First time attaching to room: initialize to current hostSync timestamp so we don't trigger retroactive state changes
+    if (lastFollowSyncTimestampRef.current === 0) {
+      lastFollowSyncTimestampRef.current = hostSync.timestamp;
+      return;
+    }
+
     if (hostSync.timestamp > lastFollowSyncTimestampRef.current) {
       lastFollowSyncTimestampRef.current = hostSync.timestamp;
       handleFollowHost(hostSync);
-
-      // If host is browsing chapters, subjects, notes player or tabs outside of battle,
-      // close the modal dialog so the student immediately sees the exact same screen!
-      if (
-        !activeGroupStudyRoom.liveMcq?.isActive ||
-        activeGroupStudyRoom.liveMcq?.status === 'ENDED'
-      ) {
-        setShowGroupStudyModal(false);
-      }
+      // NOTE: Do NOT close GroupStudyModal! The student is inside the group study room to participate!
     }
   }, [
+    activeGroupStudyRoom?.id,
+    activeGroupStudyRoom?.hostId,
     activeGroupStudyRoom?.hostSync?.timestamp,
     activeGroupStudyRoom?.liveMcq?.isActive,
     activeGroupStudyRoom?.liveMcq?.status,
@@ -2719,6 +2787,30 @@ export const StudentDashboard: React.FC<Props> = ({
   const [selectedPhoneId, setSelectedPhoneId] = useState<string>("");
   const [showUserGuide, setShowUserGuide] = useState(false);
   const [showPedro, setShowPedro] = useState(false);
+  const [isPedroHidden, setIsPedroHidden] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('nst_pedro_hidden') === 'true';
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const handleHiddenChange = (e: any) => {
+      setIsPedroHidden(!!e.detail?.isHidden);
+    };
+    const handleRestore = () => {
+      setIsPedroHidden(false);
+    };
+    window.addEventListener('nst-pedro-hidden-change', handleHiddenChange);
+    window.addEventListener('nst-restore-pedro', handleRestore);
+    window.addEventListener('nst-show-pedro', handleRestore);
+    return () => {
+      window.removeEventListener('nst-pedro-hidden-change', handleHiddenChange);
+      window.removeEventListener('nst-restore-pedro', handleRestore);
+      window.removeEventListener('nst-show-pedro', handleRestore);
+    };
+  }, []);
+  const [showCameraModal, setShowCameraModal] = useState(false);
 
   const [showNameChangeModal, setShowNameChangeModal] = useState(false);
   const [newNameInput, setNewNameInput] = useState("");
@@ -2732,8 +2824,9 @@ export const StudentDashboard: React.FC<Props> = ({
   const [showHomeAssemblyAnim, setShowHomeAssemblyAnim] = useState<boolean>(() => {
     try {
       if (typeof window === 'undefined') return false;
-      if (settings?.enableHomeAssemblyAnimation) return true;
       const seen = localStorage.getItem('nsta_first_assembly_seen') || sessionStorage.getItem('nsta_home_assembly_seen');
+      if (seen && !settings?.enableHomeAssemblyAnimation) return false;
+      if (settings?.enableHomeAssemblyAnimation) return true;
       return !seen;
     } catch {
       return false;
@@ -2741,12 +2834,32 @@ export const StudentDashboard: React.FC<Props> = ({
   });
   const [hasSoulInfused, setHasSoulInfused] = useState<boolean>(false);
 
-  // If enableHomeAssemblyAnimation is turned ON in settings, activate it
+  // If enableHomeAssemblyAnimation is turned ON in settings, activate it (only if not already running or completed in session)
+  const prevSettingEnabledRef = useRef<boolean | undefined>(settings?.enableHomeAssemblyAnimation);
   useEffect(() => {
-    if (settings?.enableHomeAssemblyAnimation) {
+    const isNowEnabled = !!settings?.enableHomeAssemblyAnimation;
+    const wasEnabled = !!prevSettingEnabledRef.current;
+    prevSettingEnabledRef.current = settings?.enableHomeAssemblyAnimation;
+
+    // Only trigger if setting transitioned from false -> true, avoiding re-triggering on object re-renders
+    if (isNowEnabled && !wasEnabled) {
       setShowHomeAssemblyAnim(true);
     }
   }, [settings?.enableHomeAssemblyAnimation]);
+
+  // Removed scary big head popup after home assembly / auth ("ye bada mundi na aayega ab")
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem('nst_trigger_pedro_auth_welcome') === 'true') {
+        sessionStorage.removeItem('nst_trigger_pedro_auth_welcome');
+      }
+    } catch {}
+  }, []);
+
+  const assemblyUserRef = useRef(user);
+  useEffect(() => {
+    assemblyUserRef.current = user;
+  }, [user]);
 
   const handleSoulTouch = useCallback(() => {
     setHasSoulInfused(true);
@@ -2762,7 +2875,10 @@ export const StudentDashboard: React.FC<Props> = ({
     try {
       localStorage.setItem('nsta_first_assembly_seen', 'true');
       sessionStorage.setItem('nsta_home_assembly_seen', 'true');
+      sessionStorage.removeItem('nst_trigger_pedro_auth_welcome');
     } catch {}
+    // User request: "Jab home oage asambal hoya hai to oagdto ohir aata hai bada sa mundi bahut hi derawna kagta hai ye bsda mundi na aayega ab"
+    // No scary big head popup or auth welcome popups after assembly
   }, []);
   const [mcqCommunityDraft, setMcqCommunityDraft] = useState<{question: string; statements?: string[]; options: [string,string,string,string]; correctAnswer: number; explanation: string} | null>(null);
 
@@ -2848,7 +2964,7 @@ export const StudentDashboard: React.FC<Props> = ({
   const [ttsScoreSessionKey, setTtsScoreSessionKey] = useState<string | null>(null);
   const [showFeatureLimitsModal, setShowFeatureLimitsModal] = useState(false);
   const [showLevelLeaderboard, setShowLevelLeaderboard] = useState(false);
-  const [levelUpCelebration, setLevelUpCelebration] = useState<{level: number; emoji: string; label: string} | null>(null);
+  const [levelUpCelebration, setLevelUpCelebration] = useState<{level: number; emoji: string; label: string; coinReward?: number} | null>(null);
   const [limitsViewPlan, setLimitsViewPlan] = useState<'FREE' | 'BASIC' | 'ULTRA'>('FREE');
   const [showRulesPage, setShowRulesPage] = useState(false);
   const [showLoginHistory, setShowLoginHistory] = useState(false);
@@ -3183,18 +3299,69 @@ export const StudentDashboard: React.FC<Props> = ({
     settings?.hiddenSubjects,
   ]);
 
-  // Level-up detection — triggers celebration overlay when score crosses a level threshold
+  // Level-up detection & Coin Reward Awarding
   useEffect(() => {
-    if (user.role === 'ADMIN' || user.role === 'SUB_ADMIN') return;
+    if (user.role === 'ADMIN' || user.role === 'SUB_ADMIN' || !user.id) return;
     const score = user.totalScore || 0;
     const lvl = getLevelInfo(score);
     const storedNotified = Number(localStorage.getItem(`nst_last_notified_level_${user.id}`) || '0');
-    if (lvl.level > storedNotified) {
-      localStorage.setItem(`nst_last_notified_level_${user.id}`, String(lvl.level));
-      if (storedNotified > 0 && user.role !== 'ADMIN' && user.role !== 'SUB_ADMIN') {
-        // Only celebrate if the user was already at some level before (not first login)
-        setLevelUpCelebration({ level: lvl.level, emoji: lvl.emoji, label: lvl.label });
-        setTimeout(() => setLevelUpCelebration(null), 4000);
+    
+    // Check claimed level rewards
+    let claimed: number[] = [];
+    try {
+      const storedClaimed = localStorage.getItem(`nst_claimed_level_rewards_${user.id}`);
+      claimed = storedClaimed ? JSON.parse(storedClaimed) : (user.claimedLevelRewards || []);
+    } catch {
+      claimed = user.claimedLevelRewards || [];
+    }
+
+    // Determine newly unlocked levels that have coin rewards not yet claimed
+    const unclaimedLevels: number[] = [];
+    let coinsToAdd = 0;
+    for (let l = 2; l <= lvl.level; l++) {
+      if (!claimed.includes(l)) {
+        unclaimedLevels.push(l);
+        coinsToAdd += getLevelCoinReward(l);
+      }
+    }
+
+    if (coinsToAdd > 0 && unclaimedLevels.length > 0) {
+      const updatedClaimed = [...new Set([...claimed, ...unclaimedLevels])];
+      try {
+        localStorage.setItem(`nst_claimed_level_rewards_${user.id}`, JSON.stringify(updatedClaimed));
+        localStorage.setItem(`nst_last_notified_level_${user.id}`, String(lvl.level));
+      } catch {}
+      
+      const newCredits = (user.credits || 0) + coinsToAdd;
+      const updatedUser = {
+        ...user,
+        credits: newCredits,
+        claimedLevelRewards: updatedClaimed,
+        lastLevelNotified: lvl.level,
+      };
+      handleUserUpdate(updatedUser);
+      saveUserToLive(updatedUser);
+
+      // Trigger Celebration popup with Coin Reward
+      setLevelUpCelebration({ 
+        level: lvl.level, 
+        emoji: lvl.emoji, 
+        label: lvl.label,
+        coinReward: coinsToAdd,
+      });
+      triggerRewardEffect(coinsToAdd, `🎉 Level ${lvl.level} Reached: +${coinsToAdd} Coins! 🪙`);
+    } else if (lvl.level > storedNotified) {
+      try {
+        localStorage.setItem(`nst_last_notified_level_${user.id}`, String(lvl.level));
+      } catch {}
+      if (storedNotified > 0) {
+        setLevelUpCelebration({ 
+          level: lvl.level, 
+          emoji: lvl.emoji, 
+          label: lvl.label,
+          coinReward: 0,
+        });
+        setTimeout(() => setLevelUpCelebration(null), 4500);
       }
     }
   }, [user.totalScore, user.id, user.role]);
@@ -3675,11 +3842,16 @@ export const StudentDashboard: React.FC<Props> = ({
     setCompMcqNavigatorOpen(false);
     setCompMcqSkipped(new Set());
     setCompMcqTimeSeconds(0);
-    setCompMcqSession({
-      lessonId: lesson.id,
+    setCompMcqSession(null);
+
+    setFlashcardMcqs({
       items: targetMcqs,
       title: lesson.lessonTitle || 'MCQ Practice',
       subtitle: mistakeOnly ? `Mistakes Practice · ${targetMcqs.length} Questions` : `${targetMcqs.length} Questions`,
+      subject: lesson.subject || 'MCQ Practice',
+      sourceKey: `comp_mcq_${lesson.id}`,
+      startInProjectorMode: true,
+      compLessonId: lesson.id,
       isMistakeMode: !!mistakeOnly,
       rawIndices: targetRawIndices,
     });
@@ -4125,7 +4297,8 @@ export const StudentDashboard: React.FC<Props> = ({
 
   // ── IMPORTANT: flashcardMcqs declared HERE (before the useEffect below that lists
   // it in its dep array) to avoid production TDZ crash — same reason as hwActiveHwId above.
-  const [flashcardMcqs, setFlashcardMcqs] = useState<{ items: any[]; title: string; subtitle: string; subject?: string; sourceKey?: string; startInProjectorMode?: boolean; hideProjectorLabel?: boolean; fromLesson?: { hasMcq: boolean; isAdmin: boolean; activeMode: 'flashcard' | 'projector'; hasPdf?: boolean; hasVideo?: boolean; hasAudio?: boolean; isCompetition?: boolean; returnMode?: string; unlockId?: string; unlockPageIndex?: number } } | null>(null);
+  const [flashcardMcqs, setFlashcardMcqs] = useState<{ items: any[]; title: string; subtitle: string; subject?: string; sourceKey?: string; startInProjectorMode?: boolean; hideProjectorLabel?: boolean; compLessonId?: string; isMistakeMode?: boolean; rawIndices?: number[]; fromLesson?: { hasMcq: boolean; isAdmin: boolean; activeMode: 'flashcard' | 'projector'; hasPdf?: boolean; hasVideo?: boolean; hasAudio?: boolean; isCompetition?: boolean; returnMode?: string; unlockId?: string; unlockPageIndex?: number } } | null>(null);
+  const [compStatsVersion, setCompStatsVersion] = useState(0);
 
   // ── HomeStatsToast — Standalone FlashcardMcqView tracking ─────────────────
   // Only when opened outside an active hw/lucent session (those already track overall pts).
@@ -4526,6 +4699,28 @@ export const StudentDashboard: React.FC<Props> = ({
       return nextState;
     });
   }, []);
+
+  // Study Mode Toggle: Hides or restores BOTH Top Bar and Bottom Navigation (Study Mode jaisa)
+  const toggleImmersiveStudyMode = useCallback((explicit?: boolean) => {
+    try { hapticMedium(); } catch (_) {}
+    setIsLandscapeUiHidden(prev => {
+      const nextHidden = typeof explicit === 'boolean' ? explicit : !prev;
+      setIsTopBarHidden(nextHidden);
+      setForceShowBottomNav(!nextHidden);
+      try {
+        fireCreditNotify({
+          type: 'FREE_LIMIT',
+          message: nextHidden
+            ? 'टॉप व बॉटम बार छिप गए • Focus / Study Mode'
+            : 'टॉप व बॉटम बार वापस आ गए • Normal View',
+        });
+      } catch (_) {}
+      return nextHidden;
+    });
+  }, []);
+
+  const nstaFabLongPressTimerRef = useRef<any>(null);
+  const nstaFabIsLongPressRef = useRef<boolean>(false);
 
   const [initialRevisionAutoStartMcq, setInitialRevisionAutoStartMcq] = useState(false);
   const [showMyRoutine, setShowMyRoutine] = useState(false);
@@ -5049,6 +5244,35 @@ export const StudentDashboard: React.FC<Props> = ({
     return () => clearInterval(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lucentPageIndex, lucentNoteViewer?.id, lucentNoteViewer?.pages]);
+
+  // ── Pedro Live Voice: Announces required reading time in min & sec as soon as user enters a page ──
+  const lastSpokenPageRef = useRef<string | null>(null);
+  useEffect(() => {
+    // MCQ mode me Pedro required time ke baare me bilkul kuchh nahi bolega:
+    if (lucentActiveTab === 'MCQS' || activeTab === 'MCQ' || flashcardMcqs) {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        try { window.speechSynthesis.cancel(); } catch {}
+      }
+      return;
+    }
+
+    if (lucentNoteViewer?.id) {
+      const pageKey = `${lucentNoteViewer.id}__${lucentPageIndex}`;
+      if (lastSpokenPageRef.current !== pageKey) {
+        lastSpokenPageRef.current = pageKey;
+        // User request: 100% MUTED on page change.
+        // No automatic audio interruptions while reading notes. Silent badges only.
+      }
+    } else {
+      lastSpokenPageRef.current = null;
+    }
+  }, [lucentNoteViewer?.id, lucentPageIndex, lucentActiveTab, activeTab, flashcardMcqs]);
+
+  // ── Pedro Live Voice on Routine: User request: MUTED on open. Silent by default.
+  const prevShowMyRoutineRef = useRef(false);
+  useEffect(() => {
+    prevShowMyRoutineRef.current = showMyRoutine;
+  }, [showMyRoutine]);
 
   // ── My Routine: midnight reset + lesson-complete reward ───────────────────────
   useEffect(() => {
@@ -7381,6 +7605,101 @@ export const StudentDashboard: React.FC<Props> = ({
     addAppNotification("Rewards Claimed 🎁", successMsg, "SUCCESS");
   };
 
+  // Helper: "Ye na bolega reward ka naam bolega kitne cradit Claimed bas itna hi bolega jaise 2 min study 5 cradit Claimed bas itna hi"
+  const formatPedroRewardClaimSpeech = (items: any[]): string => {
+    if (!items || items.length === 0) return '';
+    const phrases = items.map((m: any) => {
+      // 1. Reward title / name
+      let title = '';
+      if (m.reward?.label && typeof m.reward.label === 'string') {
+        title = m.reward.label;
+      } else if (m.gift?.label && typeof m.gift.label === 'string') {
+        title = m.gift.label;
+      } else if (m.gift?.title && typeof m.gift.title === 'string') {
+        title = m.gift.title;
+      } else if (m.title && typeof m.title === 'string' && m.title.trim()) {
+        title = m.title;
+      } else if (m.text && typeof m.text === 'string') {
+        const firstLine = m.text.split('\n')[0].trim();
+        if (firstLine.includes(':')) {
+          title = firstLine.split(':')[0].trim();
+        } else {
+          title = firstLine;
+        }
+      }
+
+      // Clean emojis and punctuation for smooth TTS
+      title = title
+        .replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, '')
+        .replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9)]+$/g, '')
+        .trim();
+
+      if (!title) title = 'Reward';
+
+      // 2. Credits amount
+      let credits = 0;
+      if (m.gift?.credits) {
+        credits = Number(m.gift.credits) || 0;
+      } else if (m.gift?.value && (m.gift.type === 'CREDITS' || m.gift.type === 'COINS')) {
+        credits = Number(m.gift.value) || 0;
+      } else if (m.reward?.amount) {
+        credits = Number(m.reward.amount) || 0;
+      } else if (m.rewardCoins) {
+        credits = Number(m.rewardCoins) || 0;
+      } else if (m.text && typeof m.text === 'string') {
+        const match = m.text.match(/\+?(\d+)\s*(?:credits?|cr|coins?)/i);
+        if (match) credits = Number(match[1]) || 0;
+      }
+
+      // Format: "${title} ${credits} credit Claimed" (e.g. "2 min study 5 credit Claimed")
+      if (credits > 0) {
+        return `${title} ${credits} credit Claimed`;
+      }
+      return `${title} Claimed`;
+    });
+
+    return phrases.join(', ');
+  };
+
+  // ── PEDRO LEVEL 5+ AUTO-CLAIM MAILBOX REWARDS ─────────────────────────
+  // User Requirement: "pedro 5 me automatic mailbox me aane wale rewards ko student ke kahe bina claim kr lega aur uske bad student ko mailbox me vo rewards claim milenge... aur mailbox button bhi gayab ho jayega"
+  useEffect(() => {
+    if (!user || !PedroEngine.canAutoClaimMailbox(user)) return;
+    const pendingRewards = (user.inbox || []).filter(
+      (m: any) =>
+        (m.type === 'REWARD' || m.type === 'GIFT') &&
+        !m.isClaimed &&
+        (!m.expiresAt || new Date(m.expiresAt).getTime() > Date.now())
+    );
+    if (pendingRewards.length === 0) return;
+
+    let currUser = { ...user };
+    let claimedCount = 0;
+    pendingRewards.forEach((msg: any) => {
+      claimedCount++;
+      const updatedInbox = (currUser.inbox || []).map((m: any) =>
+        m.id === msg.id ? { ...m, isClaimed: true, read: true } : m
+      );
+      currUser = { ...currUser, inbox: updatedInbox };
+      if (msg.gift?.credits) {
+        currUser.credits = (currUser.credits || 0) + Number(msg.gift.credits);
+      }
+      if (msg.gift?.diamonds) {
+        currUser.diamonds = (currUser.diamonds || 0) + Number(msg.gift.diamonds);
+      }
+      if (msg.reward?.type === 'COINS') {
+        currUser.credits = (currUser.credits || 0) + Number(msg.reward.amount || 0);
+      }
+    });
+
+    handleUserUpdate(currUser);
+    // User request: "Ye na bolega reward ka naam bolega kitne cradit Claimed bas itna hi bolega jaise 2 min study 5 cradit Claimed bas itna hi"
+    const claimSpeech = formatPedroRewardClaimSpeech(pendingRewards);
+    pedroSpeak(claimSpeech, { rate: 1.1, showBubble: true });
+    addAppNotification("Pedro Auto-Claim 🤖", claimSpeech, "SUCCESS");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.inbox?.length, user?.studyXp, user?.totalScore, user?.subscriptionTier]);
+
   const userRef = React.useRef(user);
   useEffect(() => {
     userRef.current = user;
@@ -7997,6 +8316,21 @@ export const StudentDashboard: React.FC<Props> = ({
     } catch (_) {}
     return true;
   };
+
+  // Listen for background credit updates (e.g. Pedro Level 8 Overdrive study rewards)
+  useEffect(() => {
+    const onCreditsUpdated = (e: any) => {
+      const newCredits = e.detail?.credits;
+      const freshU = userRef.current;
+      if (typeof newCredits === 'number' && freshU && freshU.credits !== newCredits) {
+        handleUserUpdate({ ...freshU, credits: newCredits });
+      }
+    };
+    window.addEventListener('iic-credits-updated', onCreditsUpdated);
+    return () => {
+      window.removeEventListener('iic-credits-updated', onCreditsUpdated);
+    };
+  }, []);
 
   const handleClaimDailyChallenge20 = async (challenge: Challenge20) => {
     if (!user?.id || user.role === 'ADMIN' || user.role === 'SUB_ADMIN') return;
@@ -8938,6 +9272,8 @@ export const StudentDashboard: React.FC<Props> = ({
                   </div>
                   <div className="grid grid-cols-1 gap-3">
                     {compMcqPracticeLessons.map((lesson: any) => {
+                      // Note: compStatsVersion ensures reactive re-render when answers are submitted
+                      const _ = compStatsVersion;
                       const stats = getCompLessonStats(lesson.id);
                       const hasAttempted = !!stats && stats.attempted > 0;
                       const hasMistakes = !!stats && Array.isArray(stats.wrongIndices) && stats.wrongIndices.length > 0;
@@ -8980,21 +9316,30 @@ export const StudentDashboard: React.FC<Props> = ({
                             )}
                           </div>
 
-                          {/* Action Buttons: Lucent Style */}
-                          <div className="flex items-center gap-2 pt-2 border-t border-slate-100/80">
+                          {/* Action Buttons: Lucent & Projector Style */}
+                          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100/80">
                             <button
                               type="button"
                               onClick={() => handleStartCompMcq(lesson, false)}
-                              className="flex-1 min-h-[38px] py-2 px-3 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 active:scale-95 bg-purple-600 hover:bg-purple-700 text-white shadow-sm"
+                              className="flex-1 min-w-[130px] min-h-[38px] py-2 px-3 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 active:scale-95 bg-purple-600 hover:bg-purple-700 text-white shadow-sm"
                             >
                               <Brain size={13} />
                               {hasAttempted ? 'Re-attempt MCQ' : 'Start MCQ Test'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleStartCompMcq(lesson, false)}
+                              className="min-h-[38px] py-2 px-3 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 active:scale-95 bg-amber-500 hover:bg-amber-600 text-white shadow-sm"
+                              title="Projector Mode (Full Screen & Classroom Controls)"
+                            >
+                              <Tv size={13} />
+                              Projector Mode
                             </button>
                             {hasMistakes && (
                               <button
                                 type="button"
                                 onClick={() => handleStartCompMcq(lesson, true)}
-                                className="flex-1 min-h-[38px] py-2 px-3 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 active:scale-95 bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100"
+                                className="flex-1 min-w-[140px] min-h-[38px] py-2 px-3 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 active:scale-95 bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100"
                               >
                                 <RotateCcw size={12} />
                                 Practice Mistakes ({stats.wrongIndices.length})
@@ -10352,16 +10697,24 @@ export const StudentDashboard: React.FC<Props> = ({
                         const _hwRight = res.score;
                         const _hwTotal = res.total;
                         const _hwAttempted = res.attempted;
-                        const _hwBaseScore = _hwRight * 2 + (_hwAttempted - _hwRight) * 1;
-                        if (_hwBaseScore > 0) {
-                          const freshU = userRef.current;
-                          const _hwEarned = tryEarnScore(freshU.id, _hwBaseScore, freshU.subscriptionLevel, freshU.isPremium, getCombinedBoost(freshU, settings), 'MCQ_CORRECT', (freshU as any).scoreLimitBoostPercent, (freshU as any).scoreLimitBoostExpiry);
-                          if (_hwEarned > 0) {
-                            logScoreActivity(freshU.id, 'MCQ_CORRECT', _hwEarned);
-                            const _rdCoin = loadRoutineData(freshU.id);
-                            deferMcqCreditsFromXp(freshU.id, _hwEarned, _rdCoin.enabled);
-                            handleUserUpdate({ ...freshU, totalScore: (freshU.totalScore || 0) + _hwEarned });
-                            triggerRewardEffect(_hwEarned, `+${_hwEarned} pts 🧠 Competition MCQ!`);
+                        const _hwWrong = _hwAttempted - _hwRight;
+                        const _hwNetScore = (_hwRight * 5) - (_hwWrong * 2);
+                        const freshU = userRef.current;
+                        if (freshU) {
+                          if (_hwNetScore > 0) {
+                            const _hwEarned = tryEarnScore(freshU.id, _hwNetScore, freshU.subscriptionLevel, freshU.isPremium, getCombinedBoost(freshU, settings), 'MCQ_CORRECT', (freshU as any).scoreLimitBoostPercent, (freshU as any).scoreLimitBoostExpiry);
+                            if (_hwEarned > 0) {
+                              logScoreActivity(freshU.id, 'MCQ_CORRECT', _hwEarned);
+                              const _rdCoin = loadRoutineData(freshU.id);
+                              deferMcqCreditsFromXp(freshU.id, _hwEarned, _rdCoin.enabled);
+                              handleUserUpdate({ ...freshU, totalScore: (freshU.totalScore || 0) + _hwEarned });
+                              triggerRewardEffect(_hwEarned, `+${_hwEarned} pts 🧠 Competition MCQ!`);
+                            }
+                          } else if (_hwNetScore < 0) {
+                            const penalty = Math.abs(_hwNetScore);
+                            subtractDailyScore(freshU.id, penalty);
+                            handleUserUpdate({ ...freshU, totalScore: Math.max(0, (freshU.totalScore || 0) - penalty) });
+                            triggerRewardEffect(-penalty, `-${penalty} pts Homework MCQ penalty`);
                           }
                         }
                         const _pct = _hwTotal > 0 ? Math.round((_hwRight / _hwTotal) * 100) : 0;
@@ -13077,8 +13430,8 @@ export const StudentDashboard: React.FC<Props> = ({
                           <circle cx={ccx} cy={ccy - textR + 1} r="1.8" fill="#c9a227" opacity="0.85"/>
                           <circle cx={ccx} cy={ccy + textR - 1} r="1.8" fill="#c9a227" opacity="0.85"/>
 
-                          {/* Center content — Gmail photo > app logo > emoji fallback */}
-                          {user.photoURL && user.avatarChoice === 'gmail'
+                          {/* Center content — Gmail photo / custom photo > app logo > emoji fallback */}
+                          {user.photoURL && (user.avatarChoice === 'gmail' || user.avatarChoice === 'custom' || !user.avatarChoice)
                             ? <image href={user.photoURL}
                                 x={ccx - (faceR - 1)} y={ccy - (faceR - 1)}
                                 width={(faceR - 1) * 2} height={(faceR - 1) * 2}
@@ -13126,6 +13479,17 @@ export const StudentDashboard: React.FC<Props> = ({
                           <span style={{ fontSize: 11 }}>💠</span>
                           <span className="font-black" style={{ fontSize: 10, color: '#d4a429', letterSpacing: '0.06em' }}>L15</span>
                         </div>
+
+                        {/* L15 Camera Option Button */}
+                        <button
+                          type="button"
+                          id="profile-camera-btn-l15"
+                          onClick={() => setShowCameraModal(true)}
+                          title="Profile photo badlein (Camera / Gallery)"
+                          className="absolute bottom-1 right-2 w-9 h-9 rounded-full bg-gradient-to-tr from-amber-500 to-amber-400 text-slate-950 font-black flex items-center justify-center shadow-xl border-2 border-slate-900 active:scale-90 transition-all z-20 cursor-pointer hover:scale-105"
+                        >
+                          <Camera size={16} className="stroke-[2.5]" />
+                        </button>
                       </div>
                     );
                   }
@@ -13232,13 +13596,19 @@ export const StudentDashboard: React.FC<Props> = ({
                       }} />
 
                       {/* ── Avatar circle ── */}
-                      <div className="relative rounded-full overflow-hidden flex items-center justify-center" style={{
-                        width: _sz, height: _sz, flexShrink: 0,
-                        background: `linear-gradient(145deg, ${_col}40, ${_col}10)`,
-                        border: `${_lvl >= 9 ? 3.5 : _lvl >= 5 ? 3 : 2.5}px solid ${_col}cc`,
-                        boxShadow: `0 0 0 1.5px ${_col}28, 0 10px 40px ${_col}50, 0 4px 14px rgba(0,0,0,0.6)`,
-                      }}>
-                        {user.photoURL && user.avatarChoice === 'gmail'
+                      <div
+                        id="profile-avatar-circle"
+                        onClick={() => setShowCameraModal(true)}
+                        title="Profile photo badlein (Camera / Gallery)"
+                        className="relative rounded-full overflow-hidden flex items-center justify-center cursor-pointer group active:scale-95 transition-transform"
+                        style={{
+                          width: _sz, height: _sz, flexShrink: 0,
+                          background: `linear-gradient(145deg, ${_col}40, ${_col}10)`,
+                          border: `${_lvl >= 9 ? 3.5 : _lvl >= 5 ? 3 : 2.5}px solid ${_col}cc`,
+                          boxShadow: `0 0 0 1.5px ${_col}28, 0 10px 40px ${_col}50, 0 4px 14px rgba(0,0,0,0.6)`,
+                        }}
+                      >
+                        {user.photoURL && (user.avatarChoice === 'gmail' || user.avatarChoice === 'custom' || !user.avatarChoice)
                           ? <img src={user.photoURL} alt="Profile" className="w-full h-full object-cover" />
                           : settings?.appLogo
                             ? <img src={settings.appLogo} alt="logo" className="w-full h-full object-cover" />
@@ -13246,10 +13616,14 @@ export const StudentDashboard: React.FC<Props> = ({
                                 {(user.name || 'S').charAt(0).toUpperCase()}
                               </span>
                         }
+                        {/* Hover/Tap hint */}
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
+                          <Camera size={22} className="text-white drop-shadow" />
+                        </div>
                       </div>
 
                       {/* ── Level badge (bottom of avatar) ── */}
-                      <div className="absolute flex items-center gap-1 px-2.5 py-0.5 rounded-full z-10" style={{
+                      <div className="absolute flex items-center gap-1 px-2.5 py-0.5 rounded-full z-10 pointer-events-none" style={{
                         bottom: _lvl >= 9 ? 3 : 1,
                         left: '50%', transform: 'translateX(-50%)',
                         background: _pCard,
@@ -13259,6 +13633,20 @@ export const StudentDashboard: React.FC<Props> = ({
                         <span style={{ fontSize: _lvl >= 10 ? 13 : 11 }}>{_pLvl.emoji}</span>
                         <span className="font-black tabular-nums" style={{ fontSize: 10, color: _col, letterSpacing: '0.04em' }}>L{_lvl}</span>
                       </div>
+
+                      {/* ── Camera button pill on avatar ── */}
+                      <button
+                        type="button"
+                        id="profile-camera-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowCameraModal(true);
+                        }}
+                        title="Profile photo badlein (Camera / Gallery)"
+                        className="absolute bottom-0 right-1 w-8 h-8 rounded-full bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 flex items-center justify-center shadow-lg border-2 border-white dark:border-slate-900 active:scale-90 transition-all z-20 hover:scale-105 cursor-pointer"
+                      >
+                        <Camera size={14} className="stroke-[2.5]" />
+                      </button>
 
                     </div>
                   );
@@ -14375,7 +14763,7 @@ export const StudentDashboard: React.FC<Props> = ({
             <button
               onClick={() => setShowProfileSettings(v => !v)}
               className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-              style={{ borderBottom: _pSep }}>
+              style={{ borderBottom: showProfileSettings ? _pSep : 'none' }}>
               <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: _pIconBg, border: _pIconBdr }}>
                 <span className="text-base leading-none">⚙️</span>
               </div>
@@ -14763,7 +15151,7 @@ export const StudentDashboard: React.FC<Props> = ({
                 showAlert('Settings reset successfully!', 'SUCCESS');
               }}
               className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-              style={{ borderBottom: _pSep }}>
+              style={{ borderBottom: 'none' }}>
               <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${tierTheme.primary}18`, border: `1px solid ${tierTheme.primary}35` }}>
                 <RotateCcw size={17} style={{ color: tierTheme.primary }} />
               </div>
@@ -14771,16 +15159,6 @@ export const StudentDashboard: React.FC<Props> = ({
               <ChevronRight size={15} style={{ color: _pTxtMutedColor }} className="shrink-0" />
             </button>
             </>)}
-
-            {/* App Guide */}
-            <button onClick={() => setShowUserGuide(true)}
-              className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.25)' }}>
-                <Smartphone size={17} className="text-blue-400" />
-               </div>
-              <p className={`flex-1 text-sm font-bold text-left ${_pTxt}`}>App Guide</p>
-              <ChevronRight size={15} style={{ color: _pTxtMutedColor }} className="shrink-0" />
-            </button>
           </div>
 
           {/* ── LOGOUT ── */}
@@ -14840,6 +15218,19 @@ export const StudentDashboard: React.FC<Props> = ({
                    <FaWhatsapp size={18} />
                  </span>
                  <span className="text-[10px] font-bold" style={{ color: _pTxtSubColor }}>WhatsApp</span>
+               </a>
+               <a
+                 href="https://instagram.com/thenadimanwarx"
+                 target="_blank"
+                 rel="noopener noreferrer"
+                 aria-label="Instagram profile @thenadimanwarx"
+                 className="flex flex-col items-center justify-center py-2.5 rounded-xl transition-all active:scale-95"
+                  style={{ background: "rgba(225,48,108,0.09)", border: "1px solid rgba(225,48,108,0.22)" }}
+               >
+                  <span className="w-9 h-9 rounded-full flex items-center justify-center mb-1" style={{ background: "rgba(225,48,108,0.16)", color: "#e1306c" }}>
+                   <FaInstagram size={18} />
+                 </span>
+                 <span className="text-[10px] font-bold" style={{ color: _pTxtSubColor }}>Instagram</span>
                </a>
                <a
                  href="https://youtube.com/@iic_apk?si=7dxoZZ8-vV6YoitR"
@@ -15207,6 +15598,7 @@ export const StudentDashboard: React.FC<Props> = ({
         isDocFullscreen ||
         isLandscapeUiHidden ||
         isInternalImmersive ||
+        showNstaQuickWheel ||
         (hwActiveHwId ? hwImmersive : false) ||
         (lucentNoteViewer ? lucentImmersive : false) ||
         coachingNotesReaderOpen);
@@ -15216,7 +15608,7 @@ export const StudentDashboard: React.FC<Props> = ({
     return (
       <nav
         data-iic-bottom-nav=""
-        className={`iic-bottom-nav ${inProjectorOverlay ? 'relative w-full mx-auto' : 'fixed bottom-0 left-0 right-0 w-full mx-auto'} backdrop-blur-md z-[500] pb-safe`}
+        className={`iic-bottom-nav ${inProjectorOverlay ? 'relative w-full mx-auto' : 'fixed bottom-0 left-0 right-0 w-full mx-auto'} backdrop-blur-md z-[650] pb-safe`}
         style={{
           background: `color-mix(in srgb, ${_bottomNavBg} 92%, transparent)`,
           border: 'none',
@@ -15373,6 +15765,7 @@ export const StudentDashboard: React.FC<Props> = ({
               setShowRevisionHubScreen(false);
               setShowUpdatesPage(false);
               setShowMyRoutine(false);
+              setShowWhatsAppChatModal(false);
               if (showCommunityStarsPage) {
                 try { stopProfileStarRead(); } catch (_) {}
                 setShowCommunityStarsPage(false);
@@ -15455,6 +15848,7 @@ export const StudentDashboard: React.FC<Props> = ({
                   setShowMyRoutine(false);
                   setShowDailyEventPage(false);
                   setShowRevisionHubScreen(false);
+                  setShowWhatsAppChatModal(false);
                   if (showCommunityStarsPage) {
                     try { stopProfileStarRead(); } catch (_) {}
                     setShowCommunityStarsPage(false);
@@ -15488,6 +15882,7 @@ export const StudentDashboard: React.FC<Props> = ({
                   setShowUpdatesPage(false);
                   setShowMyRoutine(false);
                   setShowDailyEventPage(false);
+                  setShowWhatsAppChatModal(false);
                   if (showCommunityStarsPage) {
                     try { stopProfileStarRead(); } catch (_) {}
                     setShowCommunityStarsPage(false);
@@ -15524,6 +15919,7 @@ export const StudentDashboard: React.FC<Props> = ({
                   setShowUpdatesPage(false);
                   setShowMyRoutine(false);
                   setShowDailyEventPage(false);
+                  setShowWhatsAppChatModal(false);
                   if (showCommunityStarsPage) {
                     try { stopProfileStarRead(); } catch (_) {}
                     setShowCommunityStarsPage(false);
@@ -15617,6 +16013,7 @@ export const StudentDashboard: React.FC<Props> = ({
                           }
                         } catch {}
                         try { closeReadersBeforeNavSwitch(tab.id); } catch {}
+                        try { setShowWhatsAppChatModal(false); } catch (_) {}
                         tab.onClick();
                       }}
                       aria-label={tab.label}
@@ -15746,7 +16143,7 @@ export const StudentDashboard: React.FC<Props> = ({
       {/* NEW GLOBAL TOP BAR */}
       <div
         id="top-banner-container"
-        className={`sticky top-0 z-[100] w-full flex flex-col relative transition-all duration-150 ease-in-out overflow-hidden ${isFullscreenMode ? "hidden" : ""} ${(isTopBarHidden || isLandscapeUiHidden || activeTab === 'STORE' || activeTab === 'CUSTOM_PAGE' || activeTab === 'PROFILE' || activeTab === 'UNIVERSAL_VIDEO') ? "-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none" : "translate-y-0 opacity-100"}`}
+        className={`sticky top-0 z-[100] w-full flex flex-col relative transition-all duration-150 ease-in-out overflow-hidden ${isFullscreenMode ? "hidden" : ""} ${(isTopBarHidden || isLandscapeUiHidden || showWhatsAppChatModal || showNstaQuickWheel || activeTab === 'STORE' || activeTab === 'CUSTOM_PAGE' || activeTab === 'PROFILE' || activeTab === 'UNIVERSAL_VIDEO') ? "-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none" : "translate-y-0 opacity-100"}`}
         style={{ background: activeTopBarGrad }}
       >
         <TopBarEffectsLayer effects={activeTopBarEffects} />
@@ -15763,6 +16160,8 @@ export const StudentDashboard: React.FC<Props> = ({
                 onTabChange('HOME');
                 window.scrollTo({ top: 0, behavior: 'smooth' });
                 setShowHomeAssemblyAnim(true);
+                window.dispatchEvent(new CustomEvent('nst-restore-pedro'));
+                setShowPedro(true);
               }}
               title="Replay NSTA Animation"
               className="flex items-center gap-1.5 active:scale-95 transition-transform cursor-pointer group shrink-0 relative"
@@ -16372,51 +16771,85 @@ export const StudentDashboard: React.FC<Props> = ({
               );
             })()}
 
-            {/* Mail & Notifications button — persistent, no auto-hide */}
+            {/* Pedro Dynamic Top Bar Elements (Streak button @ L1, Mailbox @ L1-4, vanished @ L5+) */}
             {(() => {
+              const pedroTopBarState = PedroEngine.getTopBarVisibility(user);
               const pendingCreditSub = canClaimCreditSubToday(user) ? 1 : 0;
               const pendingDiamondSub = canClaimDiamondSubToday(user) ? 1 : 0;
-              const pendingRewards = (user.inbox || []).filter(m => (m.type === 'REWARD' || m.type === 'GIFT') && !m.isClaimed && (!m.expiresAt || new Date(m.expiresAt).getTime() > Date.now())).length + pendingCreditSub + pendingDiamondSub;
-              const totalCount = unreadCount + unreadNotifCount + _newContentCount + pendingRewards;
+              const pendingRewardsCount = (user?.inbox || []).filter((m: any) => (m.type === 'REWARD' || m.type === 'GIFT') && !m.isClaimed && (!m.expiresAt || new Date(m.expiresAt).getTime() > Date.now())).length + pendingCreditSub + pendingDiamondSub;
+              const totalMailBadge = (unreadCount || 0) + (unreadNotifCount || 0) + (_newContentCount || 0) + pendingRewardsCount;
 
               return (
-                <div className="shrink-0">
-                  <button
-                    id="topbar-mail-btn"
-                    onClick={() => {
-                      if ((pendingCreditSub > 0 || pendingDiamondSub > 0) && unreadCount === 0 && unreadNotifCount === 0) {
-                        setInboxTab('REWARDS');
-                      } else {
-                        setInboxTab('UPDATES');
-                      }
-                      setShowInbox(true);
-                    }}
-                    className={`p-[3px] rounded-xl transition-colors relative text-white shrink-0 active:scale-95${topBarBtnGlow ? ' nst-topbar-btn-glow' : ''}`}
-                    title="Mail & Notifications"
-                  >
-                    <Mail size={19} />
-                    {totalCount > 0 && (
-                      <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-0.5 bg-red-500 rounded-full text-[9px] text-white font-black flex items-center justify-center">
-                        {totalCount > 9 ? '9+' : totalCount}
-                      </span>
-                    )}
-                  </button>
-                </div>
+                <>
+                  {/* Streak Button: Level 1 only — disappears on Level 2+ */}
+                  {pedroTopBarState.showStreakButton && (
+                    <button
+                      id="topbar-streak-btn"
+                      onClick={() => {
+                        showAlert(`🔥 Aapki Daily Reading Streak ${user?.streak || 0} Din hai! Har roz study karke streak banaye rakhein.`, 'SUCCESS');
+                      }}
+                      className="flex items-center gap-1 px-2 py-1 rounded-full bg-orange-500/20 hover:bg-orange-500/30 border border-orange-400/40 text-orange-300 text-xs font-black shrink-0 active:scale-95 transition-all cursor-pointer shadow-sm"
+                      title={`Daily Streak: ${user?.streak || 0} Days`}
+                    >
+                      <Flame size={13} className="text-orange-400 fill-orange-400 animate-pulse" />
+                      <span>{user?.streak || 0}</span>
+                    </button>
+                  )}
+
+                  {/* Mailbox Button: Levels 1-4 only — disappears on Level 5+ as Pedro auto-claims! */}
+                  {pedroTopBarState.showMailboxButton && (
+                    <button
+                      id="topbar-mailbox-btn"
+                      onClick={() => {
+                        if ((pendingCreditSub > 0 || pendingDiamondSub > 0) && unreadCount === 0 && unreadNotifCount === 0) {
+                          setInboxTab('REWARDS');
+                        } else {
+                          setInboxTab('UPDATES');
+                        }
+                        setShowInbox(true);
+                      }}
+                      className="relative p-1.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/20 text-white shrink-0 active:scale-95 transition-all cursor-pointer"
+                      title="Mail Box"
+                    >
+                      <Mail size={16} className="text-indigo-300" />
+                      {totalMailBadge > 0 && (
+                        <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-1 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center shadow animate-pulse">
+                          {totalMailBadge > 9 ? '9+' : totalMailBadge}
+                        </span>
+                      )}
+                    </button>
+                  )}
+                </>
               );
             })()}
 
-            {/* App Guide Button — moved from 3-dot menu to top bar */}
-            <div className="shrink-0">
+            {/* Docked 3D Pedro sitting right next to 3-dots menu when hidden/disabled or sleeping */}
+            {isPedroHidden && (
               <button
-                id="topbar-app-guide-btn"
-                onClick={() => setShowUserGuide(true)}
-                className="p-1.5 rounded-xl transition-all text-white active:scale-95 flex items-center justify-center hover:bg-white/10"
-                title="App Guide / Madad"
+                id="topbar-docked-pedro-btn"
+                onClick={() => {
+                  setIsPedroHidden(false);
+                  if (typeof window !== 'undefined') {
+                    localStorage.removeItem('nst_pedro_hidden');
+                    localStorage.removeItem('nst_pedro_sleeping');
+                    window.dispatchEvent(new CustomEvent('nst-restore-pedro', { detail: { wakeUp: true } }));
+                    window.dispatchEvent(new CustomEvent('nst-show-pedro'));
+                    window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: false, isSleeping: false } }));
+                    pedroSpeak('Main jag gaya, kya check karna hai?');
+                  }
+                  setShowPedro(true);
+                }}
+                className="relative p-0 transition-all active:scale-90 hover:scale-105 flex items-center justify-center bg-transparent border-0 shadow-none cursor-pointer shrink-0 group"
+                title="Pedro so raha hai (Zzz) — Tap karke jagayein aur screen par bulayein"
               >
-                <HelpCircle size={18} />
+                {/* Clean transparent 3D Pedro Head Only with prominent large head */}
+                <Pedro3DMascot size={42} headOnly isMini pose="sleep" />
+                <span className="absolute -top-1 right-0 text-[10px] font-black text-amber-300 animate-bounce tracking-tight bg-slate-950/85 px-1 py-0.2 rounded-full border border-amber-400/60 shadow-sm pointer-events-none">
+                  Zzz
+                </span>
+                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-slate-900 animate-pulse pointer-events-none" />
               </button>
-            </div>
-
+            )}
 
             {/* 3-dot menu */}
             <div className="relative shrink-0">
@@ -16571,8 +17004,9 @@ export const StudentDashboard: React.FC<Props> = ({
                         const pendingDiamondSub = canClaimDiamondSubToday(user) ? 1 : 0;
                         const pendingRewardsCount = (user.inbox || []).filter(m => (m.type === 'REWARD' || m.type === 'GIFT') && !m.isClaimed && (!m.expiresAt || new Date(m.expiresAt).getTime() > Date.now())).length + pendingCreditSub + pendingDiamondSub;
                         const totalMailBadge = unreadCount + unreadNotifCount + _newContentCount + pendingRewardsCount;
+                        const pedroTopBarState = PedroEngine.getTopBarVisibility(user);
                         const items: ListItem[] = [
-                          {
+                          ...(pedroTopBarState.showMailboxButton ? [{
                             label: 'Mail Box',
                             right: totalMailBadge > 0 ? `📬 ${totalMailBadge}` : '✉️',
                             action: () => {
@@ -16584,7 +17018,16 @@ export const StudentDashboard: React.FC<Props> = ({
                               setShowInbox(true);
                               setShowDotsMenu(false);
                             },
-                          },
+                          }] : [{
+                            label: 'Mail Box (Pedro Auto)',
+                            right: '🤖 Auto-Claimed',
+                            action: () => {
+                              showAlert('🤖 Pedro Level 5+ Power: Mailbox rewards Pedro automatically claim kar leta hai! Inbox updates dekhne ke liye tap karein.', 'INFO');
+                              setInboxTab('UPDATES');
+                              setShowInbox(true);
+                              setShowDotsMenu(false);
+                            },
+                          }]),
                           {
                             label: 'Score History',
                             locked: !_isBasicUser && !_isUltraUser && user.role !== 'ADMIN' && (user.level || getLevelInfo(user.totalScore || 0).level || 1) < 3,
@@ -16611,10 +17054,13 @@ export const StudentDashboard: React.FC<Props> = ({
                             action: handleThemeCycle,
                           },
                           {
-                            label: 'Pedro AI Guide 🤖',
+                            label: 'Pedro Guide 🤖',
                             action: () => {
                               setShowPedro(true);
                               setShowDotsMenu(false);
+                              if (typeof window !== 'undefined') {
+                                window.dispatchEvent(new CustomEvent('nst-open-pedro-system-guide'));
+                              }
                             },
                           },
                         ];
@@ -16668,13 +17114,22 @@ export const StudentDashboard: React.FC<Props> = ({
         {/* SECOND LINE: greeting | XP | credits — single clean row (compacted by 20%) */}
         <div className="relative z-10 flex items-center justify-between w-full mt-0 pt-0 px-2.5 sm:px-3 pb-1 gap-1.5 min-h-[26px]">
 
-          {/* Left: greeting */}
+          {/* Left: greeting (Row 2 User Name & Greeting, Pedro reads from here) */}
           {(() => {
             const fullName = user.name || "Student";
             const isLong = fullName.length > 10;
             const overflowPx = isLong ? Math.min(90, (fullName.length - 10) * 7) : 0;
             return (
-              <div className="overflow-hidden shrink-0" style={isLong ? { maskImage: 'linear-gradient(to right, black 78%, transparent 100%)', maxWidth: '95px' } : {}}>
+              <div
+                id="topbar-row2-greeting"
+                data-student-name={fullName}
+                onClick={() => {
+                  pedroSpeak(`Hey ${fullName}! Aapka NSTA mein swagat hai!`, { rate: 1.08, pitch: 1.15, showBubble: true });
+                }}
+                className="overflow-hidden shrink-0 cursor-pointer active:scale-95 transition-transform"
+                title={`Student: ${fullName} (Tap karke Pedro se suniye)`}
+                style={isLong ? { maskImage: 'linear-gradient(to right, black 78%, transparent 100%)', maxWidth: '95px' } : {}}
+              >
                 <span
                   className={`text-[11px] sm:text-[12px] font-black text-white leading-tight whitespace-nowrap inline-block${isLong ? ' nst-name-scroll' : ''}`}
                   style={isLong ? { '--nst-scroll': `-${overflowPx}px` } as React.CSSProperties : {}}
@@ -17388,12 +17843,25 @@ export const StudentDashboard: React.FC<Props> = ({
                     <p className="text-5xl mb-1">{levelUpCelebration.emoji}</p>
                     <p className="text-white text-2xl font-black">Level {levelUpCelebration.level}</p>
                     <p className="text-white/70 text-sm font-bold">{levelUpCelebration.label}</p>
+                    
+                    {/* Coin Reward Banner */}
+                    {(levelUpCelebration.coinReward ?? 0) > 0 && (
+                      <div className="bg-amber-400/25 border border-amber-300/60 rounded-2xl py-2 px-4 my-2.5 text-center shadow-lg animate-pulse">
+                        <div className="flex items-center justify-center gap-1.5 text-amber-200 font-extrabold text-base">
+                          <span className="text-xl">🪙</span>
+                          <span>+{levelUpCelebration.coinReward} Coins Reward!</span>
+                        </div>
+                        <p className="text-amber-100/90 text-[11px] font-semibold">Aapke wallet me add kar diye gaye hain!</p>
+                      </div>
+                    )}
+
                     {/* Level Benefits */}
                     <div className="mt-3 space-y-1.5">
                       {(() => {
                         const lvlInfo = LEVEL_INFO.find(l => l.level === levelUpCelebration.level);
                         if (!lvlInfo) return null;
                         const benefits: string[] = [];
+                        if (lvlInfo.coinReward > 0) benefits.push(`🪙 +${lvlInfo.coinReward} Coins Level Reward`);
                         if (lvlInfo.discount > 0) benefits.push(`🏷️ ${lvlInfo.discount}% Discount on purchases`);
                         if (lvlInfo.nameColor) benefits.push(`🎨 Colored name in Leaderboard`);
                         const ld = getLevelDailyLimits(lvlInfo.level);
@@ -21020,6 +21488,42 @@ export const StudentDashboard: React.FC<Props> = ({
         </div>
       )}
 
+      {/* PROFILE CAMERA / GALLERY MODAL */}
+      {showCameraModal && (
+        <ProfileCameraModal
+          isOpen={showCameraModal}
+          onClose={() => setShowCameraModal(false)}
+          currentPhotoURL={user.photoURL}
+          userName={user.name}
+          onSavePhoto={async (photoDataUrl: string) => {
+            try {
+              await handleUserUpdate({
+                ...user,
+                photoURL: photoDataUrl,
+                avatarChoice: 'custom',
+              });
+              showAlert("Aapki profile photo update ho gayi hai! 📸", "SUCCESS");
+              setShowCameraModal(false);
+            } catch (err) {
+              showAlert("Photo save karte waqt samasya aayi.", "ERROR");
+            }
+          }}
+          onRemovePhoto={async () => {
+            try {
+              await handleUserUpdate({
+                ...user,
+                photoURL: "",
+                avatarChoice: "logo",
+              });
+              showAlert("Profile photo hata di gayi hai.", "INFO");
+              setShowCameraModal(false);
+            } catch (err) {
+              showAlert("Photo hatate waqt samasya aayi.", "ERROR");
+            }
+          }}
+        />
+      )}
+
       {/* MAIN CONTENT AREA */}
       <div
         className={`relative ${
@@ -21285,70 +21789,108 @@ export const StudentDashboard: React.FC<Props> = ({
         onClose={() => setCurrentAudioTrack(null)}
       />
 
-      {/* ── FLOATING NSTA LOGO BUTTON (Home: Quick Wheel | Pro, Community, MCQ: Restore Bottom Nav) ── */}
+      {/* ── FLOATING NSTA LOGO BUTTON (Opens Feature Wheel on Home | Toggles Top/Bottom Bar on all other pages including NstA Messenger) ── */}
       {(() => {
+        // Jab feature wheel khula ho ya assembly anim ho toh button hide rahega
+        if (showNstaQuickWheel || showHomeAssemblyAnim) {
+          return null;
+        }
+
+        // Fullscreen player / doc reading modes mein button hide rahega
+        if (
+          contentViewStep === "PLAYER" ||
+          isDocFullscreen ||
+          lucentNoteViewer ||
+          coachingNotesReaderOpen ||
+          hwActiveHwId ||
+          isInternalImmersive ||
+          activeExternalApp
+        ) {
+          return null;
+        }
+
+        // Check if user is currently on the default HOME screen
         const isHomePage = activeTab === 'HOME' &&
           !showRevisionHubScreen &&
           !showMyRoutine &&
-          !showChat &&
           !showUpdatesPage &&
           !showStarredPage &&
           !showProgressDashboard &&
           !showDailyEventPage &&
-          !activeExternalApp &&
-          !isDocFullscreen &&
-          contentViewStep !== "PLAYER" &&
-          !isLandscapeUiHidden &&
-          !isInternalImmersive &&
-          !hwActiveHwId &&
-          !lucentNoteViewer &&
-          !coachingNotesReaderOpen &&
-          !isGroupStudyHidden;
+          !showChat &&
+          !showMcqCommunityPopup &&
+          !showWhatsAppChatModal;
 
-        const isProPage = showUpdatesPage;
-        const isCommunityPage = showChat && chatMode === 'COMMUNITY';
-        const isMcqPage = showMcqCommunityPopup || (showChat && chatMode === 'MCQ');
+        // Button is active on Home page, Pro page, MCQ page, Community page, Routine page, Revision Hub, NstA Messenger, etc.
+        const isBarsHidden = isLandscapeUiHidden || isTopBarHidden || !forceShowBottomNav;
 
-        if (!isHomePage && !isProPage && !isCommunityPage && !isMcqPage) {
-          return null;
-        }
+        const isChatOrMcq = (showChat && (chatMode === 'COMMUNITY' || chatMode === 'MCQ')) || showMcqCommunityPopup;
 
         const officialNstaLogo = (settings?.appLogo && !settings.appLogo.includes('placeholder'))
           ? settings.appLogo
           : '/branding/nsta-logo.svg';
 
-        const bottomPositionClass = (isHomePage || forceShowBottomNav)
-          ? 'bottom-[76px]'
-          : (isCommunityPage || isMcqPage)
-            ? 'bottom-[74px]'
+        const bottomPositionClass = showWhatsAppChatModal
+          ? 'bottom-[76px] sm:bottom-[80px]'
+          : !isBarsHidden
+            ? (isChatOrMcq ? 'bottom-[74px]' : 'bottom-[76px]')
             : 'bottom-5 sm:bottom-6';
 
         const handleButtonClick = () => {
-          hapticMedium();
+          if (nstaFabIsLongPressRef.current) {
+            nstaFabIsLongPressRef.current = false;
+            return;
+          }
+          try { hapticMedium(); } catch (_) {}
+          // Restore Pedro if hidden
+          window.dispatchEvent(new CustomEvent('nst-restore-pedro'));
+
           if (isHomePage) {
-            // Home page: Open NSTA Quick Wheel (10 Tools & Messenger)
+            // Home page par NstA button se feature wheel open hoga
             setShowNstaQuickWheel(true);
           } else {
-            // Pro+, MCQ, Community pages: Restore / Toggle bottom navigation
-            handleRestoreBottomNav();
+            // Pro page, MCQ page, Community, Routine, Revision Hub, NstA Messenger sab par:
+            // "top baar hide aur button baar hide aur unhide, ek tap karne pe hide dusre pe unhide"
+            toggleImmersiveStudyMode();
+          }
+        };
+
+        const handlePointerDown = () => {
+          nstaFabIsLongPressRef.current = false;
+          if (nstaFabLongPressTimerRef.current) {
+            clearTimeout(nstaFabLongPressTimerRef.current);
+          }
+          // Long press on any page opens Feature Wheel
+          nstaFabLongPressTimerRef.current = setTimeout(() => {
+            nstaFabIsLongPressRef.current = true;
+            try { hapticStrong(); } catch (_) {}
+            setShowNstaQuickWheel(true);
+          }, 650);
+        };
+
+        const handlePointerUp = () => {
+          if (nstaFabLongPressTimerRef.current) {
+            clearTimeout(nstaFabLongPressTimerRef.current);
+            nstaFabLongPressTimerRef.current = null;
           }
         };
 
         const buttonTitle = isHomePage
-          ? "NSTA Quick Wheel — 10 Tools & Messenger"
-          : forceShowBottomNav
-            ? "बॉटम नेविगेशन छुपाएं • Tap to hide bottom navigation"
-            : "बॉटम नेविगेशन वापस लाएं • Tap to restore bottom navigation";
-
-        if (showHomeAssemblyAnim) return null;
+          ? "NstA Feature Wheel खोलें • 10 Interactive Study Tools Hub"
+          : isBarsHidden
+            ? "टॉप बार व नेविगेशन दिखाएं • Tap to restore Top & Bottom bar (Long-press for Feature Wheel)"
+            : "टॉप बार व नेविगेशन छुपाएं • Tap to hide Top & Bottom bar (Focus Mode) (Long-press for Feature Wheel)";
 
         return (
-          <div className={`fixed ${bottomPositionClass} right-3 sm:right-6 z-[450] pointer-events-auto flex items-center gap-2 animate-in fade-in slide-in-from-bottom-3 duration-300 transition-all`}>
+          <div className={`fixed ${bottomPositionClass} right-3 sm:right-6 z-[600] pointer-events-auto flex items-center gap-2 animate-in fade-in slide-in-from-bottom-3 duration-300 transition-all`}>
             {/* Nsta Circular Floating Button with Official NSTA Logo */}
             <button
               id="nsta-quick-fab"
               type="button"
               onClick={handleButtonClick}
+              onPointerDown={handlePointerDown}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
               className="group relative flex items-center justify-center w-14 h-14 sm:w-15 sm:h-15 rounded-full shadow-2xl active:scale-95 transition-all duration-200 hover:scale-105 cursor-pointer p-1"
               style={{
                 background: 'radial-gradient(circle, #0f172a 0%, #020617 100%)',
@@ -21369,9 +21911,9 @@ export const StudentDashboard: React.FC<Props> = ({
                 />
               </div>
 
-              {/* Glowing notification ping: Amber on Home / when Nav hidden; Emerald green when Nav restored */}
+              {/* Glowing notification ping: Emerald green when bars visible; Amber when hidden (Study Mode) */}
               <span className="absolute top-0 right-0 flex h-3.5 w-3.5">
-                {(!isHomePage && forceShowBottomNav) ? (
+                {!isBarsHidden ? (
                   <>
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                     <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500 border-2 border-slate-950 shadow" />
@@ -21550,18 +22092,6 @@ export const StudentDashboard: React.FC<Props> = ({
                   </button>
                 );
 
-                const guideBtn = (
-                  <button
-                    key="guide"
-                    onClick={() => { setShowUserGuide(true); setShowSidebar(false); }}
-                    className="flex flex-col items-center gap-0.5 px-1 py-2 rounded-xl bg-blue-50 text-blue-700 font-bold transition-all active:scale-95"
-                  >
-                    <Smartphone size={14} className="text-blue-500" />
-                    <span className="text-[10px] font-black leading-tight">How to Use</span>
-                    <span className="text-[8px] font-medium opacity-70 leading-tight text-center">App guide</span>
-                  </button>
-                );
-
                 const externalBtns = hasExternalApps ? settings!.externalApps!
                   .filter(app => !(settings?.hideLockedForFreeAndBasic && _isFreeOrBasicUser && app.isLocked))
                   .map((app) => (
@@ -21576,7 +22106,7 @@ export const StudentDashboard: React.FC<Props> = ({
                   </button>
                 )) : [];
 
-                const utilsRow = [...utilItems.map(renderBtn), ...externalBtns, themeBtn, guideBtn];
+                const utilsRow = [...utilItems.map(renderBtn), ...externalBtns, themeBtn];
 
                 return (
                   <div className="px-3 pt-2.5 pb-3">
@@ -24100,10 +24630,11 @@ RULES:
                         // Save in user profile
                         const _existing = (user.mcqHistory || []).filter((h: any) => h.topicId !== pageKey);
                         const _updatedHist = [..._existing, { topicId: pageKey, score: pct, totalQuestions: res.total, correctAnswers: res.score, timestamp: Date.now() }];
-                        // Earn points
-                        const baseScore = res.score * 2 + (res.total - res.score) * 1;
-                        if (baseScore > 0) {
-                          const freshU = userRef.current;
+                        // Earn points: +5 correct, -2 wrong
+                        const lucentWrong = res.total - res.score;
+                        const baseScore = (res.score * 5) - (lucentWrong * 2);
+                        const freshU = userRef.current;
+                        if (freshU && baseScore > 0) {
                           const earned = tryEarnScore(freshU.id, baseScore, freshU.subscriptionLevel, freshU.isPremium, getCombinedBoost(freshU, settings), 'MCQ_CORRECT');
                           if (earned > 0) {
                             logScoreActivity(freshU.id, 'MCQ_CORRECT', earned);
@@ -24112,8 +24643,13 @@ RULES:
                           } else {
                             handleUserUpdate({ ...freshU, mcqHistory: _updatedHist });
                           }
+                        } else if (freshU && baseScore < 0) {
+                          const penalty = Math.abs(baseScore);
+                          subtractDailyScore(freshU.id, penalty);
+                          handleUserUpdate({ ...freshU, mcqHistory: _updatedHist, totalScore: Math.max(0, (freshU.totalScore || 0) - penalty) });
+                          triggerRewardEffect(-penalty, `-${penalty} pts 🧠 Lucent MCQ!`);
                         } else {
-                          handleUserUpdate({ ...user, mcqHistory: _updatedHist });
+                          handleUserUpdate({ ...(freshU || user), mcqHistory: _updatedHist });
                         }
                       };
 
@@ -26122,7 +26658,10 @@ RULES:
               title={flashcardMcqs.title}
               subtitle={flashcardMcqs.subtitle}
               subject={flashcardMcqs.subject}
-              onBack={() => setFlashcardMcqs(null)}
+              onBack={() => {
+                setFlashcardMcqs(null);
+                setCompStatsVersion(v => v + 1);
+              }}
               onOpenGroupStudy={isCreateStudyRoomHidden ? undefined : () => handleOpenGroupStudyForContext({
                 contentType: 'FLASHCARD',
                 title: flashcardMcqs.title,
@@ -26144,6 +26683,12 @@ RULES:
                   : prev.fromLesson,
               } : null)}
               hideProjectorLabel={flashcardMcqs.hideProjectorLabel}
+              compLessonId={flashcardMcqs.compLessonId}
+              isMistakeMode={flashcardMcqs.isMistakeMode}
+              rawIndices={flashcardMcqs.rawIndices}
+              onStatsUpdate={() => {
+                setCompStatsVersion(v => v + 1);
+              }}
               tabBar={tabBarNode}
               bottomNav={renderBottomNav(true)}
             />
@@ -26152,317 +26697,31 @@ RULES:
       })()}
 
       {/* ===================== COMPETITION MCQ PRACTICE — INTERACTIVE SESSION OVERLAY ===================== */}
-      {compMcqSession && (() => {
-        const mcqs = compMcqSession.items;
-        const totalQ = mcqs.length;
-        const ci = compMcqCurrentIdx;
-        const cq = mcqs[ci];
-        if (!cq) return null;
-        const ansKey = ci;
-        const selected = compMcqAnswers[ansKey];
-        const isAnswered = compMcqSubmitted[ansKey] === true;
-        const attempted = Object.keys(compMcqSubmitted).length;
-        const right = Object.entries(compMcqSubmitted).reduce((acc, [k]) => {
-          const qi = parseInt(k);
-          return compMcqAnswers[qi] === mcqs[qi]?.correctAnswer ? acc + 1 : acc;
-        }, 0);
-        const wrong = attempted - right;
-                       // No fixed 20-question lock: submit after any one answer.
-                       const submitThreshold = 1;
-        const canShowReview = attempted >= submitThreshold;
-
-        const handleCompOption = (oi: number) => {
-          setCompMcqAnswers(prev => {
-            const nextAnswers = { ...prev, [ansKey]: oi };
-            if (compMcqSession.lessonId) {
-              const lessonId = compMcqSession.lessonId;
-              const nextSubmitted = { ...compMcqSubmitted, [ansKey]: true };
-              const currentSaved = getCompLessonStats(lessonId);
-
-              if (compMcqSession.isMistakeMode && compMcqSession.rawIndices) {
-                const rawIdx = compMcqSession.rawIndices[ansKey];
-                const isCorrect = oi === cq.correctAnswer;
-                if (isCorrect && currentSaved && Array.isArray(currentSaved.wrongIndices)) {
-                  const updatedWrong = currentSaved.wrongIndices.filter((idx: number) => idx !== rawIdx);
-                  saveCompLessonStats(lessonId, {
-                    ...currentSaved,
-                    wrongIndices: updatedWrong,
-                    score: Math.min(currentSaved.total, (currentSaved.score || 0) + 1),
-                  });
-                }
-              } else {
-                const wrongIndices: number[] = [];
-                let rightCount = 0;
-                mcqs.forEach((q: any, i: number) => {
-                  if (nextSubmitted[i]) {
-                    if (nextAnswers[i] === q.correctAnswer) {
-                      rightCount++;
-                    } else {
-                      wrongIndices.push(i);
-                    }
-                  }
-                });
-                saveCompLessonStats(lessonId, {
-                  total: totalQ,
-                  attempted: Object.keys(nextSubmitted).length,
-                  score: rightCount,
-                  wrongIndices,
-                });
-              }
-            }
-            return nextAnswers;
-          });
-          setCompMcqSubmitted(prev => ({ ...prev, [ansKey]: true }));
-        };
-
-        const doCompRestart = () => {
-          if (compMcqAutoNextRef.current) clearTimeout(compMcqAutoNextRef.current);
-          setCompMcqAnswers({});
-          setCompMcqSubmitted({});
-          setCompMcqCurrentIdx(0);
-          setCompMcqShowReview(false);
-          setCompMcqNavigatorOpen(false);
-          setCompMcqSkipped(new Set());
-          setCompMcqTimeSeconds(0);
-        };
-
-        return (
-          <div className="fixed inset-0 z-[9000] bg-white flex flex-col" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
-            {/* Header */}
-            <div className={`flex items-center gap-3 px-4 py-3 shrink-0 border-b border-slate-100`} style={{ background: tierTheme.topBarGrad }}>
-              <button onClick={() => { if (compMcqAutoNextRef.current) clearTimeout(compMcqAutoNextRef.current); setCompMcqSession(null); }} className="w-8 h-8 flex items-center justify-center rounded-full bg-white/20 text-white active:scale-90 transition-all shrink-0">
-                <ChevronRight size={18} className="rotate-180" />
-              </button>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-black text-white truncate leading-tight">{compMcqSession.title}</p>
-                <p className="text-[10px] font-bold text-white/70 leading-tight">{compMcqSession.subtitle}</p>
-              </div>
-              {!compMcqShowReview && (
-                <div className="flex items-center gap-1 font-mono font-black text-xs px-2.5 py-1 rounded-lg bg-white/20 text-white border border-white/30 shrink-0 shadow-xs" title="Practice Timer">
-                  <Clock size={12} className="text-white animate-pulse" />
-                  <span>{Math.floor(compMcqTimeSeconds / 60).toString().padStart(2, '0')}:{(compMcqTimeSeconds % 60).toString().padStart(2, '0')}</span>
-                </div>
-              )}
-              {attempted > 0 && !compMcqShowReview && (
-                <span className="text-[11px] font-black text-white/80 shrink-0">{attempted}/{totalQ}</span>
-              )}
-            </div>
-
-            {/* Body */}
-            <div className="flex-1 overflow-y-auto px-4 pt-4 pb-6">
-              {compMcqShowReview ? (() => {
-                   return (
-                     <McqAnalysisOverlay
-                       questions={mcqs}
-                       answers={compMcqAnswers}
-                       submitted={compMcqSubmitted}
-                       title={compMcqSession.title}
-                       subtitle={compMcqSession.subtitle}
-                       subject="Competition"
-                       user={user}
-                       settings={settings}
-                       onClose={() => setCompMcqShowReview(false)}
-                       onUpdateUser={handleUserUpdate}
-                       onRestart={doCompRestart}
-                     />
-                   );
-                const pct = attempted > 0 ? Math.round((right / attempted) * 100) : 0;
-                const grade = pct >= 80 ? { label: '🏆 Excellent!', color: 'text-emerald-700', bg: 'from-emerald-400 to-teal-500' }
-                  : pct >= 60 ? { label: '👍 Good Job!', color: 'text-indigo-700', bg: 'from-indigo-400 to-blue-500' }
-                  : pct >= 40 ? { label: '💪 Keep Trying!', color: 'text-amber-700', bg: 'from-amber-400 to-orange-500' }
-                  : { label: '📚 Study More', color: 'text-rose-700', bg: 'from-rose-400 to-pink-500' };
-                return (
-                  <div>
-                    <div className="bg-white border border-indigo-100 rounded-2xl p-5 shadow-sm text-center mb-3">
-                      <div className={`w-14 h-14 mx-auto rounded-full bg-gradient-to-br ${grade.bg} flex items-center justify-center text-2xl mb-2 shadow-md`}>
-                        {pct >= 80 ? '🏆' : pct >= 60 ? '⭐' : pct >= 40 ? '💪' : '📚'}
-                      </div>
-                      <p className={`text-base font-black ${grade.color} mb-0.5`}>{grade.label}</p>
-                      <p className="text-3xl font-black text-slate-800 mb-0.5">{pct}%</p>
-                      <p className="text-[11px] text-slate-500 mb-3">You got {right} correct out of {attempted}</p>
-                      <div className="grid grid-cols-3 gap-2 mb-3">
-                        <div className="bg-slate-50 rounded-xl py-2"><div className="text-[9px] font-bold text-slate-500 uppercase">Tried</div><div className="text-lg font-black text-slate-800">{attempted}</div></div>
-                        <div className="bg-emerald-50 rounded-xl py-2"><div className="text-[9px] font-bold text-emerald-600 uppercase">✅ Correct</div><div className="text-lg font-black text-emerald-700">{right}</div></div>
-                        <div className="bg-rose-50 rounded-xl py-2"><div className="text-[9px] font-bold text-rose-600 uppercase">❌ Wrong</div><div className="text-lg font-black text-rose-700">{wrong}</div></div>
-                      </div>
-                      <div className="flex gap-2">
-                        <button onClick={() => setCompMcqShowReview(false)} className="flex-1 py-2.5 rounded-2xl bg-slate-100 text-slate-700 font-black text-sm active:scale-95 transition">▶ Continue</button>
-                        <button onClick={doCompRestart} className="flex-1 py-2.5 rounded-2xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-black text-sm flex items-center justify-center gap-1.5 active:scale-95 transition shadow-md"><RefreshCw size={13} /> Restart</button>
-                      </div>
-                    </div>
-                    <p className="text-[11px] font-black text-slate-500 uppercase tracking-wide mb-2">📋 Answer Review ({attempted} questions)</p>
-                    <div className="space-y-3">
-                      {mcqs.map((q2: any, i: number) => {
-                        if (!compMcqSubmitted[i]) return null;
-                        const userAns = compMcqAnswers[i];
-                        const isQ2Correct = userAns === q2.correctAnswer;
-                        return (
-                          <div key={i} className={`bg-white rounded-2xl p-3 border-2 ${isQ2Correct ? 'border-emerald-200' : 'border-rose-200'}`}>
-                            <div className="flex items-start gap-2 mb-2">
-                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full shrink-0 ${isQ2Correct ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>Q{i + 1} {isQ2Correct ? '✅' : '❌'}</span>
-                              <div className="flex-1">
-                                <McqQuestionDisplay q={q2 as any} questionClassName="text-xs font-bold text-slate-800 leading-snug" />
-                              </div>
-                              {/* TTS button */}
-                              <button
-                                onClick={() => {
-                                  const _ttsId = `comp_rev_${i}`;
-                                  if (speakingId === _ttsId) { stopSpeech(); setSpeakingId(null); return; }
-                                  const _stmts = (q2.statements || []).join(' ');
-                                  const _opts = (q2.options || []).map((o: string, oi: number) => `Option ${String.fromCharCode(65 + oi)}: ${o}`).join('. ');
-                                  const _exp = q2.explanation ? `Explanation: ${q2.explanation.replace(/<[^>]+>/g, '')}` : '';
-                                  speakText([q2.question, _stmts, _opts, _exp].filter(Boolean).join(' '), null, 1.0, 'hi-IN', () => setSpeakingId(_ttsId), () => setSpeakingId(null));
-                                }}
-                                className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center transition-all ${speakingId === `comp_rev_${i}` ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-500'}`}
-                              >
-                                {speakingId === `comp_rev_${i}` ? <Square size={10} className="fill-current" /> : <Volume2 size={11} />}
-                              </button>
-                            </div>
-                            <div className="space-y-1 ml-1">
-                              {(q2.options || []).map((opt: string, oi: number) => {
-                                const isOpt = oi === q2.correctAnswer;
-                                const isSel = userAns === oi;
-                                let cls = 'text-[11px] font-bold px-2 py-1 rounded-lg flex items-center gap-1.5 ';
-                                if (isOpt) cls += 'bg-emerald-50 text-emerald-800';
-                                else if (isSel && !isOpt) cls += 'bg-rose-50 text-rose-800 line-through';
-                                else cls += 'text-slate-400';
-                                return (
-                                  <div key={oi} className={cls}>
-                                    <span className="w-4 h-4 rounded-full bg-slate-200 flex items-center justify-center text-[9px] font-black shrink-0">{String.fromCharCode(65 + oi)}</span>
-                                    {opt}
-                                    {isOpt && <span className="ml-auto text-emerald-600">✅</span>}
-                                    {isSel && !isOpt && <span className="ml-auto text-rose-600">❌</span>}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                            {q2.explanation && <div className="mt-1.5 text-[10px] bg-slate-50 rounded-lg px-2 py-1 text-slate-600"><span className="font-black">💡</span> <span dangerouslySetInnerHTML={{ __html: formatExplanationHtml(q2.explanation) }} /></div>}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })() : (
-                <div>
-                  {/* Progress */}
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="text-[11px] font-black text-slate-600 shrink-0"><span className="text-indigo-600">{ci + 1}</span>/{totalQ}</span>
-                    <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                      <div className="h-full bg-indigo-500 transition-all rounded-full" style={{ width: `${((ci + 1) / Math.max(1, totalQ)) * 100}%` }} />
-                    </div>
-                    {attempted > 0 && <span className="text-[10px] font-bold text-slate-500 shrink-0">{attempted} done</span>}
-                  </div>
-
-                  {compMcqNavigatorOpen && (
-                    <McqQuestionNavigatorComponent
-                      total={totalQ}
-                      currentIndex={ci}
-                      answers={compMcqAnswers}
-                      skipped={compMcqSkipped}
-                      onJump={(index) => {
-                        setCompMcqCurrentIdx(index);
-                        setCompMcqNavigatorOpen(false);
-                      }}
-                      className="mb-3"
-                    />
-                  )}
-
-                  {/* Submit & Review button */}
-                  {canShowReview && (
-                    <button onClick={() => setCompMcqShowReview(true)} className="w-full mb-3 py-2.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-black text-sm flex items-center justify-center gap-2 active:scale-95 transition shadow-md">
-                      <CheckCircle size={15} /> Submit & Review ({attempted}/{totalQ})
-                    </button>
-                  )}
-
-                   {/* Shared Revision Hub-style question + options */}
-                   <div className="mb-3">
-                     {cq.topic && <div className="mb-2 inline-flex text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{cq.topic}</div>}
-                     <McqPracticeCard
-                       q={cq as any}
-                       questionNumber={(cq as any).questionNumber ?? ci + 1}
-                       selectedOption={selected ?? null}
-                       answered={isAnswered}
-                       onSelect={handleCompOption}
-                        actions={(
-                          <>
-                            {activeGroupStudyRoom && (activeGroupStudyRoom.hostId === user.id || user.role === 'ADMIN') && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  broadcastHostMcq(activeGroupStudyRoom.id, {
-                                    chapterTitle: compMcqSession?.title || 'Live MCQ',
-                                    questionIndex: ci,
-                                    totalQuestions: totalQ,
-                                    questionText: cq.question,
-                                    options: cq.options || [],
-                                    correctIndex: cq.correctAnswer,
-                                    explanation: cq.explanation || '',
-                                    durationSeconds: 30,
-                                  });
-                                }}
-                                aria-label="Broadcast MCQ to Room"
-                                title="Broadcast to Live Room Students"
-                                className="shrink-0 px-2.5 py-1 rounded-full bg-rose-500 hover:bg-rose-600 text-white text-[10px] font-black flex items-center gap-1 active:scale-95 transition shadow"
-                              >
-                                <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
-                                <span>Broadcast</span>
-                              </button>
-                            )}
-                            <McqSpeakButtons
-                              question={cq.question}
-                              options={cq.options}
-                              correctAnswer={cq.correctAnswer}
-                              mode="all"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setCompMcqNavigatorOpen(open => !open)}
-                              aria-label="Open all questions"
-                              title="All Questions"
-                              className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center active:scale-95 transition-colors ${compMcqNavigatorOpen ? 'bg-indigo-100 text-indigo-700' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'}`}
-                            >
-                              <LayoutGrid size={15} />
-                            </button>
-                          </>
-                        )}
-                     />
-                   </div>
-
-                  {/* Navigation */}
-                  <div className="mt-3 flex gap-2">
-                    {ci > 0 ? (
-                      <button onClick={() => { if (compMcqAutoNextRef.current) clearTimeout(compMcqAutoNextRef.current); setCompMcqCurrentIdx(ci - 1); }} className="py-3 px-4 rounded-2xl bg-white border-2 border-slate-200 text-slate-700 font-bold text-sm flex items-center justify-center gap-1 active:scale-95 transition">
-                        <ChevronLeft size={15} /> Prev
-                      </button>
-                    ) : (
-                      <div className="py-3 px-4 rounded-2xl bg-slate-50 border-2 border-slate-100 text-slate-300 font-bold text-sm flex items-center gap-1 select-none"><ChevronLeft size={15} /> Prev</div>
-                    )}
-                    {!isAnswered && ci < totalQ - 1 && (
-                      <button onClick={() => {
-                        if (compMcqAutoNextRef.current) clearTimeout(compMcqAutoNextRef.current);
-                        setCompMcqSkipped(prev => new Set([...prev, ci]));
-                        setCompMcqCurrentIdx(ci + 1);
-                      }} className="py-3 px-3 rounded-2xl bg-amber-50 border-2 border-amber-200 text-amber-600 font-black text-xs flex items-center justify-center gap-1 active:scale-95 transition">
-                        Skip <ChevronRight size={13} />
-                      </button>
-                    )}
-                    {ci < totalQ - 1 ? (
-                      <button onClick={() => { if (compMcqAutoNextRef.current) clearTimeout(compMcqAutoNextRef.current); setCompMcqCurrentIdx(ci + 1); }} disabled={!isAnswered} className={`flex-1 py-3 rounded-2xl font-black text-sm flex items-center justify-center gap-1.5 active:scale-95 transition shadow-md ${isAnswered ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
-                        Next <ChevronRight size={15} />
-                      </button>
-                    ) : isAnswered ? (
-                      <div className="flex-1 py-3 rounded-2xl bg-emerald-100 border-2 border-emerald-300 text-emerald-700 font-black text-sm flex items-center justify-center gap-1.5 select-none"><CheckCircle size={14} /> All Done!</div>
-                    ) : (
-                      <div className="flex-1 py-3 rounded-2xl bg-slate-100 border-2 border-slate-200 text-slate-400 font-black text-sm flex items-center justify-center select-none">Last Question</div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })()}
+      {compMcqSession && (
+        <FlashcardMcqView
+          questions={compMcqSession.items}
+          title={compMcqSession.title}
+          subtitle={compMcqSession.subtitle}
+          subject="MCQ Practice"
+          onBack={() => {
+            setCompMcqSession(null);
+            setCompStatsVersion(v => v + 1);
+          }}
+          user={user}
+          settings={settings}
+          onUpdateUser={handleUserUpdate}
+          sourceMeta={{ lessonTitle: compMcqSession.title, subject: 'MCQ Practice' }}
+          sourceKey={`comp_mcq_${compMcqSession.lessonId || 'session'}`}
+          startInProjectorMode={true}
+          compLessonId={compMcqSession.lessonId}
+          isMistakeMode={compMcqSession.isMistakeMode}
+          rawIndices={compMcqSession.rawIndices}
+          onStatsUpdate={() => {
+            setCompStatsVersion(v => v + 1);
+          }}
+          bottomNav={renderBottomNav(true)}
+        />
+      )}
 
       {/* ===================== STARRED NOTES PAGE (My Saved + Global tabs) ===================== */}
       {showStarredPage && (() => {
@@ -27714,16 +27973,16 @@ RULES:
           {
             emoji: '📊',
             title: 'Activity Score Tracking',
-            desc: 'Earn daily score from MCQs, videos, PDFs, audio — level up. Notes/PDF/Video/Audio: +5 pts every 30 sec, up to 5 min max.',
+            desc: 'Earn daily score from MCQs, videos, PDFs, audio — level up. Notes/PDF/Video/Audio: +5 pts every 30 sec, up to 10 min max.',
             color: '#10b981',
             active: true,
           },
           {
             emoji: '⏱️',
-            title: l.level >= 9 ? `Reading Time Bonus: Max ${getMaxReadingSeconds(l.level)}s (${Math.floor(getMaxReadingSeconds(l.level)/60)}m ${getMaxReadingSeconds(l.level)%60}s) 🔥` : 'Reading Time Bonus: Unlocks at Level 9',
+            title: l.level >= 9 ? `Reading Time Bonus: Max ${getMaxReadingSeconds(l.level)}s (${Math.floor(getMaxReadingSeconds(l.level)/60)} min) 🔥` : 'Reading Time Bonus: Unlocks at Level 9',
             desc: l.level >= 9
-              ? `Level ${l.level} bonus: Max reading time for Notes/PDF/Video/Audio is ${getMaxReadingSeconds(l.level)} seconds (base 300s + ${(l.level-8)*30}s bonus). +30 sec per level.`
-              : 'After Level 8 (GrandMaster), each level adds +30 sec to max reading/watching time — more time means more score.',
+              ? `Level ${l.level} bonus: Max reading time for Notes/PDF/Video/Audio is ${getMaxReadingSeconds(l.level)} seconds (base 600s + ${(l.level-8)*60}s bonus). +1 min per level.`
+              : 'After Level 8 (Master Learner), each level adds +1 min to max reading/watching time — more time means more score.',
             color: l.level >= 9 ? '#f59e0b' : undefined,
             active: l.level >= 9,
           },
@@ -28371,6 +28630,9 @@ RULES:
           if (showUpdatesPage) return 'PRO';
           if (showMyRoutine) return 'ROUTINE';
           if (showRevisionHubScreen) return 'REVISION_HUB';
+          if (lucentNoteViewer) {
+            return lucentActiveTab === 'MCQS' ? 'MCQ' : 'STUDY_MODE';
+          }
           if (showLessonModal || contentViewStep === 'PLAYER') return 'STUDY_MODE';
           if (showChat) {
             return chatMode === 'MCQ' ? 'MCQ' : 'COMMUNITY';
@@ -28405,6 +28667,9 @@ RULES:
               currentPageIcon={pedroPageMeta.icon}
               customRobotName={settings?.pedroConfig?.robotName}
               hidden={settings?.pedroConfig?.enabled === false}
+              userName={user?.name || (user as any)?.displayName || 'Student'}
+              user={user}
+              studyTimerSeconds={(user?.activeMinutes || 0) * 60}
             />
 
             {/* Smart Pedro Assistant Dialog */}
@@ -28417,6 +28682,49 @@ RULES:
               customRobotName={settings?.pedroConfig?.robotName}
               defaultPitch={settings?.pedroConfig?.defaultPitch}
               defaultRate={settings?.pedroConfig?.defaultRate}
+              user={user}
+              settings={settings}
+              activeStudySession={lucentNoteViewer ? {
+                isStudying: lucentActiveTab !== 'MCQS',
+                lessonTitle: lucentNoteViewer.lessonTitle || (lucentNoteViewer as any).title || 'Lesson',
+                pageNumber: (lucentPageIndex || 0) + 1,
+                totalPages: lucentNoteViewer.pages?.length || 1,
+                requiredSeconds: calculatePageRequiredReadingSec(lucentNoteViewer.pages?.[lucentPageIndex]),
+                timeSpentSeconds: getPageTime(lucentNoteViewer.id, lucentPageIndex),
+                countdownSeconds: lucentCountdown,
+                mode: lucentActiveTab,
+              } : undefined}
+              onOpenInbox={() => setShowInbox(true)}
+              onOpenRoutine={() => setShowMyRoutine(true)}
+              onOpenStudyRoom={() => setShowGroupStudyModal(true)}
+              onAutoClaimRewards={() => {
+                if (user?.inbox && Array.isArray(user.inbox)) {
+                  const now = Date.now();
+                  const claimedItems: any[] = [];
+                  let extraCoins = 0;
+                  const updatedInbox = user.inbox.map((m: any) => {
+                    if ((m.type === 'REWARD' || m.type === 'GIFT' || m.type === 'STORE_DISCOUNT') && !m.isClaimed && (!m.expiresAt || new Date(m.expiresAt).getTime() > now)) {
+                      claimedItems.push(m);
+                      if (m.rewardCoins) extraCoins += Number(m.rewardCoins) || 0;
+                      return { ...m, isClaimed: true, claimedAt: new Date().toISOString() };
+                    }
+                    return m;
+                  });
+                  if (claimedItems.length > 0) {
+                    handleUserUpdate({
+                      ...user,
+                      inbox: updatedInbox,
+                      coins: (user.coins || 0) + extraCoins,
+                    });
+                    const claimSpeech = formatPedroRewardClaimSpeech(claimedItems);
+                    if (claimSpeech) {
+                      pedroSpeak(claimSpeech, { rate: 1.1, showBubble: true });
+                    }
+                  }
+                }
+              }}
+              studyTimerSeconds={(user.activeMinutes || 0) * 60}
+              dailyGoalSeconds={(user.dailyGoalHours || 3) * 3600}
               onNavigateTab={(tab) => {
                 setShowPedro(false);
                 if (tab === 'PRO') {
@@ -28449,6 +28757,19 @@ RULES:
                   setShowBoardDropdown(true);
                 } else if (actionKey === 'CLOSE_BOARD_DROPDOWN') {
                   setShowBoardDropdown(false);
+                } else if (actionKey === 'OPEN_EVENTS') {
+                  setShowEventDrawer(true);
+                } else if (actionKey === 'CLOSE_EVENTS') {
+                  setShowEventDrawer(false);
+                } else if (actionKey === 'OPEN_STATUS_DOTS') {
+                  setShowSysStatus(true);
+                } else if (actionKey === 'CLOSE_STATUS_DOTS') {
+                  setShowSysStatus(false);
+                } else if (actionKey === 'RESTORE_PEDRO') {
+                  setIsPedroHidden(false);
+                  localStorage.removeItem('nst_pedro_hidden');
+                  window.dispatchEvent(new CustomEvent('nst-restore-pedro'));
+                  setShowPedro(true);
                 } else if (actionKey === 'OPEN_GUIDE') {
                   setShowUserGuide(true);
                 } else if (actionKey === 'CLOSE_GUIDE') {
@@ -28498,6 +28819,8 @@ RULES:
                   onTabChange('STORE');
                 } else if (actionKey === 'GO_PROFILE') {
                   onTabChange('PROFILE');
+                } else if (actionKey === 'OPEN_CAMERA') {
+                  setShowCameraModal(true);
                 }
               }}
             />
@@ -30717,15 +31040,49 @@ Explanation: Yahan explanation...`}</p>
 
       {/* WhatsApp Study Chat Modal (Private DMs & Groups) */}
       {showWhatsAppChatModal && (
-        <WhatsAppChatModal
-          user={user}
-          onClose={() => setShowWhatsAppChatModal(false)}
-          onOpenGroupStudy={isGroupStudyHidden ? undefined : () => {
-            setShowWhatsAppChatModal(false);
-            setShowGroupStudyModal(true);
-          }}
-          onUpdateUser={handleUserUpdate}
-        />
+        <ErrorBoundary
+          fallbackLabel="Nsta Messenger"
+          fallback={(_err, onRetry) => (
+            <div className="fixed inset-0 z-[550] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-purple-500/40 rounded-3xl p-6 max-w-sm w-full text-center text-white shadow-2xl">
+                <div className="w-12 h-12 rounded-2xl bg-purple-600/30 border border-purple-400/50 flex items-center justify-center mx-auto mb-3 text-pink-400">
+                  <RefreshCcw size={22} />
+                </div>
+                <h3 className="text-base font-black mb-1">Nsta Messenger Recovery</h3>
+                <p className="text-xs text-slate-300 mb-4">Chat service ko reload karein ya wapas dashboard par jayein.</p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    className="flex-1 py-2.5 bg-gradient-to-r from-pink-500 to-purple-600 rounded-xl text-xs font-bold text-white shadow-md cursor-pointer hover:opacity-90 active:scale-95 transition-all"
+                  >
+                    Reload Chat
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowWhatsAppChatModal(false)}
+                    className="flex-1 py-2.5 bg-white/10 hover:bg-white/15 rounded-xl text-xs font-bold text-slate-200 border border-white/10 cursor-pointer active:scale-95 transition-all"
+                  >
+                    Band Karein
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        >
+          <WhatsAppChatModal
+            user={user}
+            onClose={() => setShowWhatsAppChatModal(false)}
+            onOpenGroupStudy={isGroupStudyHidden ? undefined : () => {
+              setShowWhatsAppChatModal(false);
+              setShowGroupStudyModal(true);
+            }}
+            onUpdateUser={handleUserUpdate}
+            isTopBarHidden={isTopBarHidden}
+            onToggleTopBar={toggleImmersiveStudyMode}
+            isBottomNavHidden={!forceShowBottomNav || isTopBarHidden || isLandscapeUiHidden}
+          />
+        </ErrorBoundary>
       )}
 
       {/* NSTA Quick Wheel Modal (10 Tools Interactive Circular Hub) */}
@@ -30741,6 +31098,10 @@ Explanation: Yahan explanation...`}</p>
           setShowWhatsAppChatModal(true);
         }}
         onQuickAccess={handleQuickAccessAction}
+        onOpenPedro={() => {
+          setIsPedroHidden(false);
+          setShowPedro(true);
+        }}
         mistakeCount={mistakeCount}
         appName={settings?.appShortName || settings?.appName || "NSTA"}
         appLogo={(settings?.appLogo && !settings.appLogo.includes('placeholder')) ? settings.appLogo : '/branding/nsta-logo.svg'}
@@ -30937,6 +31298,22 @@ Explanation: Yahan explanation...`}</p>
             )}
           </div>
         </div>
+      )}
+
+      {/* ── PEDRO VIP 24-HOUR EXPIRY WARNING MODAL (LEVEL 1+ POWER) ── */}
+      {showPedroVipExpiryModal && pedroVipExpiryData && (
+        <PedroVipExpiryModal
+          isOpen={showPedroVipExpiryModal}
+          onClose={() => setShowPedroVipExpiryModal(false)}
+          onRenew={() => {
+            setShowPedroVipExpiryModal(false);
+            onTabChange('STORE');
+          }}
+          hoursRemaining={pedroVipExpiryData.hoursRemaining}
+          isExpired={pedroVipExpiryData.isExpired}
+          customMessage={pedroVipExpiryData.message}
+          studentName={user?.name || 'Student'}
+        />
       )}
 
       {/* ── HOME SCREEN 10-15s CINEMATIC ASSEMBLY ANIMATION ── */}
