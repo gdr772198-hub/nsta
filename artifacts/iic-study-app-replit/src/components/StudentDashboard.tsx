@@ -14425,115 +14425,168 @@ export const StudentDashboard: React.FC<Props> = ({
             );
           })()}
 
-          {(() => {
-            // eslint-disable-next-line no-unreachable
-            const _userTierStr = 'free';
-            const _applicable: import('../types').ThemeHistoryEntry[] = [];
-            if (!_applicable.length) return null;
+          {/* ── THEME STUDIO SHOWCASE CARD ── */}
+          <div className="px-3 mb-3">
+            <div
+              className="rounded-2xl overflow-hidden p-4 relative transition-all duration-200 border shadow-lg group"
+              style={{
+                background: _light
+                  ? `linear-gradient(135deg, ${tierTheme.primary}12 0%, rgba(255,255,255,0.92) 55%, ${tierTheme.primary}08 100%)`
+                  : `linear-gradient(135deg, ${tierTheme.primary}22 0%, rgba(15,23,42,0.88) 55%, ${tierTheme.primary}14 100%)`,
+                border: `1.5px solid ${tierTheme.primary}38`,
+                boxShadow: `0 8px 24px ${tierTheme.primary}18`,
+              }}
+            >
+              {/* Soft decorative glow */}
+              <div
+                className="absolute -top-12 -right-12 w-32 h-32 rounded-full blur-2xl pointer-events-none opacity-40"
+                style={{ background: tierTheme.primary }}
+              />
 
-            const _activeId = (user as any).activeAppliedThemeId as string | undefined;
-
-            const _applyTheme = async (themeId: string) => {
-              const updated = { ...user, activeAppliedThemeId: themeId } as User;
-              handleUserUpdate(updated);
-              try { await saveUserToLive(updated); } catch {}
-            };
-
-            return (
-              <div className="rounded-none mb-2.5" style={{ background: _pCard, border: _pBdrSoft }}>
-                <div className="px-4 pt-3.5 pb-2 flex items-center gap-2">
-                  <span className="text-base">🎨</span>
-                  <div>
-                    <p className={`text-sm font-bold ${_pTxt}`}>Themes</p>
-                    <p className={`text-[10px] ${_pTxtMuted}`}>Choose a theme and apply it</p>
-                  </div>
-                </div>
-                <div className="px-3 pb-3 space-y-2">
-                  {/* Default option */}
-                  <button
-                    onClick={() => {
-                      if (!_activeId || _activeId === 'default') return;
-                      setConfirmDialog({
-                        isOpen: true,
-                        message: `__THEME_CONFIRM__Default Theme`,
-                        onConfirm: () => { _applyTheme('default'); setConfirmDialog(null); },
-                      });
-                    }}
-                    className="w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 transition-all active:scale-95 text-left"
+              {/* Header */}
+              <div className="relative z-10 flex items-center justify-between gap-2.5 mb-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md text-white"
                     style={{
-                      background: (!_activeId || _activeId === 'default') ? `${tierTheme.primary}18` : `${_pTxtMutedColor}08`,
-                      border: `1px solid ${(!_activeId || _activeId === 'default') ? tierTheme.primary + '60' : _pTxtMutedColor + '20'}`,
+                      background: `linear-gradient(135deg, ${tierTheme.primary}, ${tierTheme.mid || tierTheme.primary})`,
+                      boxShadow: `0 4px 12px ${tierTheme.primary}40`,
                     }}
                   >
-                    <div className="w-9 h-9 rounded-xl shrink-0 border-2"
-                      style={{ background: `linear-gradient(135deg,${tierTheme.topBarStart || tierTheme.primary},${tierTheme.topBarEnd || tierTheme.primary})`, borderColor: `${_pTxtMutedColor}30` }} />
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-xs font-bold ${_pTxt}`}>Default Theme</p>
-                      <p className={`text-[10px] ${_pTxtMuted}`}>Tier ka default theme</p>
-                    </div>
-                    {(!_activeId || _activeId === 'default') ? (
-                      <span className="text-[9px] font-black px-2 py-0.5 rounded-full shrink-0"
-                        style={{ background: `${tierTheme.primary}25`, color: tierTheme.primary }}>ACTIVE</span>
-                    ) : (
-                      <span className="text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0 border"
-                        style={{ color: _pTxtMutedColor, borderColor: `${_pTxtMutedColor}30` }}>Apply</span>
-                    )}
-                  </button>
-
-                  {/* Admin-published themes */}
-                  {_applicable.map(entry => {
-                    const _expired = !!(entry.expiresAt && new Date(entry.expiresAt) <= new Date());
-                    const _isActive = _activeId === entry.id;
-                    const _timeLeft = (() => {
-                      if (!entry.expiresAt) return 'Permanent';
-                      const ms = new Date(entry.expiresAt).getTime() - Date.now();
-                      if (ms <= 0) return 'Expired';
-                      const d = Math.floor(ms / 86400000);
-                      const h = Math.floor((ms % 86400000) / 3600000);
-                      const m = Math.floor((ms % 3600000) / 60000);
-                      return d > 0 ? `${d}d ${h}h bachi` : h > 0 ? `${h}h ${m}m bachi` : `${m}m bachi`;
-                    })();
-                    const _c1 = entry.themeData?.btnStart || entry.themeData?.topBarStart || '#3b82f6';
-                    const _c2 = entry.themeData?.btnEnd   || entry.themeData?.topBarEnd   || _c1;
-                    return (
-                      <button
-                        key={entry.id}
-                        onClick={() => {
-                          if (_expired || _isActive) return;
-                          setConfirmDialog({
-                            isOpen: true,
-                            message: `__THEME_CONFIRM__${entry.name}||${_c1}||${_c2}`,
-                            onConfirm: () => { _applyTheme(entry.id); setConfirmDialog(null); },
-                          });
-                        }}
-                        disabled={_expired}
-                        className="w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 transition-all active:scale-95 text-left"
+                    <Palette size={20} className="text-white" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <h3 className={`text-sm sm:text-base font-black ${_pTxt} tracking-tight`}>
+                        Theme Studio
+                      </h3>
+                      <span
+                        className="text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider font-mono shadow-xs"
                         style={{
-                          background: _isActive ? `${_c1}18` : `${_pTxtMutedColor}08`,
-                          border: `1px solid ${_isActive ? _c1 + '60' : _pTxtMutedColor + '20'}`,
-                          opacity: _expired ? 0.45 : 1,
+                          background: `${tierTheme.primary}25`,
+                          color: _light ? tierTheme.primary : '#e0e7ff',
+                          border: `1px solid ${tierTheme.primary}40`,
                         }}
                       >
-                        <div className="w-9 h-9 rounded-xl shrink-0 border-2"
-                          style={{ background: `linear-gradient(135deg,${_c1},${_c2})`, borderColor: `${_pTxtMutedColor}30` }} />
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-xs font-bold ${_pTxt} truncate`}>{entry.name}</p>
-                          <p className={`text-[10px] ${_expired ? 'text-red-400' : _pTxtMuted}`}>{_timeLeft}</p>
-                        </div>
-                        {_isActive && !_expired ? (
-                          <span className="text-[9px] font-black px-2 py-0.5 rounded-full shrink-0"
-                            style={{ background: `${_c1}25`, color: _c1 }}>ACTIVE</span>
-                        ) : !_expired ? (
-                          <span className="text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0 border"
-                            style={{ color: _c1, borderColor: `${_c1}40` }}>Apply</span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
+                        {user.personalTheme ? '🎨 Custom Theme' : '⚡ Official Theme'}
+                      </span>
+                    </div>
+                    <p className={`text-[10.5px] font-medium leading-tight mt-0.5 ${_pTxtSub}`}>
+                      App ke colors, top bar, navigation bar aur cards ka theme badlein
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    themeOpenerRef.current = 'PROFILE';
+                    onTabChange('THEME_CUSTOMIZER' as any);
+                  }}
+                  className="shrink-0 px-2.5 py-1 rounded-xl text-[10px] font-black flex items-center gap-1 active:scale-95 transition cursor-pointer"
+                  style={{
+                    background: `${tierTheme.primary}18`,
+                    color: tierTheme.primary,
+                    border: `1px solid ${tierTheme.primary}35`,
+                  }}
+                >
+                  <Sparkles size={11} />
+                  <span>Open</span>
+                </button>
+              </div>
+
+              {/* Theme Preview Swatches Box */}
+              <div
+                className="relative z-10 p-3 rounded-xl mb-3 flex items-center justify-between gap-2"
+                style={{
+                  background: _light ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${_light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)'}`,
+                }}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  {/* Swatches strip */}
+                  <div className="flex items-center -space-x-1.5 shrink-0">
+                    <div
+                      className="w-6 h-6 rounded-full border-2 border-slate-900 shadow-xs"
+                      style={{ background: user.personalTheme?.btnStart || tierTheme.primary }}
+                      title="Button / Accent Color"
+                    />
+                    <div
+                      className="w-6 h-6 rounded-full border-2 border-slate-900 shadow-xs"
+                      style={{ background: user.personalTheme?.topBarStart || tierTheme.topBarStart || tierTheme.primary }}
+                      title="Top Bar Color"
+                    />
+                    <div
+                      className="w-6 h-6 rounded-full border-2 border-slate-900 shadow-xs"
+                      style={{ background: user.personalTheme?.navActive || tierTheme.navActive || '#6366f1' }}
+                      title="Active Navigation Color"
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <p className={`text-xs font-bold truncate ${_pTxt}`}>
+                      {user.personalTheme?.themeName
+                        ? `${user.personalTheme.themeEmoji || '🎨'} ${user.personalTheme.themeName}`
+                        : `${tierTheme.emoji || '⚡'} ${tierTheme.label} Default Theme`}
+                    </p>
+                    <p className={`text-[9.5px] truncate ${_pTxtSub}`}>
+                      {user.personalTheme ? 'Aapka customized theme live active hai' : 'Default app tier theme active hai'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {user.personalTheme && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConfirmDialog({
+                          isOpen: true,
+                          message: 'Kya aap default tier theme par wapas switch karna chahte hain?',
+                          onConfirm: async () => {
+                            setConfirmDialog(null);
+                            const updated = { ...user } as any;
+                            delete updated.personalTheme;
+                            delete updated.personalThemeColor;
+                            delete updated.personalThemeExpiry;
+                            delete updated.activeAppliedThemeId;
+                            handleUserUpdate(updated);
+                            try {
+                              await saveUserToLive(updated);
+                              showAlert('Default theme wapas apply ho gaya!', 'SUCCESS');
+                            } catch {
+                              showAlert('Theme reset nahi ho paya', 'ERROR');
+                            }
+                          },
+                        });
+                      }}
+                      className="px-2 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-slate-200 active:scale-95 transition cursor-pointer"
+                      title="Reset to default theme"
+                    >
+                      Reset
+                    </button>
+                  )}
                 </div>
               </div>
-            );
-          })()}
+
+              {/* Action Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  themeOpenerRef.current = 'PROFILE';
+                  onTabChange('THEME_CUSTOMIZER' as any);
+                }}
+                className="relative z-10 w-full py-2.5 px-4 rounded-xl font-black text-xs flex items-center justify-center gap-2 active:scale-[0.98] transition-all cursor-pointer shadow-md text-white"
+                style={{
+                  background: `linear-gradient(135deg, ${tierTheme.primary}, ${tierTheme.mid || tierTheme.primary})`,
+                  boxShadow: `0 4px 14px ${tierTheme.primary}40`,
+                }}
+              >
+                <Palette size={15} className="shrink-0" />
+                <span>Theme Studio Kholein &amp; Colors Badlein 🎨</span>
+                <ChevronRight size={14} className="shrink-0" />
+              </button>
+            </div>
+          </div>
 
           {/* ── MY AFFILIATIONS — School & Coaching ── */}
           {(() => {
@@ -14759,6 +14812,45 @@ export const StudentDashboard: React.FC<Props> = ({
               <ChevronRight size={14} style={{ color: _pTxtMutedColor }} className="shrink-0" />
             </button>
 
+            {/* ── Theme Studio Action Button ── */}
+            <button
+              onClick={() => {
+                themeOpenerRef.current = 'PROFILE';
+                onTabChange('THEME_CUSTOMIZER' as any);
+              }}
+              className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
+              style={{ borderBottom: _pSep }}
+            >
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                style={{
+                  background: `${tierTheme.primary}18`,
+                  border: `1px solid ${tierTheme.primary}40`,
+                }}
+              >
+                <Palette size={18} style={{ color: tierTheme.primary }} />
+              </div>
+              <div className="flex-1 text-left min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <p className={`text-sm font-bold ${_pTxt}`}>Theme Studio</p>
+                  <span
+                    className="text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide"
+                    style={{
+                      background: `${tierTheme.primary}20`,
+                      color: tierTheme.primary,
+                      border: `1px solid ${tierTheme.primary}30`,
+                    }}
+                  >
+                    {user.personalTheme ? 'Active' : 'Studio'}
+                  </span>
+                </div>
+                <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>
+                  App ke colors, top bar aur card themes badlein
+                </p>
+              </div>
+              <ChevronRight size={14} style={{ color: _pTxtMutedColor }} className="shrink-0" />
+            </button>
+
             {/* ── Settings Button ── */}
             <button
               onClick={() => setShowProfileSettings(v => !v)}
@@ -14771,6 +14863,36 @@ export const StudentDashboard: React.FC<Props> = ({
               <ChevronRight size={15} style={{ color: _pTxtMutedColor, transform: showProfileSettings ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} className="shrink-0" />
             </button>
             {showProfileSettings && (<>
+
+            {/* ── Theme Studio Quick Access in Settings ── */}
+            <button
+              onClick={() => {
+                themeOpenerRef.current = 'PROFILE';
+                onTabChange('THEME_CUSTOMIZER' as any);
+              }}
+              className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
+              style={{ borderBottom: _pSep }}
+            >
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                style={{
+                  background: 'rgba(236,72,153,0.14)',
+                  border: '1px solid rgba(236,72,153,0.35)',
+                }}
+              >
+                <span className="text-base leading-none">🎨</span>
+              </div>
+              <div className="flex-1 text-left min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <p className={`text-sm font-bold ${_pTxt}`}>Theme Customizer</p>
+                  <span className="text-[9px] bg-pink-100 dark:bg-pink-950 text-pink-600 dark:text-pink-300 px-1.5 py-0.5 rounded font-black">Studio</span>
+                </div>
+                <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>
+                  Full color studio, presets aur dark/light customization
+                </p>
+              </div>
+              <ChevronRight size={14} style={{ color: _pTxtMutedColor }} className="shrink-0" />
+            </button>
 
             {/* ── Change Name Button ── */}
             <button
@@ -28666,7 +28788,8 @@ RULES:
               currentPageTitle={pedroPageMeta.title}
               currentPageIcon={pedroPageMeta.icon}
               customRobotName={settings?.pedroConfig?.robotName}
-              hidden={settings?.pedroConfig?.enabled === false}
+              hidden={false}
+              guidePowerEnabled={settings?.pedroConfig?.guidePowerEnabled !== false && settings?.pedroConfig?.enabled !== false}
               userName={user?.name || (user as any)?.displayName || 'Student'}
               user={user}
               studyTimerSeconds={(user?.activeMinutes || 0) * 60}

@@ -32,6 +32,7 @@ import {
   getPageMcqPercent, getPageMcqBestPercent,
   getLessonPageAvgPercent, getLessonBestPageAvgPercent,
   getPageTime,
+  isMathLessonManualDone, setMathLessonManualDone, isMathKey,
 } from '../utils/routineAutoTrack';
 import { scheduleRoutineLessonForRevision } from '../utils/revisionTrackerV2';
 import { RoutineRevisionBadge } from './RoutineRevisionBadge';
@@ -251,11 +252,22 @@ function TaskLessonCard({
   });
   const readCount  = pageStates.filter(s => s !== 'none').length;
   const doneCount  = pageStates.filter(s => s === 'done').length;
-  const allDone    = doneCount === totalPages && totalPages > 0;
+
+  // Math rule: Math auto-track nahi hoga, manually done mark karna padega
+  const isMath = isMathKey(lessonId) || isMathKey(subjectName) || isMathKey(label);
+  const [isMathDone, setIsMathDone] = useState(() => isMathLessonManualDone(lessonId));
+
+  useEffect(() => {
+    if (isMath) {
+      setIsMathDone(isMathLessonManualDone(lessonId));
+    }
+  }, [isMath, lessonId]);
+
+  const allDone = isMath ? isMathDone : (doneCount === totalPages && totalPages > 0);
   // Per-page MCQ badge counts
   const pagesWithMcqIdx = Array.from({ length: totalPages }, (_, i) => i); // all pages (no server info here)
   const pageMcqDoneCount = pagesWithMcqIdx.filter(i => !!snapshot.pageMcqDone?.[`${lessonId}__${i}`]).length;
-  const pct        = totalPages > 0 ? Math.round((readCount / totalPages) * 100) : 0;
+  const pct        = isMath ? (isMathDone ? 100 : 0) : (totalPages > 0 ? Math.round((readCount / totalPages) * 100) : 0);
 
   // Fire lesson complete callback once when all pages become green
   const onLessonCompleteRef = useRef(onLessonComplete);
@@ -278,12 +290,15 @@ function TaskLessonCard({
           <div className="flex items-center gap-1.5 mb-0.5">
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{label}</p>
             {allDone && <span className="text-[9px] font-black text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded-full">✓ DONE</span>}
+            {isMath && <span className="text-[9px] font-black text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded-full">📐 MANUAL</span>}
           </div>
           <p className={`font-black text-sm leading-tight truncate ${allDone ? 'text-emerald-700' : 'text-slate-800'}`}>{subjectName}</p>
           <p className="text-xs text-slate-500 font-medium truncate">{lessonTitle}</p>
           {/* Mini progress bar */}
           <div className="flex items-center gap-2 mt-1.5">
-            {totalPages > 0 ? (
+            {isMath ? (
+              <span className="text-[10px] font-bold text-blue-600">Manual Done Check Required</span>
+            ) : totalPages > 0 ? (
                 <>
                     <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                       <div className={`h-full rounded-full transition-all ${allDone ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${pct}%` }} />
@@ -296,9 +311,28 @@ function TaskLessonCard({
           </div>
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
-          <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${pageMcqDoneCount > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-            {pageMcqDoneCount > 0 ? `✅ ${pageMcqDoneCount}/${totalPages} MCQ` : '⏳ MCQ'}
-          </span>
+          {isMath ? (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const nextState = !isMathDone;
+                setMathLessonManualDone(lessonId, nextState);
+                setIsMathDone(nextState);
+                if (nextState && onLessonCompleteRef.current && !isLessonRewarded(lessonId)) {
+                  onLessonCompleteRef.current(lessonId);
+                }
+              }}
+              className={`text-[10px] font-black px-2.5 py-1 rounded-full border transition-all ${
+                isMathDone ? 'bg-emerald-500 text-white border-emerald-600 shadow-xs' : 'bg-white text-blue-600 border-blue-300 hover:bg-blue-50'
+              }`}
+            >
+              {isMathDone ? '✅ Done' : 'Mark Done'}
+            </button>
+          ) : (
+            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${pageMcqDoneCount > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+              {pageMcqDoneCount > 0 ? `✅ ${pageMcqDoneCount}/${totalPages} MCQ` : '⏳ MCQ'}
+            </span>
+          )}
           {expanded ? <ChevronUp size={13} className="text-slate-300" /> : <ChevronDown size={13} className="text-slate-300" />}
         </div>
       </div>
@@ -337,7 +371,30 @@ function TaskLessonCard({
             ) : null; })()}
           </div>
           {/* Progress hint */}
-          {allDone ? (
+          {isMath ? (
+            <div className="rounded-xl p-3 text-xs bg-blue-50 border border-blue-200 flex items-center justify-between">
+              <div>
+                <p className="font-black text-blue-900">📐 Math Manual Tracker</p>
+                <p className="text-[10px] text-blue-600 mt-0.5">Math auto-track nahi hota. Routine me done hone par Mark Done karein.</p>
+              </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const nextState = !isMathDone;
+                  setMathLessonManualDone(lessonId, nextState);
+                  setIsMathDone(nextState);
+                  if (nextState && onLessonCompleteRef.current && !isLessonRewarded(lessonId)) {
+                    onLessonCompleteRef.current(lessonId);
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  isMathDone ? 'bg-emerald-600 text-white shadow-sm' : 'bg-white border border-blue-300 text-blue-700 hover:bg-blue-100'
+                }`}
+              >
+                {isMathDone ? '✅ Completed' : 'Mark Done'}
+              </button>
+            </div>
+          ) : allDone ? (
             <div className="rounded-xl p-3 text-xs bg-emerald-100 text-emerald-700">
               <p className="font-black">✅ Lesson complete! Daily Event Page mein pts claim karo</p>
             </div>
@@ -350,25 +407,27 @@ function TaskLessonCard({
             </div>
           )}
 
-          {/* Revision Hub button — locked until today's lesson is complete */}
-          {isLessonRewarded(lessonId) ? (
-            <RoutineRevisionBadge
-              lessonId={lessonId}
-              lessonTitle={lessonTitle}
-              onGoToRevision={onGoToRevision}
-            />
-          ) : (
-            <div className="mt-3 rounded-xl bg-slate-100 border border-slate-200 p-3 flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-slate-200 flex items-center justify-center shrink-0">
-                <Lock size={15} className="text-slate-400" />
+          {/* Revision Hub button — locked until today's lesson is complete (Excluded for Math) */}
+          {!isMath && (
+            isLessonRewarded(lessonId) ? (
+              <RoutineRevisionBadge
+                lessonId={lessonId}
+                lessonTitle={lessonTitle}
+                onGoToRevision={onGoToRevision}
+              />
+            ) : (
+              <div className="mt-3 rounded-xl bg-slate-100 border border-slate-200 p-3 flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-slate-200 flex items-center justify-center shrink-0">
+                  <Lock size={15} className="text-slate-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] font-black text-slate-500">🔒 Revision Hub</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5 truncate">
+                    Aaj ka lesson complete karo → <span className="font-bold">"{lessonTitle}"</span> unlock hoga
+                  </p>
+                </div>
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-[11px] font-black text-slate-500">🔒 Revision Hub</p>
-                <p className="text-[10px] text-slate-400 mt-0.5 truncate">
-                  Aaj ka lesson complete karo → <span className="font-bold">"{lessonTitle}"</span> unlock hoga
-                </p>
-              </div>
-            </div>
+            )
           )}
         </div>
       )}

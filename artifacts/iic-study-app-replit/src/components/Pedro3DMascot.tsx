@@ -496,22 +496,8 @@ export const Pedro3DMascotComponent: React.FC<Pedro3DMascotProps> = ({
     tongue.scale.set(1.35, 0.7, 0.8);
     mouthGroup.add(tongue);
 
-    // ── 3D NARAJ ANGER/POUT MARK ("Naraj Sign: 💢") ──
+    // ── 3D NARAJ ANGER/POUT MARK (Permanently Disabled for clean premium look) ──
     const narajGroup = new THREE.Group();
-    narajGroup.position.set(0.38, 0.44, 0.3);
-    const angerCrossMat = new THREE.MeshStandardMaterial({
-      color: 0xef4444,
-      emissive: 0xdc2626,
-      emissiveIntensity: 0.85,
-      roughness: 0.25
-    });
-    // 4 curved lobes forming cartoon anger sign 💢
-    for (let a = 0; a < 4; a++) {
-      const lobe = new THREE.Mesh(new THREE.TorusGeometry(0.044, 0.014, 8, 16, Math.PI * 0.8), angerCrossMat);
-      lobe.rotation.z = (a * Math.PI) / 2 + Math.PI / 4;
-      lobe.position.set(Math.cos((a * Math.PI) / 2) * 0.032, Math.sin((a * Math.PI) / 2) * 0.032, 0);
-      narajGroup.add(lobe);
-    }
     narajGroup.visible = false;
     headGroup.add(narajGroup);
     narajGroupRef.current = narajGroup;
@@ -1372,26 +1358,10 @@ export const Pedro3DMascotComponent: React.FC<Pedro3DMascotProps> = ({
 
       // ── MOUTH ANIMATION & NARAJ ("MUH LATKA KE") EXPRESSIONS ──
       const curPose = poseRef.current;
-      const isNaraj = isNarajRef.current || curPose === 'naraj' || curPose === 'angry' || curPose === 'upset' || curPose === 'sad';
-
-      // Update 3D Naraj Anger Mark 💢
-      if (narajGroupRef.current) {
-        narajGroupRef.current.visible = isNaraj;
-        if (isNaraj) {
-          const pulse = 1 + Math.sin(t * 8) * 0.15;
-          narajGroupRef.current.scale.set(pulse, pulse, pulse);
-          narajGroupRef.current.rotation.z = Math.sin(t * 4) * 0.1;
-        }
-      }
-
+      // Pedro always maintains cheerful, friendly posture (no sulking or grumpy mouth)
       // Mouth animation with Teeth ("Daant") & Tongue ("Muh")
       if (mouthGroupRef.current) {
-        if (isNaraj) {
-          // "muh latka ke" — drooping sulking pout with corners pulled down!
-          mouthGroupRef.current.rotation.z = Math.PI; // Inverts the curve downward!
-          mouthGroupRef.current.position.set(0, -0.32, 0.58);
-          mouthGroupRef.current.scale.set(1.08, 1.25, 1);
-        } else if (isSpeakingRef.current) {
+        if (isSpeakingRef.current) {
           // Speaking animation revealing teeth and pink tongue moving dynamically
           mouthGroupRef.current.rotation.z = 0;
           mouthGroupRef.current.position.set(0, -0.28, 0.58);
@@ -1404,24 +1374,8 @@ export const Pedro3DMascotComponent: React.FC<Pedro3DMascotProps> = ({
         }
       }
 
-      // Naraj posture override: tilted head, grumpy furrowed eyes, drooped antenna
-      if (isNaraj && curPose !== 'sleep' && curPose !== 'toss_head' && curPose !== 'headless_booster') {
-        if (headGroupRef.current) {
-          headGroupRef.current.rotation.set(0.18 + Math.sin(t * 2) * 0.04, 0, -0.12 + Math.sin(t * 1.5) * 0.04);
-        }
-        if (lEyeGroupRef.current) {
-          lEyeGroupRef.current.rotation.z = 0.24;
-        }
-        if (rEyeGroupRef.current) {
-          rEyeGroupRef.current.rotation.z = -0.24;
-        }
-        if (antennaGroupRef.current) {
-          antennaGroupRef.current.rotation.z = 0.28 + Math.sin(t * 3) * 0.05;
-        }
-      } else if (!isNaraj) {
-        if (lEyeGroupRef.current && lEyeGroupRef.current.rotation.z !== 0) lEyeGroupRef.current.rotation.z = 0;
-        if (rEyeGroupRef.current && rEyeGroupRef.current.rotation.z !== 0) rEyeGroupRef.current.rotation.z = 0;
-      }
+      if (lEyeGroupRef.current && lEyeGroupRef.current.rotation.z !== 0) lEyeGroupRef.current.rotation.z = 0;
+      if (rEyeGroupRef.current && rEyeGroupRef.current.rotation.z !== 0) rEyeGroupRef.current.rotation.z = 0;
 
       // ── SPECIAL POSE OVERRIDES ('sleep', 'toss_head', 'headless_booster') ──
       if (curPose === 'sleep') {

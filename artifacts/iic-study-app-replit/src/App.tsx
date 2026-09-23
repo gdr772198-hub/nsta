@@ -1018,25 +1018,25 @@ const App: React.FC = () => {
                   for (let i = 0; i < thresholds.length; i++) { if (cs >= thresholds[i]) lvl = i; else break; }
                   if (lvl > 0) updatedUser.totalScore = thresholds[lvl - 1];
 
-                  // Trigger Pedro Streak Break Penalty ("Aapne streak tod di! Mera level drop ho gaya aur naraj ho gaya!")
+                  // Positive Streak Encouragement (Clean Premium Experience)
                   try {
                       const effUserLevel = updatedUser.level || getLevelInfo(updatedUser.totalScore || 0).level || 1;
-                      const penalty = PedroEngine.triggerStreakBreakPenalty(updatedUser.id, effUserLevel);
+                      PedroEngine.triggerStreakBreakPenalty(updatedUser.id, effUserLevel);
                       pedroSpeak(
-                          `Aapne 24 ghante online na aakar streak tod di! Mera level drop hokar Level ${penalty.currentPenaltyLevel} ho gaya! Main aapse naraj hoon! Ab wapas Level ${penalty.targetLevel} par aane ke liye lagatar ${penalty.daysNeeded} din daily study karke streak banayein!`,
+                          `Welcome back! Aaj naya din hai, chaliye study karke apni daily streak ko continue karein!`,
                           { rate: 1.05, pitch: 1.15, showBubble: true }
                       );
-                      const narajAlert: any = {
-                          id: `pedro-naraj-${today}`,
-                          text: `😠 Pedro Naraj Hai! (Level Dropped)\n\nAapne 24 ghante tak online na aakar daily streak tod di!\n\nPedro ka level drop hokar Level ${penalty.currentPenaltyLevel} ho gaya hai aur usne muh latka liya hai.\n\n⏳ Ab wapas Level ${penalty.targetLevel} par pahuchne ke liye lagatar ${penalty.daysNeeded} din daily study karke streak maintain karni hogi!`,
+                      const streakAlert: any = {
+                          id: `pedro-streak-welcome-${today}`,
+                          text: `✨ Welcome Back! Aaj ka daily goal complete karke apni streak aur rewards continue karein!`,
                           date: new Date().toISOString(),
                           read: false,
                           type: 'ALERT',
                           isClaimed: false,
                       };
-                      updatedUser.inbox = deduplicateInbox([narajAlert, ...(updatedUser.inbox || [])]);
+                      updatedUser.inbox = deduplicateInbox([streakAlert, ...(updatedUser.inbox || [])]);
                   } catch (err) {
-                      console.error('[PedroPenalty] Error triggering streak penalty:', err);
+                      console.error('[PedroPenalty] Error welcoming user:', err);
                   }
               }
           }

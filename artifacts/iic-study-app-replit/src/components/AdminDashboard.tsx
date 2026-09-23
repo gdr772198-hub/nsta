@@ -48,6 +48,7 @@ import { NstaFeatureManager } from './admin/NstaFeatureManager';
 import { ReferralPrizesManager } from './admin/ReferralPrizesManager';
 import { PlanComparisonManager } from './admin/PlanComparisonManager';
 import { PedroAdminManager } from './admin/PedroAdminManager';
+import { AdminMathManager } from './AdminMathManager';
 // @ts-ignore
 import JSZip from 'jszip';
 import { Document, Page, pdfjs } from 'react-pdf';
@@ -172,6 +173,7 @@ type AdminTab =
   | 'COACHING_MANAGER' // 🏫 Full Coaching School System
   | 'COACHING_CENTRES' // 🏫 Create/Assign/Subscription — Super Admin
   | 'COMPETITION_MCQ_MANAGER' // MCQ Practice Manager for Competition Books
+  | 'MATH_MANAGER' // 📐 Math Master Manager (Book/Notes/Solution/MCQ)
   | 'PEDRO_MANAGER'; // 🤖 Pedro AI Robot Guide Master
 
 interface ContentConfig {
@@ -4964,6 +4966,13 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                       {/* System links — always outside the feature categories below */}
                       <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-2xl p-1.5 flex-wrap justify-center">
                           <button
+                              onClick={() => setActiveTab('MATH_MANAGER')}
+                              className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-[10px] uppercase tracking-widest font-black text-white bg-gradient-to-b from-blue-600 to-indigo-700 shadow-md shadow-blue-600/25 hover:from-blue-500 hover:to-indigo-600 transition-all cursor-pointer"
+                          >
+                              <span className="text-sm leading-none">📐</span> Math Manager (Book / Notes / Solution / MCQ)
+                          </button>
+
+                          <button
                               onClick={() => setActiveTab('PEDRO_MANAGER')}
                               className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-[10px] uppercase tracking-widest font-black text-white bg-gradient-to-b from-purple-600 to-indigo-700 shadow-md shadow-purple-600/25 hover:from-purple-500 hover:to-indigo-600 transition-all cursor-pointer"
                           >
@@ -7559,6 +7568,14 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                   await handleSaveSettings(updated);
               }}
               onBack={() => setActiveTab('DASHBOARD')}
+          />
+      )}
+
+      {/* --- MATH MASTER MANAGER (BOOK / NOTES / SOLUTION / MCQ) --- */}
+      {activeTab === 'MATH_MANAGER' && (
+          <AdminMathManager
+              onBack={() => setActiveTab('DASHBOARD')}
+              currentUser={currentUser}
           />
       )}
 

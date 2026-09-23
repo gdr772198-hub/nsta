@@ -215,8 +215,38 @@ export function getLessonCompletedPages(lessonId: string, totalPages: number): n
   return count;
 }
 
+export function isMathKey(id: string): boolean {
+  const l = (id || '').toLowerCase();
+  return l.includes('math') || l.includes('ganit') || l.includes('गणित');
+}
+
+export function isMathLessonManualDone(lessonId: string): boolean {
+  try {
+    const raw = localStorage.getItem('nst_math_manual_done_v1');
+    if (!raw) return false;
+    const map = JSON.parse(raw);
+    return !!map[lessonId];
+  } catch {
+    return false;
+  }
+}
+
+export function setMathLessonManualDone(lessonId: string, done: boolean): void {
+  try {
+    const raw = localStorage.getItem('nst_math_manual_done_v1');
+    const map = raw ? JSON.parse(raw) : {};
+    map[lessonId] = done;
+    localStorage.setItem('nst_math_manual_done_v1', JSON.stringify(map));
+    window.dispatchEvent(new CustomEvent('nst-math-routine-changed', { detail: { lessonId, done } }));
+  } catch {}
+}
+
 /** Returns true if ALL pages are complete (all read + all page MCQs done or no MCQ pages) */
 export function isLessonAutoComplete(lessonId: string, totalPages: number): boolean {
+  // Math rule: Math auto track nahi hoga, manually done mark karna padega
+  if (isMathKey(lessonId)) {
+    return isMathLessonManualDone(lessonId);
+  }
   if (totalPages === 0) return false;
   return getLessonCompletedPages(lessonId, totalPages) >= totalPages;
 }

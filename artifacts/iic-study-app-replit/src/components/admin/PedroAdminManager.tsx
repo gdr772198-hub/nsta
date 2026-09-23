@@ -362,22 +362,52 @@ export const PedroAdminManager: React.FC<Props> = ({ settings, onSave, onBack })
               Global Master Settings (Robot Profile & Voice)
             </h3>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="text-xs font-bold text-slate-500">
-              Pedro Globally Active:
-            </span>
-            <button
-              onClick={() => setPedroConfig(p => ({ ...p, enabled: p.enabled !== false ? false : true }))}
-              className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
-                pedroConfig.enabled !== false ? 'bg-purple-600' : 'bg-slate-300 dark:bg-slate-700'
-              }`}
-            >
-              <div 
-                className={`w-5 h-5 rounded-full bg-white transition-transform shadow-sm absolute top-0.5 ${
-                  pedroConfig.enabled !== false ? 'left-6.5' : 'left-0.5'
-                }`} 
-              />
-            </button>
+          <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-800/80 px-3 py-1.5 rounded-2xl border border-slate-200 dark:border-slate-700">
+              <div className="text-left">
+                <p className="text-[11px] font-black text-slate-800 dark:text-slate-200">
+                  Guide Power (App Tour & Explainer)
+                </p>
+                <p className="text-[9px] text-slate-500">
+                  {pedroConfig.guidePowerEnabled !== false ? '✅ Active (Pedro samjhayega)' : '⏸️ Paused (Mascot rahega, Guide OFF)'}
+                </p>
+              </div>
+              <button
+                onClick={() => setPedroConfig(p => ({ ...p, guidePowerEnabled: p.guidePowerEnabled !== false ? false : true }))}
+                className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ml-2 ${
+                  pedroConfig.guidePowerEnabled !== false ? 'bg-purple-600' : 'bg-slate-300 dark:bg-slate-700'
+                }`}
+              >
+                <div 
+                  className={`w-4 h-4 rounded-full bg-white transition-transform shadow-sm absolute top-1 ${
+                    pedroConfig.guidePowerEnabled !== false ? 'left-6' : 'left-1'
+                  }`} 
+                />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-800/80 px-3 py-1.5 rounded-2xl border border-slate-200 dark:border-slate-700">
+              <div className="text-left">
+                <p className="text-[11px] font-black text-slate-800 dark:text-slate-200">
+                  Pedro Companion Robot
+                </p>
+                <p className="text-[9px] text-slate-500">
+                  {pedroConfig.enabled !== false ? '✨ Visible Companion' : 'Mascot Quiet'}
+                </p>
+              </div>
+              <button
+                onClick={() => setPedroConfig(p => ({ ...p, enabled: p.enabled !== false ? false : true }))}
+                className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ml-2 ${
+                  pedroConfig.enabled !== false ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
+                }`}
+              >
+                <div 
+                  className={`w-4 h-4 rounded-full bg-white transition-transform shadow-sm absolute top-1 ${
+                    pedroConfig.enabled !== false ? 'left-6' : 'left-1'
+                  }`} 
+                />
+              </button>
+            </div>
           </div>
         </div>
 

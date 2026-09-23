@@ -47,6 +47,7 @@ import { fireSessionComplete } from '../utils/sessionNotify';
 import { deferStudyCoins } from '../utils/studyRewards';
 import { getMcqStatements } from '../utils/mcqStructure';
 import { extractStatements } from '../utils/mcqParser';
+import { MathLessonViewer } from './MathLessonViewer';
 
 
 interface Props {
@@ -880,6 +881,32 @@ export const LessonView: React.FC<Props> = ({
   }
 
   if (!content) return null;
+
+  // ── MATH DIGITAL PICTURE VIEWER (BOOK / PREMIUM NOTES / SOLUTION / MCQ) ──
+  const isMathSubject =
+    subject?.name?.toLowerCase().includes('math') ||
+    subject?.name?.toLowerCase().includes('ganit') ||
+    subject?.name?.includes('गणित') ||
+    subject?.id?.toLowerCase().includes('math');
+
+  const hasMathImagePages =
+    (content.mathBookPages && content.mathBookPages.length > 0) ||
+    (content.mathPremiumNotesPages && content.mathPremiumNotesPages.length > 0) ||
+    (content.mathSolutionPages && content.mathSolutionPages.length > 0);
+
+  if (hasMathImagePages || (isMathSubject && (content.mathBookPages || content.mathPremiumNotesPages || content.mathSolutionPages))) {
+    return (
+      <MathLessonViewer
+        content={content}
+        chapterTitle={chapter?.title || content.title || 'Math Lesson'}
+        subjectName={subject?.name || 'Mathematics'}
+        user={user!}
+        onBack={onBack}
+        onUpdateUser={onUpdateUser}
+        onSessionCreditsEarned={onSessionCreditsEarned}
+      />
+    );
+  }
 
   // 1. AI IMAGE/HTML NOTES
   const activeContentValue = (language === 'Hindi' && content.schoolPremiumNotesHtml_HI) 

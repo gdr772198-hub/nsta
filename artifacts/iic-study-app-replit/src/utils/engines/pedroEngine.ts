@@ -446,7 +446,7 @@ export const PedroEngine = {
   },
 
   /**
-   * Get current streak break penalty state
+   * Get current streak break recharge / cooldown state (Clean Premium Mode)
    */
   getPenaltyState: (userId: string | undefined | null, userLevel?: number): PedroPenaltyState => {
     const defaultState: PedroPenaltyState = {
@@ -464,86 +464,77 @@ export const PedroEngine = {
     if (!userId) return defaultState;
 
     try {
-      const raw = localStorage.getItem(`nst_pedro_penalty_${userId}`);
-      if (!raw) return defaultState;
-      const parsed = JSON.parse(raw);
-      if (!parsed || !parsed.hasPenalty) return defaultState;
+      if (typeof window !== 'undefined') {
+        const raw = localStorage.getItem(`nst_pedro_penalty_${userId}`);
+        if (!raw) return defaultState;
+        const parsed = JSON.parse(raw);
+        if (!parsed || !parsed.hasPenalty) return defaultState;
 
-      const daysNeeded = parsed.daysNeeded || Math.max(1, (parsed.targetLevel || 2) - 1);
-      const daysCompleted = parsed.daysCompleted || 0;
-      const daysRemaining = Math.max(0, daysNeeded - daysCompleted);
+        const daysNeeded = parsed.daysNeeded || Math.max(1, (parsed.targetLevel || 2) - 1);
+        const daysCompleted = parsed.daysCompleted || 0;
+        const daysRemaining = Math.max(0, daysNeeded - daysCompleted);
 
-      if (daysRemaining <= 0) {
-        localStorage.removeItem(`nst_pedro_penalty_${userId}`);
-        return defaultState;
+        if (daysRemaining <= 0) {
+          localStorage.removeItem(`nst_pedro_penalty_${userId}`);
+          return defaultState;
+        }
+
+        return {
+          hasPenalty: true,
+          isNaraj: false, // Never sulk or pout — always clean & premium
+          originalLevel: parsed.originalLevel || (userLevel || 1),
+          currentPenaltyLevel: Math.max(1, parsed.currentPenaltyLevel || 1),
+          targetLevel: parsed.targetLevel || (userLevel || 2),
+          daysNeeded,
+          daysCompleted,
+          daysRemaining,
+          reason: parsed.reason || '24 ghante study miss hone par power cooldown active hua.',
+          penaltyDate: parsed.penaltyDate || new Date().toISOString(),
+        };
       }
-
-      return {
-        hasPenalty: true,
-        isNaraj: true,
-        originalLevel: parsed.originalLevel || (userLevel || 1),
-        currentPenaltyLevel: Math.max(1, parsed.currentPenaltyLevel || 1),
-        targetLevel: parsed.targetLevel || (userLevel || 2),
-        daysNeeded,
-        daysCompleted,
-        daysRemaining,
-        reason: parsed.reason || '24 ghante online na aane ke karan streak toot gayi!',
-        penaltyDate: parsed.penaltyDate || new Date().toISOString(),
-      };
     } catch {
       return defaultState;
     }
+
+    return defaultState;
   },
 
   /**
-   * Trigger streak break penalty when student is absent for > 24 hours:
-   * - Power drops 1 level (Level 2 -> 1, Level 3 -> 2, Level 7 -> 6, etc.)
-   * - Recovery days proportional to target level:
-   *   - Level 2: 1 din me wapas jayega
-   *   - Level 3: 2 din baad wapas jayega
-   *   - Level 7: 6 din baad wapas jayega
-   * - Pedro gets "naraj" (upset / sulking / mouth latka ke)
+   * Trigger level drop when student misses study for > 24 hours:
+   * - Level drops 1 step (Level 8 -> 7, Level 7 -> 6, Level 6 -> 5, Level 2 -> 1)
+   * - Recovery days needed = Target Level - 1
+   * - Clean, motivating, futuristic status (NO childish tantrum or "naraj" drama)
    */
   triggerStreakBreakPenalty: (userId: string | undefined | null, currentLevel: number): PedroPenaltyState => {
-    if (!userId) {
-      return {
-        hasPenalty: false,
-        isNaraj: false,
-        originalLevel: currentLevel,
-        currentPenaltyLevel: currentLevel,
-        targetLevel: currentLevel,
-        daysNeeded: 0,
-        daysCompleted: 0,
-        daysRemaining: 0,
-        reason: '',
-        penaltyDate: '',
-      };
-    }
-
-    const baseLevel = Math.max(1, currentLevel);
+    const baseLevel = Math.max(1, currentLevel || 1);
     const currentPenaltyLevel = Math.max(1, baseLevel - 1);
     const targetLevel = baseLevel;
-    // Days needed: target level - 1 (e.g. Level 2 -> 1 day, Level 3 -> 2 days, Level 7 -> 6 days)
     const daysNeeded = Math.max(1, targetLevel - 1);
 
     const penaltyState: PedroPenaltyState = {
-      hasPenalty: true,
-      isNaraj: true,
+      hasPenalty: baseLevel > 1,
+      isNaraj: false,
       originalLevel: baseLevel,
       currentPenaltyLevel,
       targetLevel,
       daysNeeded,
       daysCompleted: 0,
       daysRemaining: daysNeeded,
-      reason: '24 ghante tak online na aane ke karan study streak toot gayi! Pedro ka level 1 drop ho gaya.',
+      reason: '24 ghante study miss hone par Pedro recharge mode me chala gaya hai.',
       penaltyDate: new Date().toISOString(),
     };
 
     try {
-      localStorage.setItem(`nst_pedro_penalty_${userId}`, JSON.stringify(penaltyState));
-      window.dispatchEvent(new CustomEvent('nst-pedro-penalty-change', { detail: penaltyState }));
-      window.dispatchEvent(new CustomEvent('nst-pedro-level-change', { detail: { level: currentPenaltyLevel } }));
-      window.dispatchEvent(new CustomEvent('nst-pedro-naraj', { detail: { isNaraj: true, penalty: penaltyState } }));
+      if (userId && typeof window !== 'undefined') {
+        if (baseLevel > 1) {
+          localStorage.setItem(`nst_pedro_penalty_${userId}`, JSON.stringify(penaltyState));
+        } else {
+          localStorage.removeItem(`nst_pedro_penalty_${userId}`);
+        }
+        window.dispatchEvent(new CustomEvent('nst-pedro-penalty-change', { detail: penaltyState }));
+        window.dispatchEvent(new CustomEvent('nst-pedro-level-change', { detail: { level: currentPenaltyLevel } }));
+        window.dispatchEvent(new CustomEvent('nst-pedro-naraj', { detail: { isNaraj: false } }));
+      }
     } catch {}
 
     return penaltyState;

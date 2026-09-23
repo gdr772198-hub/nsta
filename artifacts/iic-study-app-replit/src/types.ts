@@ -809,7 +809,8 @@ export interface PedroPageConfig {
 }
 
 export interface PedroSystemConfig {
-  enabled?: boolean;
+  enabled?: boolean; // Master Pedro Active flag
+  guidePowerEnabled?: boolean; // When false, Guide walkthrough & tour drawer are paused, but Pedro mascot stays!
   robotName?: string;
   defaultPitch?: number;
   defaultRate?: number;
@@ -1780,6 +1781,14 @@ export interface ActivityLogEntry {
   role: Role;
 }
 
+export interface MathImagePage {
+  id: string;
+  pageNo: number;
+  imageUrl: string;
+  title?: string;
+  caption?: string;
+}
+
 export interface HtmlModule {
   id: string;
   title: string;
@@ -1856,6 +1865,11 @@ export interface LessonContent {
 
   videoPlaylist?: {title: string, url: string, price?: number, access?: 'FREE' | 'BASIC' | 'ULTRA'}[]; // LEGACY
   audioPlaylist?: {title: string, url: string, price?: number, access?: 'FREE' | 'BASIC' | 'ULTRA'}[]; // LEGACY
+
+  // MATH PICTURE MODES
+  mathBookPages?: MathImagePage[]; // Mode 1: Book Pages
+  mathPremiumNotesPages?: MathImagePage[]; // Mode 2: Premium Notes
+  mathSolutionPages?: MathImagePage[]; // Mode 3: Solution Pages
 
   // CUSTOM SLOTS (6/6/6)
   customPdf?: { id: string, name: string, link: string, price: number }[];

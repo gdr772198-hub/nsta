@@ -2524,85 +2524,6 @@ export const PedroAssistant: React.FC<PedroAssistantProps> = ({
                 </div>
               </div>
 
-              {/* PEDRO NARAJ ALERT BANNER (If streak broken in last 24 hours) */}
-              {penaltyState.hasPenalty && (
-                <div className="p-3 rounded-2xl bg-gradient-to-br from-red-950/90 via-orange-950/70 to-slate-950/90 border border-red-500/60 shadow-xl space-y-2 animate-in fade-in zoom-in-95 duration-200">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-2xl shrink-0 animate-bounce">😠</span>
-                      <div>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <h5 className="font-black text-xs sm:text-sm text-red-300 leading-tight">
-                            Pedro Naraj Hai! (Muh Latka Liya)
-                          </h5>
-                          <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-red-500/30 text-red-200 border border-red-400/40 uppercase tracking-wider">
-                            Streak Toot Gayi
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-slate-300 mt-0.5">
-                          24 ghante online na aane se Pedro ka level drop ho gaya: <b className="text-amber-300">Level {penaltyState.originalLevel} ➔ Level {penaltyState.currentPenaltyLevel}</b>
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Recovery Tracker */}
-                  <div className="p-2 rounded-xl bg-slate-950/80 border border-white/10 space-y-1.5">
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-amber-200 font-bold flex items-center gap-1">
-                        <span>📅</span>
-                        <span>Wapas Level {penaltyState.targetLevel} par jane ke liye:</span>
-                      </span>
-                      <span className="font-bold text-white text-[11px]">
-                        {penaltyState.daysCompleted} / {penaltyState.daysNeeded} din
-                      </span>
-                    </div>
-
-                    <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden border border-white/10">
-                      <div
-                        className="h-full bg-gradient-to-r from-red-500 via-amber-400 to-emerald-400 transition-all duration-500"
-                        style={{
-                          width: `${Math.min(100, Math.round((penaltyState.daysCompleted / penaltyState.daysNeeded) * 100))}%`
-                        }}
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between text-[10px] text-slate-400">
-                      <span>Bache hue: <b className="text-white">{penaltyState.daysRemaining} din</b> daily streak</span>
-                      <span className="text-amber-300 font-medium">
-                        {penaltyState.daysCompleted >= penaltyState.daysNeeded ? 'Complete!' : `${Math.round((penaltyState.daysCompleted / penaltyState.daysNeeded) * 100)}% done`}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Quick Action buttons */}
-                  <div className="flex items-center gap-2 pt-0.5">
-                    <button
-                      onClick={() => {
-                        speakText(
-                          `Aapne 24 ghante online na aakar streak tod di! Mera level drop hokar Level ${penaltyState.currentPenaltyLevel} ho gaya hai aur main aapse naraj hoon! Ab wapas Level ${penaltyState.targetLevel} par jane ke liye lagatar ${penaltyState.daysNeeded} din daily study karke streak banayein!`
-                        );
-                      }}
-                      className="flex-1 py-1.5 px-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-200 border border-red-400/40 text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all"
-                    >
-                      <span>🗣️</span>
-                      <span>Pedro Ki Suniye</span>
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        onClose();
-                        onOpenStudyRoom ? onOpenStudyRoom() : onTriggerAction?.('GO_HOME');
-                      }}
-                      className="flex-1 py-1.5 px-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-[11px] flex items-center justify-center gap-1 shadow cursor-pointer active:scale-95 transition-all"
-                    >
-                      <span>📚</span>
-                      <span>Study Karke Manayein</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-
               {/* Quick Info Pill: Pedro Guide moved to 3-Dot Menu */}
               <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-purple-950/40 border border-purple-400/20 text-[11px] text-purple-200">
                 <span className="flex items-center gap-1.5 min-w-0">
@@ -3246,6 +3167,7 @@ interface FloatingPedroWidgetProps {
   userName?: string;
   user?: any;
   studyTimerSeconds?: number;
+  guidePowerEnabled?: boolean;
 }
 
 export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
@@ -3257,7 +3179,8 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
   isActive = false,
   userName = 'Student',
   user,
-  studyTimerSeconds = 0
+  studyTimerSeconds = 0,
+  guidePowerEnabled = true
 }) => {
   // Pedro Level & Visual Look Progression (Levels 1 - 8)
   const effectiveLevel = useMemo(() => PedroEngine.getEffectiveLevel(user), [user]);
@@ -3647,6 +3570,22 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
 
     // Tap detected
     if (!hasMoved) {
+      if (guidePowerEnabled === false) {
+        setSpeechBubbleText(`Namaste ${userName || 'Dost'}! Main aapka friendly study mascot hoon. Interactive App Guide abhi Admin dwara off hai.`);
+        setIsSpeakingLive(true);
+        playSoftChime();
+        pedroSpeak(`Namaste! Main aapka Pedro study companion hoon. App guide abhi off hai.`, {
+          rate: 1.15,
+          showBubble: false,
+          onEnd: () => setIsSpeakingLive(false)
+        });
+        setTimeout(() => {
+          setSpeechBubbleText(null);
+          setIsSpeakingLive(false);
+        }, 3200);
+        return;
+      }
+
       if (energyStatus.isSleeping) {
         pedroSpeak('Zzz... Main thak gaya hoon, thoda aaram karne dijiye.');
         if (typeof window !== 'undefined') {
@@ -3773,21 +3712,11 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
               isPointing={isPointingPose || authWelcomePhase === 'inspect_name'}
               isDragging={isDragging}
               isBoosterActive={effectiveBooster}
-              isNaraj={penaltyState.isNaraj}
+              isNaraj={false}
               level={effectiveLevel}
               colorScheme={pedroColorScheme}
               className={effectiveBooster ? 'scale-110' : 'animate-pedro-hover'}
             />
-
-            {/* Pedro Naraj / Streak Penalty Badge ("Muh latka liya hai") */}
-            {penaltyState.isNaraj && authWelcomePhase === 'none' && (
-              <div className="absolute -top-3.5 -left-2 pointer-events-none animate-bounce flex items-center gap-0.5 z-20">
-                <span className="px-2 py-0.5 rounded-full bg-red-950/95 border border-red-500 text-red-200 text-[10px] font-black shadow-xl flex items-center gap-1">
-                  <span>😠</span>
-                  <span>Naraj!</span>
-                </span>
-              </div>
-            )}
 
             {/* Rocket Booster Exhaust Plume & Glow during feature flight */}
             {effectiveBooster && (
