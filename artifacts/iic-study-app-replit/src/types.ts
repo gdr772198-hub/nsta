@@ -467,6 +467,15 @@ export interface SubscriptionPlan {
   ultraPrice: number;
   ultraOriginalPrice: number;
   creditPriceUltra?: number; // Custom credits needed for Ultra
+
+  // VIP+ Tiers (Pro+ & Max+)
+  proPlusPrice?: number;
+  proPlusOriginalPrice?: number;
+  proPlusDailyDiamonds?: number;
+
+  maxPlusPrice?: number;
+  maxPlusOriginalPrice?: number;
+  maxPlusDailyDiamonds?: number;
   
   features: string[]; // Generic features list or split logic
   popular?: boolean;
@@ -932,6 +941,8 @@ export interface SystemSettings {
   officialAppUrl?: string; // NEW: Play Store Link
   referralMilestones?: ReferralMilestone[]; // Admin-configurable Refer & Earn milestones & prizes
   planComparisonData?: PlanCompareGroup[]; // Admin-configurable Plan Comparison matrix (Free vs Basic vs Ultra)
+  vipCreditOffData?: PlanCompareGroup[]; // VIP Feature Comparison Matrix (CRADIT OFF)
+  vipPlusCreditOnData?: PlanCompareGroup[]; // VIP+ Feature Comparison Matrix (CRADIT ON)
   enable3DModels?: boolean; // NEW: 3D Models in Notes
   showMcqMakerCard?: boolean; // NEW: Show MCQ Maker card on student home page
   showHomeResumeFilter?: boolean; // NEW: Show subject filter chips above Home "Continue Reading" card
@@ -1156,6 +1167,13 @@ export interface SystemSettings {
   packages?: CreditPackage[];
   subscriptionPlans?: SubscriptionPlan[];
   creditSubscriptionPlans?: CreditSubscriptionPlan[]; // Daily Credit Subscription Plans managed by Admin
+  hideCreditsStore?: boolean; // NEW: Hide Credits Tab & store
+  hideDiamondsStore?: boolean; // NEW: Hide Diamonds Tab & store
+  showCreditsStore?: boolean; // Admin toggle: Enable Credits Store (Default: false / OFF)
+  showDiamondsStore?: boolean; // Admin toggle: Enable Diamonds Store (Default: false / OFF)
+  hideSubscriptionsStore?: boolean; // NEW: Hide VIP Subscriptions Tab & store
+  hidePassesStore?: boolean; // NEW: Hide Daily Credit/Diamond passes
+  hideExchangeStore?: boolean; // NEW: Hide Exchange Tab
   diamondTemplates?: {
     id: string;
     name: string;

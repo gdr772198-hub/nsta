@@ -115,6 +115,7 @@ import { getCreditCost, getRequiredTier } from './utils/creditSystem';
 import { generateDailyChallengeQuestions, getChallengeDateKey, getChallengeWeekKey, isDailyChallenge20 } from './utils/challengeGenerator';
 import { BrainCircuit, Globe, LogOut, LayoutDashboard, BookOpen, Headphones, HelpCircle, Newspaper, KeyRound, Lock, X, ShieldCheck, FileText, UserPlus, EyeOff, WifiOff, Cloud, ArrowLeft, ExternalLink, ChevronRight } from 'lucide-react'; // eslint-disable-line @typescript-eslint/no-unused-vars
 import { SUPPORT_EMAIL, APP_VERSION } from './constants';
+import { CLASS_10_FAKE_LESSONS } from './constants/class10SeedLessons';
 import { StudentTab, PendingReward, MCQResult, SubscriptionHistoryEntry } from './types';
 import { PedroEngine } from './utils/engines/pedroEngine';
 import { pedroSpeak } from './utils/pedroVoiceManager';
@@ -417,6 +418,10 @@ const App: React.FC = () => {
             { id: 'lifetime', name: 'Lifetime', duration: 'Forever', basicPrice: 4999, basicOriginalPrice: 9999, ultraPrice: 7499, ultraOriginalPrice: 14999, features: ['VIP Status'], popular: true }
         ],
         creditSubscriptionPlans: DEFAULT_CREDIT_SUB_PLANS,
+        showCreditsStore: false,
+        showDiamondsStore: false,
+        hideCreditsStore: true,
+        hideDiamondsStore: true,
         startupAd: {
             enabled: false,
             duration: 2,
@@ -434,7 +439,8 @@ const App: React.FC = () => {
         prizeRules: [
             { id: 'def-daily', category: 'DAILY_CHALLENGE', minQuestions: 0, minPercentage: 90, rewardType: 'SUBSCRIPTION', rewardSubTier: 'MONTHLY', rewardSubLevel: 'ULTRA', rewardDurationHours: 720, label: 'Score 90% in Daily Challenge', enabled: true },
             { id: 'def-weekly', category: 'WEEKLY_TEST', minQuestions: 0, minPercentage: 0, rewardType: 'SUBSCRIPTION', rewardSubTier: 'WEEKLY', rewardSubLevel: 'BASIC', rewardDurationHours: 24, label: 'Participate in Weekly Test', enabled: true }
-        ]
+        ],
+        lucentNotes: CLASS_10_FAKE_LESSONS as any
     }
   });
 
@@ -608,11 +614,14 @@ const App: React.FC = () => {
       return { ...sess, bonusPts };
     });
 
+    const isCreditEconomy = user?.studyMode === 'CREDIT';
     const totalPtsEarned   = augmentedQueue.reduce((a, s) => a + (s.sessionScore  ?? 0), 0);
     const totalBonusEarned = augmentedQueue.reduce((a, s) => a + (s.bonusPts      ?? 0), 0);
-    const totalCredEarned  = deferredStudyCoins > 0
-      ? deferredStudyCoins
-      : augmentedQueue.reduce((a, s) => a + (s.coinsEarned ?? 0) + (s.creditsEarned ?? 0), 0);
+    const totalCredEarned  = !isCreditEconomy
+      ? 0
+      : (deferredStudyCoins > 0
+          ? deferredStudyCoins
+          : augmentedQueue.reduce((a, s) => a + (s.coinsEarned ?? 0) + (s.creditsEarned ?? 0), 0));
     const xpAfter          = user.totalScore || 0;
     const xpBefore         = Math.max(0, xpAfter - totalPtsEarned - totalBonusEarned);
     const creditsBefore    = user.credits || 0;
@@ -659,9 +668,10 @@ const App: React.FC = () => {
   }, [toastMessage]);
 
   const enqueueMcqAndShow = (earned: number, earnedC: number, secs: number) => {
-    let finalCoins = earnedC;
     const _sessUser = state.user;
-    if (earned > 0 && _sessUser?.id) {
+    const isCreditEconomy = _sessUser?.studyMode === 'CREDIT';
+    let finalCoins = isCreditEconomy ? earnedC : 0;
+    if (isCreditEconomy && earned > 0 && _sessUser?.id) {
       const routineOn = loadRoutineData(_sessUser.id).enabled;
       const ratio = routineOn ? (1 / 6) : 0.125;
       const expectedCoins = Math.floor(earned * ratio);
@@ -2404,7 +2414,7 @@ const App: React.FC = () => {
             _mcqSubValid && state.user.subscriptionLevel === 'ULTRA' ? 'ULTRA' :
             _mcqSubValid && state.user.subscriptionLevel === 'BASIC' ? 'BASIC' : 'FREE';
         const _mcqLimit = getEffectiveDailyLimit('mcq', getLevelInfo(state.user.totalScore || 0).level, _mcqTier, state.settings);
-        if (_mcqLimit < UNLIMITED && _mcqUsed >= _mcqLimit) {
+        if (_mcqLimit < UNLIMITED && _mcqUsed >= _mcqLimit && state.user.studyMode === 'CREDIT') {
             const _mcqCreditCost = (state.settings as any).mcqOverLimitCreditCost || 5;
             setMcqLimitPopup({ used: _mcqUsed, limit: _mcqLimit, creditCost: _mcqCreditCost });
             setLoadingContentType(undefined);
@@ -2458,8 +2468,10 @@ const App: React.FC = () => {
         }
 
         if (_fsGrantFree) cost = 0;
+        const isWithoutCreditMode1 = (state.user.studyMode || 'WITHOUT_CREDIT') === 'WITHOUT_CREDIT';
+        if (isWithoutCreditMode1) cost = 0;
 
-        if (cost > 0 && state.user.role !== 'ADMIN' && !state.originalAdmin) {
+        if (cost > 0 && state.user.studyMode === 'CREDIT') {
              if (getTotalCredits(state.user) < cost) {
                  setAlertConfig({isOpen: true, message: `Insufficient Credits! You need ${cost} Credits.`});
                  return;
@@ -2558,8 +2570,10 @@ const App: React.FC = () => {
         } else if (_isTimedValid2(tempSelectedChapter.id) || _isTimedValid2(mainKey)) {
             cost = 0;
         }
+        const isWithoutCreditMode2 = (state.user.studyMode || 'WITHOUT_CREDIT') === 'WITHOUT_CREDIT';
+        if (isWithoutCreditMode2) cost = 0;
 
-         if (state.user.role !== 'ADMIN' && !state.originalAdmin && cost > 0) {
+         if (cost > 0 && state.user.studyMode === 'CREDIT') {
              if (getTotalCredits(state.user) < cost) {
                  setAlertConfig({isOpen: true, message: `Insufficient Credits! You need ${cost} Credits.`});
                  return;
@@ -2750,7 +2764,12 @@ const App: React.FC = () => {
         }
     }
 
-    if (!hasAccess) {
+    const isUserWithoutCreditOrVip3 = (state.user.studyMode || 'WITHOUT_CREDIT') !== 'CREDIT' || Boolean(state.user.isPremium || state.user.subscriptionLevel === 'BASIC' || state.user.subscriptionLevel === 'ULTRA' || state.user.subscriptionTier === 'BASIC' || state.user.subscriptionTier === 'ULTRA');
+    if (isUserWithoutCreditOrVip3) {
+        hasAccess = true;
+    }
+
+    if (!hasAccess && state.user.studyMode === 'CREDIT') {
         if (getTotalCredits(state.user) >= cost) {
             { const _td = new Date().toISOString().split('T')[0]; const _sk = `nst_credit_skip_${state.user!.id}_${_td}`; if (!localStorage.getItem(_sk) && !forcePay) {
                  setCreditModal({

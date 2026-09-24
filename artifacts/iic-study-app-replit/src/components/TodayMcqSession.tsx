@@ -262,14 +262,17 @@ export const TodayMcqSession: React.FC<Props> = ({ user, topics, onClose, onComp
                 const bonus = getMcqStreakBonus(newStreak);
                 const bonusPts = bonus > 0 ? tryEarnScore(user.id, bonus, _tier, _subValid, 0, `REVISION_MCQ_STREAK_${newStreak}`) : 0;
                 const totalPts = pts + bonusPts;
-                // Credits = ⅙ (routine on) ya ⅛ (routine off) of pts earned
+                // Credits = ⅙ (routine on) ya ⅛ (routine off) of pts earned (Only if Credit Economy is ON)
+                const isCreditEconomy = user.studyMode === 'CREDIT';
                 const _routineOn = loadRoutineData(user.id).enabled;
                 const _creditRatio = _routineOn ? (1 / 6) : (1 / 8);
-                const _creditsEarned = totalPts > 0 ? Math.max(1, Math.floor(totalPts * _creditRatio)) : 0;
+                const _creditsEarned = (isCreditEconomy && totalPts > 0) ? Math.max(1, Math.floor(totalPts * _creditRatio)) : 0;
                 if (totalPts > 0) {
                     const _u = userRef.current;
                     if (_u && onUpdateUser) {
-                        deferStudyCoins(_u.id, _creditsEarned);
+                        if (_creditsEarned > 0) {
+                            deferStudyCoins(_u.id, _creditsEarned);
+                        }
                         const updated = {
                             ..._u,
                             totalScore: (_u.totalScore || 0) + totalPts,
@@ -279,7 +282,7 @@ export const TodayMcqSession: React.FC<Props> = ({ user, topics, onClose, onComp
                         // Home-sync key update — yahi pts ab credit sync se skip honge
                         try { localStorage.setItem(`nst_credit_sync_score_${_u.id}`, String((_u.totalScore || 0) + totalPts)); } catch {}
                     }
-                    showMcqScore(totalPts, _creditsEarned);
+                    showMcqScore(totalPts, isCreditEconomy ? _creditsEarned : undefined);
                 }
             } else {
                 playSoundWrong();

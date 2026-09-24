@@ -19,6 +19,7 @@ import {
   isRoutinePageRead,
   calculatePageRequiredReadingSec,
   getPagePointsCount,
+  isPageSequenceCompleted,
 } from '../utils/routineAutoTrack';
 import { isSequentialReadingEnforced } from '../utils/readingRules';
 import {
@@ -120,7 +121,7 @@ export const SyllabusPageCard: React.FC<SyllabusPageCardProps> = ({
   const isPageLockedBySequence = Boolean(
     isSequentialReadingEnforced(user, settings) &&
     pageIndex > 0 &&
-    !isRoutinePageRead(lessonId, pageIndex - 1)
+    !isPageSequenceCompleted(lessonId, pageIndex - 1)
   );
 
   // ── 2. Reading Score % ──
@@ -175,8 +176,9 @@ export const SyllabusPageCard: React.FC<SyllabusPageCardProps> = ({
   const wrongCount = latestMcq ? Math.max(0, latestMcq.total - latestMcq.correct) : 0;
 
   // ── 4. Free vs Premium MCQ Gate ──
-  // Free users cannot open MCQ until required reading time is completed.
-  const isMcqLocked = isPageLockedBySequence || (!isAdmin && !isPremiumUser && !isReadGoalMet);
+  // Free users in Without Credit mode cannot open MCQ until required reading time is completed.
+  // In Credit Economy Mode, pages & MCQs are unlocked (spending credits as needed).
+  const isMcqLocked = isPageLockedBySequence || (!isAdmin && !isPremiumUser && user?.studyMode !== 'CREDIT' && !isReadGoalMet);
 
   // ── 5. Consolidated Page Mastery % ──
   // If MCQ exists: (Reading% + Best MCQ%) / 2

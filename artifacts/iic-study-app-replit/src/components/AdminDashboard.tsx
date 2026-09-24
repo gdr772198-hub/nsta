@@ -43,6 +43,7 @@ import { logAdminAction } from '../utils/adminAudit';
 import { ALL_FEATURES } from '../utils/featureRegistry';
 import { HOME_SECTION_REGISTRY } from '../utils/homeSections';
 import { SPLASH_FONTS, getSplashFontById, ensureGoogleFontLoaded } from '../utils/splashFonts';
+import { getVipPlusDiamondsPerDay, getVipPlusBasePrice, getVipPlusOriginalPrice } from '../utils/vipPlusUtils';
 import { safeSaveUsersCache } from '../utils/safeUtils';
 import { NstaFeatureManager } from './admin/NstaFeatureManager';
 import { ReferralPrizesManager } from './admin/ReferralPrizesManager';
@@ -5145,6 +5146,157 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                       </button>
                   </div>
 
+                  {/* STORE TABS & SECTIONS VISIBILITY CONTROLS (NEW) */}
+                  <div className="mb-6 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                      <div className="flex items-center justify-between mb-2">
+                          <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                              <EyeOff size={18} className="text-indigo-600" /> Store Tabs & Sections Visibility (Hide / Show)
+                          </h4>
+                          <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200">
+                              Student App Control
+                          </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mb-4">
+                          Admin yahan se Student app ke Store mein kisi bhi tab ya section (Credits, Diamonds, Subscriptions/VIP, Passes, Exchange) ko chupa (hide) ya dikha sakte hain.
+                      </p>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {/* Hide VIP Subscriptions Store */}
+                          <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-3 shadow-sm">
+                              <div>
+                                  <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800">
+                                      <span>👑</span> Hide VIP Subscriptions Tab
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 mt-0.5">VIP Plans & Compare tab hide ho jayega</p>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                                  <input
+                                      type="checkbox"
+                                      checked={localSettings.hideSubscriptionsStore || false}
+                                      onChange={e => setLocalSettings({...localSettings, hideSubscriptionsStore: e.target.checked})}
+                                      className="sr-only peer"
+                                  />
+                                  <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-red-500"></div>
+                              </label>
+                          </div>
+
+                          {/* Credits Store Tab (Default OFF, Admin can turn ON/OFF) */}
+                          <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-3 shadow-sm">
+                              <div>
+                                  <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800">
+                                      <span>🪙</span> Credits Store Tab (Packages & Buy)
+                                      <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${localSettings.showCreditsStore === true ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                                          {localSettings.showCreditsStore === true ? 'ON' : 'OFF (Default)'}
+                                      </span>
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 mt-0.5">Default me OFF rehta hai. Jab ON karenge tabhi Store me Credits tab & packs dikhenge.</p>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                                  <input
+                                      type="checkbox"
+                                      checked={localSettings.showCreditsStore === true}
+                                      onChange={e => {
+                                          const isChecked = e.target.checked;
+                                          setLocalSettings({
+                                              ...localSettings,
+                                              showCreditsStore: isChecked,
+                                              hideCreditsStore: !isChecked
+                                          });
+                                      }}
+                                      className="sr-only peer"
+                                  />
+                                  <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                              </label>
+                          </div>
+
+                          {/* Diamonds Store Tab (Default OFF, Admin can turn ON/OFF) */}
+                          <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-3 shadow-sm">
+                              <div>
+                                  <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800">
+                                      <span>💎</span> Diamonds Store Tab (Packages & Buy)
+                                      <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${localSettings.showDiamondsStore === true ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                                          {localSettings.showDiamondsStore === true ? 'ON' : 'OFF (Default)'}
+                                      </span>
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 mt-0.5">Default me OFF rehta hai. Jab ON karenge tabhi Store me Diamonds tab & packs dikhenge.</p>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                                  <input
+                                      type="checkbox"
+                                      checked={localSettings.showDiamondsStore === true}
+                                      onChange={e => {
+                                          const isChecked = e.target.checked;
+                                          setLocalSettings({
+                                              ...localSettings,
+                                              showDiamondsStore: isChecked,
+                                              hideDiamondsStore: !isChecked
+                                          });
+                                      }}
+                                      className="sr-only peer"
+                                  />
+                                  <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                              </label>
+                          </div>
+
+                          {/* Hide Daily Passes */}
+                          <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-3 shadow-sm">
+                              <div>
+                                  <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800">
+                                      <span>⚡</span> Hide Daily Passes
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 mt-0.5">Daily Credit Pass & Diamond Subscription hide honge</p>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                                  <input
+                                      type="checkbox"
+                                      checked={localSettings.hidePassesStore || false}
+                                      onChange={e => setLocalSettings({...localSettings, hidePassesStore: e.target.checked})}
+                                      className="sr-only peer"
+                                  />
+                                  <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-red-500"></div>
+                              </label>
+                          </div>
+
+                          {/* Hide Exchange Tab */}
+                          <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-3 shadow-sm">
+                              <div>
+                                  <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800">
+                                      <span>🔄</span> Hide Exchange Tab
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 mt-0.5">Coins se Diamonds exchange tab hide karein</p>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                                  <input
+                                      type="checkbox"
+                                      checked={localSettings.hideExchangeStore || false}
+                                      onChange={e => setLocalSettings({...localSettings, hideExchangeStore: e.target.checked})}
+                                      className="sr-only peer"
+                                  />
+                                  <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-red-500"></div>
+                              </label>
+                          </div>
+
+                          {/* Hide VIP Subscriptions Tab */}
+                          <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-3 shadow-sm">
+                              <div>
+                                  <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800">
+                                      <span>👑</span> Hide VIP Subscriptions Tab
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 mt-0.5">VIP Plans / VIP+ Plans tab ko hide karein</p>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                                  <input
+                                      type="checkbox"
+                                      checked={localSettings.hideSubscriptionsStore || false}
+                                      onChange={e => setLocalSettings({...localSettings, hideSubscriptionsStore: e.target.checked})}
+                                      className="sr-only peer"
+                                  />
+                                  <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-red-500"></div>
+                              </label>
+                          </div>
+                      </div>
+                  </div>
+
                   {/* STORE EVENTS & POPUPS */}
                   <div className="mb-8 bg-slate-50 p-4 rounded-xl border border-slate-200">
                       <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Zap size={18} className="text-yellow-500" /> Advanced Store Events & Logic</h4>
@@ -5516,6 +5668,103 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                               <div className="mt-2">
                                                   <label className="text-[9px] font-bold text-amber-700 block">🪙 Max Credit Price (CR)</label>
                                                   <input type="number" placeholder="Default duration price use hogi" value={plan.creditPriceUltra ?? ''} onChange={e => updatePlan('creditPriceUltra', e.target.value === '' ? undefined : Number(e.target.value))} className="w-full p-1.5 border border-amber-300 rounded text-xs font-bold text-amber-900 bg-amber-50/70" />
+                                              </div>
+                                          </div>
+                                      </div>
+
+                                      {/* VIP+ TIERS (PRO+ & MAX+) CONFIG (NEW) */}
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3 pt-3 border-t border-slate-200">
+                                          {/* PRO+ (VIP+) TIER */}
+                                          <div className="bg-gradient-to-br from-cyan-50/80 to-blue-50/70 p-3 rounded-xl border border-cyan-200">
+                                              <div className="flex items-center justify-between mb-2">
+                                                  <h5 className="text-xs font-black text-cyan-900 flex items-center gap-1.5">
+                                                      <span>⭐💎</span> PRO+ (VIP+) TIER
+                                                  </h5>
+                                                  <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-cyan-100 text-cyan-800 border border-cyan-300">
+                                                      1.5x Pro
+                                                  </span>
+                                              </div>
+                                              <div className="flex gap-2">
+                                                  <div className="flex-1">
+                                                      <label className="text-[9px] font-bold text-slate-600 block">Dummy Price (₹)</label>
+                                                      <input
+                                                          type="number"
+                                                          placeholder={String(Math.round((plan.basicOriginalPrice || 199) * 1.5))}
+                                                          value={plan.proPlusOriginalPrice ?? ''}
+                                                          onChange={e => updatePlan('proPlusOriginalPrice', e.target.value === '' ? undefined : Number(e.target.value))}
+                                                          className="w-full p-1.5 border rounded text-xs line-through text-slate-500 bg-white"
+                                                      />
+                                                  </div>
+                                                  <div className="flex-1">
+                                                      <label className="text-[9px] font-bold text-cyan-800 block">Selling Price (₹)</label>
+                                                      <input
+                                                          type="number"
+                                                          placeholder={String(Math.round((plan.basicPrice || 99) * 1.5))}
+                                                          value={plan.proPlusPrice ?? ''}
+                                                          onChange={e => updatePlan('proPlusPrice', e.target.value === '' ? undefined : Number(e.target.value))}
+                                                          className="w-full p-1.5 border border-cyan-300 rounded text-xs font-bold text-cyan-800 bg-white"
+                                                      />
+                                                  </div>
+                                              </div>
+                                              <div className="mt-2">
+                                                  <label className="text-[9px] font-bold text-cyan-900 block flex items-center justify-between">
+                                                      <span>💎 Daily Diamonds/Day</span>
+                                                      <span className="text-[8px] font-normal text-slate-500">(W:10, M:25, 3M:40, Y:60)</span>
+                                                  </label>
+                                                  <input
+                                                      type="number"
+                                                      placeholder={String(getVipPlusDiamondsPerDay(plan, 'PRO_PLUS'))}
+                                                      value={plan.proPlusDailyDiamonds ?? ''}
+                                                      onChange={e => updatePlan('proPlusDailyDiamonds', e.target.value === '' ? undefined : Number(e.target.value))}
+                                                      className="w-full p-1.5 border border-cyan-300 rounded text-xs font-bold text-cyan-900 bg-white"
+                                                  />
+                                              </div>
+                                          </div>
+
+                                          {/* MAX+ (VIP+) TIER */}
+                                          <div className="bg-gradient-to-br from-pink-50/80 to-purple-50/70 p-3 rounded-xl border border-pink-200">
+                                              <div className="flex items-center justify-between mb-2">
+                                                  <h5 className="text-xs font-black text-purple-900 flex items-center gap-1.5">
+                                                      <span>👑💎</span> MAX+ (VIP+) TIER
+                                                  </h5>
+                                                  <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-pink-100 text-pink-800 border border-pink-300">
+                                                      1.5x Max
+                                                  </span>
+                                              </div>
+                                              <div className="flex gap-2">
+                                                  <div className="flex-1">
+                                                      <label className="text-[9px] font-bold text-slate-600 block">Dummy Price (₹)</label>
+                                                      <input
+                                                          type="number"
+                                                          placeholder={String(Math.round((plan.ultraOriginalPrice || 299) * 1.5))}
+                                                          value={plan.maxPlusOriginalPrice ?? ''}
+                                                          onChange={e => updatePlan('maxPlusOriginalPrice', e.target.value === '' ? undefined : Number(e.target.value))}
+                                                          className="w-full p-1.5 border rounded text-xs line-through text-slate-500 bg-white"
+                                                      />
+                                                  </div>
+                                                  <div className="flex-1">
+                                                      <label className="text-[9px] font-bold text-purple-800 block">Selling Price (₹)</label>
+                                                      <input
+                                                          type="number"
+                                                          placeholder={String(Math.round((plan.ultraPrice || 149) * 1.5))}
+                                                          value={plan.maxPlusPrice ?? ''}
+                                                          onChange={e => updatePlan('maxPlusPrice', e.target.value === '' ? undefined : Number(e.target.value))}
+                                                          className="w-full p-1.5 border border-purple-300 rounded text-xs font-bold text-purple-800 bg-white"
+                                                      />
+                                                  </div>
+                                              </div>
+                                              <div className="mt-2">
+                                                  <label className="text-[9px] font-bold text-purple-900 block flex items-center justify-between">
+                                                      <span>💎 Daily Diamonds/Day</span>
+                                                      <span className="text-[8px] font-normal text-slate-500">(W:35, M:50, 3M:70, Y:100)</span>
+                                                  </label>
+                                                  <input
+                                                      type="number"
+                                                      placeholder={String(getVipPlusDiamondsPerDay(plan, 'MAX_PLUS'))}
+                                                      value={plan.maxPlusDailyDiamonds ?? ''}
+                                                      onChange={e => updatePlan('maxPlusDailyDiamonds', e.target.value === '' ? undefined : Number(e.target.value))}
+                                                      className="w-full p-1.5 border border-purple-300 rounded text-xs font-bold text-purple-900 bg-white"
+                                                  />
                                               </div>
                                           </div>
                                       </div>
@@ -7716,8 +7965,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           className={`flex flex-col items-center gap-1 py-2.5 px-3 rounded-xl border-2 text-xs font-black transition-all ${newCustomBookType === 'single' ? 'bg-amber-600 text-white border-amber-600 shadow-md' : 'bg-white text-amber-700 border-amber-200 hover:border-amber-400'}`}
                                       >
                                           <span className="text-xl">📄</span>
-                                          <span>One Page Book</span>
-                                          <span className={`text-[9px] font-medium text-center leading-tight ${newCustomBookType === 'single' ? 'opacity-80' : 'opacity-60'}`}>Sar Sangrah jaisa — har baar ek page/notes add karo</span>
+                                          <span>One Subject Book</span>
+                                          <span className={`text-[9px] font-medium text-center leading-tight ${newCustomBookType === 'single' ? 'opacity-80' : 'opacity-60'}`}>Sar Sangrah / Speedy jaisa — Routine me nahi aayega</span>
                                       </button>
                                       <button
                                           type="button"
@@ -7725,8 +7974,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           className={`flex flex-col items-center gap-1 py-2.5 px-3 rounded-xl border-2 text-xs font-black transition-all ${newCustomBookType === 'multi' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-white text-indigo-700 border-indigo-200 hover:border-indigo-400'}`}
                                       >
                                           <span className="text-xl">📚</span>
-                                          <span>Multi Page Book</span>
-                                          <span className={`text-[9px] font-medium text-center leading-tight ${newCustomBookType === 'multi' ? 'opacity-80' : 'opacity-60'}`}>Class 6-12 jaisa — chapters + multiple pages + notes + MCQ</span>
+                                          <span>Multi Subject Book</span>
+                                          <span className={`text-[9px] font-medium text-center leading-tight ${newCustomBookType === 'multi' ? 'opacity-80' : 'opacity-60'}`}>Lucent / Class 6-12 jaisa — Routine me chalega</span>
                                       </button>
                                   </div>
                               </div>

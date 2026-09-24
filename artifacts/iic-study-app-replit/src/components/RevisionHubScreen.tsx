@@ -193,11 +193,17 @@ export const RevisionHubScreen: React.FC<Props> = ({
     return lower !== 'general' && lower !== 'सामान्य' && lower !== 'general mcq' && lower !== 'general mcqs';
   };
 
-  // Show all valid lessons that have a title (even if 0 MCQs, student sees chapter title with "Coming Soon")
+  const getValidMcqs = (lesson: any): any[] => {
+    if (!lesson || !Array.isArray(lesson.mcqs)) return [];
+    return lesson.mcqs.filter(isRealTopicMcq);
+  };
+
+  // Only include lessons that actually have Revision Hub MCQs (> 0).
+  // Chapters/lessons with 0 MCQs (Pending / Coming Soon) are completely hidden.
   const hubLessons = useMemo(
     () => allLessons.filter(l => {
       if (!l.lessonTitle || !String(l.lessonTitle).trim()) return false;
-      return true;
+      return getValidMcqs(l).length > 0;
     }),
     [allLessons],
   );
@@ -318,12 +324,13 @@ export const RevisionHubScreen: React.FC<Props> = ({
   }
 
   function handleLessonClick(lesson: any) {
-    const validMcqs = (Array.isArray(lesson.mcqs) ? lesson.mcqs : []).filter(isRealTopicMcq);
+    const validMcqs = getValidMcqs(lesson);
     if (validMcqs.length === 0) {
-      alert(`⏳ "${lesson.lessonTitle}"\n\nIs lesson mein abhi Topic-wise MCQs upload nahi huye hain (Coming Soon).\nAdmin jald hi questions add karenge. Tab tak aap iska Notes section padh sakte hain!`);
+      alert(`⏳ "${lesson.lessonTitle}"\n\nIs lesson mein abhi Topic-wise MCQs upload nahi huye hain (Coming Soon).\nAdmin jald hi questions add karenge.`);
       return;
     }
-    if (!onUpdateUser) { setMcqSelectedLesson(lesson); return; }
+    const isCreditEconomy = user?.studyMode === 'CREDIT';
+    if (!onUpdateUser || !isCreditEconomy) { setMcqSelectedLesson(lesson); return; }
     setPendingLesson(lesson);
     setCoinModal({
       title: '📖 Lesson MCQ Access',
@@ -1085,33 +1092,41 @@ export const RevisionHubScreen: React.FC<Props> = ({
             <p className="text-[11px] font-black uppercase tracking-widest text-center py-2 text-slate-400">
               Subject Choose Karein
             </p>
-            {mcqSubjects.map((sub: any) => {
-              const lessonCount = hubLessons.filter(l => l.classLevel === mcqSelectedClass && l.subject === sub.name).length;
-              return (
-                <button
-                  key={sub.id}
-                  onClick={() => setMcqSelectedSubject(sub.name)}
-                  className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl bg-white active:scale-[0.99] active:translate-y-0.5 transition-all"
-                  style={{ border: `1.5px solid #e2e8f0`, boxShadow: `0 4px 0 0 #cbd5e1, 0 4px 12px rgba(0,0,0,0.05)` }}
-                >
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ background: `${primary}18` }}>
-                    📚
-                  </div>
-                  <div className="flex-1 text-left">
-                    <p className="font-bold text-slate-800 text-sm">{sub.name}</p>
-                    <p className="text-[10px] text-slate-400">
-                      {lessonCount > 0 ? `${lessonCount} lessons` : 'Lesson abhi nahi hai'}
-                    </p>
-                  </div>
-                  {lessonCount > 0 && (
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: `${primary}18`, color: primary }}>
-                      {lessonCount}
-                    </span>
-                  )}
-                  <ChevronRight size={16} className="text-slate-400" />
-                </button>
-              );
-            })}
+            {mcqSubjects.length === 0 ? (
+              <div className="text-center py-14">
+                <div className="text-5xl mb-3">📭</div>
+                <p className="text-slate-700 font-bold">Is class mein abhi koi Revision MCQ available nahi hai</p>
+                <p className="text-slate-400 text-sm mt-1">Admin jald hi questions add karenge</p>
+              </div>
+            ) : (
+              mcqSubjects.map((sub: any) => {
+                const lessonCount = hubLessons.filter(l => l.classLevel === mcqSelectedClass && l.subject === sub.name).length;
+                return (
+                  <button
+                    key={sub.id}
+                    onClick={() => setMcqSelectedSubject(sub.name)}
+                    className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl bg-white active:scale-[0.99] active:translate-y-0.5 transition-all"
+                    style={{ border: `1.5px solid #e2e8f0`, boxShadow: `0 4px 0 0 #cbd5e1, 0 4px 12px rgba(0,0,0,0.05)` }}
+                  >
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ background: `${primary}18` }}>
+                      📚
+                    </div>
+                    <div className="flex-1 text-left">
+                      <p className="font-bold text-slate-800 text-sm">{sub.name}</p>
+                      <p className="text-[10px] text-slate-400">
+                        {lessonCount} {lessonCount === 1 ? 'lesson' : 'lessons'}
+                      </p>
+                    </div>
+                    {lessonCount > 0 && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: `${primary}18`, color: primary }}>
+                        {lessonCount}
+                      </span>
+                    )}
+                    <ChevronRight size={16} className="text-slate-400" />
+                  </button>
+                );
+              })
+            )}
           </div>
         )}
 
@@ -1124,7 +1139,7 @@ export const RevisionHubScreen: React.FC<Props> = ({
             {subjectLessons.length === 0 ? (
               <div className="text-center py-14">
                 <div className="text-5xl mb-3">📭</div>
-                <p className="text-slate-700 font-bold">Is subject mein abhi koi lesson nahi</p>
+                <p className="text-slate-700 font-bold">Is subject mein abhi koi Revision MCQ nahi hai</p>
                 <p className="text-slate-400 text-sm mt-1">Admin jald hi MCQs add karenge</p>
               </div>
             ) : (
@@ -1140,15 +1155,7 @@ export const RevisionHubScreen: React.FC<Props> = ({
                     <p className="font-bold text-slate-800 text-sm truncate">{lesson.lessonTitle}</p>
                     <div className="flex flex-wrap gap-1 mt-0.5">
                       {(() => {
-                        const validMcqs = (Array.isArray(lesson.mcqs) ? lesson.mcqs : []).filter(isRealTopicMcq);
-                        const cnt = validMcqs.length;
-                        if (cnt === 0) {
-                          return (
-                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">
-                              ⏳ Coming Soon / 0 MCQs
-                            </span>
-                          );
-                        }
+                        const cnt = getValidMcqs(lesson).length;
                         return (
                           <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: `${primary}18`, color: primary }}>
                             {cnt} MCQs

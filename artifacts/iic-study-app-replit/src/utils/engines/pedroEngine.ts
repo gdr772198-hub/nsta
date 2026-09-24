@@ -434,12 +434,15 @@ export const PedroEngine = {
       SubscriptionEngine.isPremium(user) &&
       (user.subscriptionLevel === 'ULTRA' || user.subscriptionTier === 'ULTRA' || user.subscriptionTier === 'LIFETIME');
 
-    // 2. Check if user qualifies for Level 8 boost
-    if (isUltra || pedroBase >= 8) {
+    // 2. Ultra / Max subscribers get Pedro Level 8 till subscription!
+    if (isUltra) {
+      return 8;
+    }
+
+    if (pedroBase >= 8) {
       const active = PedroEngine.isL8OverdriveActive(user.id, pedroBase, isUltra);
       if (active) return 8;
-      if (pedroBase >= 8) return 8;
-      return Math.max(7, pedroBase);
+      return 8;
     }
 
     return Math.min(8, Math.max(1, pedroBase));

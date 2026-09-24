@@ -26,6 +26,28 @@ export const CreditConfirmationModal: React.FC<Props> = ({
 }) => {
     const [payMethod, setPayMethod] = useState<'CREDITS' | 'DIAMONDS'>(diamondCost && userCredits < cost && userDiamonds >= diamondCost ? 'DIAMONDS' : 'CREDITS');
     const [autoEnabled, setAutoEnabled] = useState(isAutoEnabledInitial);
+
+    // Without credit economy: do not show credit popup and allow usage freely
+    const isWithoutCredit = (() => {
+        try {
+            const raw = localStorage.getItem('nst_current_user');
+            if (raw) {
+                const u = JSON.parse(raw);
+                if (u?.studyMode && u.studyMode !== 'CREDIT') return true;
+                if (u?.isPremium) return true;
+                if (u?.subscriptionLevel === 'BASIC' || u?.subscriptionLevel === 'ULTRA' || u?.subscriptionLevel === 'PRO' || u?.subscriptionLevel === 'MAX') return true;
+            }
+        } catch {}
+        return false;
+    })();
+
+    React.useEffect(() => {
+        if (isWithoutCredit) {
+            onConfirm(false);
+        }
+    }, [isWithoutCredit, onConfirm]);
+
+    if (isWithoutCredit) return null;
     const canPayCredits = userCredits >= cost;
     const canPayDiamonds = (diamondCost ?? 0) > 0 ? userDiamonds >= (diamondCost ?? 0) : false;
     const isDiamondMode = payMethod === 'DIAMONDS' && !!diamondCost;

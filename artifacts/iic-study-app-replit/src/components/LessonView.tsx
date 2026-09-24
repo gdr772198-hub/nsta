@@ -355,6 +355,8 @@ export const LessonView: React.FC<Props> = ({
 
     const userLevel = getLevelFromScore(_user.totalScore || 0);
     const ratio = userLevel >= 5 ? (1 / 6) : 0.125;
+    const isCreditEconomy = _user.studyMode === 'CREDIT';
+    if (!isCreditEconomy) return;
     const coins = Math.floor(totalPts * ratio);
     if (coins <= 0) return;
 
@@ -394,9 +396,10 @@ export const LessonView: React.FC<Props> = ({
     // Update totalScore immediately — reading/MCQ pts only
     const scoreUpdated = { ..._user, totalScore: (_user.totalScore || 0) + pts };
 
-    // ── Routine credit gating: coins only on first visit ─────────────────────
-    // If isFirstTimeRef is false (repeat visit), skip coin accumulation — pts only.
-    if (isFirstTimeRef.current) {
+    // ── Routine credit gating: coins only on first visit AND Credit Economy is ON ─────────
+    // If isFirstTimeRef is false (repeat visit) or not credit economy, skip coin accumulation — pts only.
+    const isCreditEconomy = _user.studyMode === 'CREDIT';
+    if (isFirstTimeRef.current && isCreditEconomy) {
       // Fractional coin accumulator: add this event's coin-value to running total,
       // then award only the integer part — remainder carries to the next event.
       const userLevel = getLevelFromScore(_user.totalScore || 0);
@@ -416,9 +419,11 @@ export const LessonView: React.FC<Props> = ({
     saveUserToLive(scoreUpdated);
   }, []);
 
-  // Credits earned directly (video 60s, pdf 60s, writing 60s) — deferred to session-end
+  // Credits earned directly (video 60s, pdf 60s, writing 60s) — deferred to session-end (Credit Economy only)
   const handleCreditsEarned = useCallback((credits: number, activity: string) => {
     if (credits <= 0) return;
+    const isCreditEconomy = userRef.current?.studyMode === 'CREDIT';
+    if (!isCreditEconomy) return;
 
     // Accumulate per mode for session-complete breakdown
     const act = activity?.toUpperCase() || '';
@@ -1021,6 +1026,7 @@ export const LessonView: React.FC<Props> = ({
         <CreditConfirmationModal
           title={`📖 Agla Chapter: ${nextTitle || 'Next'}`}
           cost={20}
+          user={user}
           userCredits={getTotalCredits(user)}
           onConfirm={() => {
             const updated = applyDeduction(user, 20);
@@ -1041,6 +1047,7 @@ export const LessonView: React.FC<Props> = ({
         <CreditConfirmationModal
           title={pendingModeSwitch === 'readable' ? '📖 Reading Mode (TTS)' : '✨ Premium Notes'}
           cost={20}
+          user={user}
           userCredits={getTotalCredits(user)}
           onConfirm={() => {
             const updated = applyDeduction(user, 20);
@@ -1153,13 +1160,14 @@ export const LessonView: React.FC<Props> = ({
           };
 
           const MODE_COIN_COST = 20;
+          const isWithoutCreditOrVip = (user?.studyMode || 'WITHOUT_CREDIT') !== 'CREDIT' || Boolean(user?.isPremium || user?.subscriptionLevel === 'BASIC' || user?.subscriptionLevel === 'ULTRA' || user?.subscriptionTier === 'BASIC' || user?.subscriptionTier === 'ULTRA' || isPremiumUser || user?.role === 'ADMIN' || user?.role === 'SUB_ADMIN');
 
           const applyModeSwitch = (targetMode: 'readable' | 'styled') => {
               const currentDesktop = isDesktopModeOn();
               setIsDesktopMode(currentDesktop);
               setDesktopMode(currentDesktop);
               if (targetMode === 'styled') {
-                  if (!isPremiumUser && !htmlUnlocked && user && onUpdateUser) {
+                  if (!isPremiumUser && !isWithoutCreditOrVip && !htmlUnlocked && user && onUpdateUser) {
                       const updatedUser = applyDeduction(user, HTML_UNLOCK_COST)!;
                       onUpdateUser(updatedUser);
                       saveUserToLive(updatedUser);
@@ -1174,8 +1182,8 @@ export const LessonView: React.FC<Props> = ({
 
           const handleModeToggle = (targetMode: 'readable' | 'styled') => {
               if (targetMode === notesViewMode) return;
-              // Show 20-coin deduction popup for every mode switch
-              if (!user || !onUpdateUser) {
+              // Show 20-coin deduction popup only if Credit Economy is ON and user is not VIP / Without Credit
+              if (!user || !onUpdateUser || user.studyMode !== 'CREDIT' || isWithoutCreditOrVip) {
                   applyModeSwitch(targetMode);
                   return;
               }
@@ -1525,7 +1533,8 @@ export const LessonView: React.FC<Props> = ({
                 <div className={`flex-shrink-0 border-t border-slate-200/60 bg-white px-4 py-2.5${isImmersive ? ' hidden' : ''}`}>
                   <button
                     onClick={() => {
-                      if (user && onUpdateUser) { setPendingNextChapter(true); }
+                      const isCreditEconomy = user?.studyMode === 'CREDIT';
+                      if (user && onUpdateUser && isCreditEconomy) { setPendingNextChapter(true); }
                       else { onNext(); }
                     }}
                     className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-900 border border-slate-700/60 active:scale-[0.98] transition-all group shadow-sm"

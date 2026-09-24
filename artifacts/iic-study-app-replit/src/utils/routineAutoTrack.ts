@@ -17,6 +17,9 @@ interface AutoTrackData {
   mistakes:     Record<string, number>;                                          // lessonId → wrong-answer count
   masks:        Record<string, number>;                                          // lessonId → mask-used count
   lessonRewarded: Record<string, boolean>;                                       // lessonId → 50-coin reward already given
+  pageSameRevDone?: Record<string, number>;                                      // `${lessonId}__${pageIdx}` → Revision Hub (Same Topic) timestamp
+  pageTodayRevDone?: Record<string, number>;                                     // `${lessonId}__${pageIdx}` → Revision Hub (Today Topic) timestamp
+  pageMistakeDone?: Record<string, number>;                                      // `${lessonId}__${pageIdx}` → My Mistake review timestamp
 }
 
 function load(): AutoTrackData {
@@ -35,10 +38,13 @@ function load(): AutoTrackData {
         mistakes:       parsed.mistakes       || {},
         masks:          parsed.masks          || {},
         lessonRewarded: parsed.lessonRewarded || {},
+        pageSameRevDone: parsed.pageSameRevDone || {},
+        pageTodayRevDone: parsed.pageTodayRevDone || {},
+        pageMistakeDone: parsed.pageMistakeDone || {},
       };
     }
   } catch {}
-  return { pageReads: {}, mcqDone: {}, mcqScore: {}, pageMcqDone: {}, pageMcqScore: {}, pageMcqBest: {}, timings: {}, mistakes: {}, masks: {}, lessonRewarded: {} };
+  return { pageReads: {}, mcqDone: {}, mcqScore: {}, pageMcqDone: {}, pageMcqScore: {}, pageMcqBest: {}, timings: {}, mistakes: {}, masks: {}, lessonRewarded: {}, pageSameRevDone: {}, pageTodayRevDone: {}, pageMistakeDone: {} };
 }
 
 function save(data: AutoTrackData): void {
@@ -213,6 +219,85 @@ export function getLessonCompletedPages(lessonId: string, totalPages: number): n
     if (read && mcq) count++;
   }
   return count;
+}
+
+/** Mark Revision Hub (Same Topic) completed for a specific page */
+export function markRoutineSameTopicRevDone(lessonId: string, pageIdx: number): void {
+  if (!lessonId) return;
+  const d = load();
+  const key = `${lessonId}__${pageIdx}`;
+  d.pageSameRevDone = d.pageSameRevDone || {};
+  d.pageSameRevDone[key] = Date.now();
+  save(d);
+}
+
+/** Check if Revision Hub (Same Topic) is completed for a specific page */
+export function isRoutineSameTopicRevDone(lessonId: string, pageIdx: number): boolean {
+  const d = load();
+  return !!(d.pageSameRevDone && d.pageSameRevDone[`${lessonId}__${pageIdx}`]);
+}
+
+/** Mark Revision Hub (Today Topic) completed for a specific page */
+export function markRoutineTodayTopicRevDone(lessonId: string, pageIdx: number): void {
+  if (!lessonId) return;
+  const d = load();
+  const key = `${lessonId}__${pageIdx}`;
+  d.pageTodayRevDone = d.pageTodayRevDone || {};
+  d.pageTodayRevDone[key] = Date.now();
+  save(d);
+}
+
+/** Check if Revision Hub (Today Topic) is completed for a specific page */
+export function isRoutineTodayTopicRevDone(lessonId: string, pageIdx: number): boolean {
+  const d = load();
+  return !!(d.pageTodayRevDone && d.pageTodayRevDone[`${lessonId}__${pageIdx}`]);
+}
+
+/** Mark My Mistake review completed for a specific page */
+export function markRoutineMistakeRevDone(lessonId: string, pageIdx: number): void {
+  if (!lessonId) return;
+  const d = load();
+  const key = `${lessonId}__${pageIdx}`;
+  d.pageMistakeDone = d.pageMistakeDone || {};
+  d.pageMistakeDone[key] = Date.now();
+  save(d);
+}
+
+/** Check if My Mistake review is completed for a specific page */
+export function isRoutineMistakeRevDone(lessonId: string, pageIdx: number): boolean {
+  const d = load();
+  return !!(d.pageMistakeDone && d.pageMistakeDone[`${lessonId}__${pageIdx}`]);
+}
+
+/**
+ * Returns current sequential step for a page:
+ * 1. READING
+ * 2. MCQ
+ * 3. REV_SAME (Revision Hub Same Topic)
+ * 4. REV_TODAY (Revision Hub Today Topic)
+ * 5. MISTAKE (My Mistake)
+ * -> COMPLETED (All 5 steps done, next page ready to unlock)
+ */
+export function getSequentialPageStep(
+  lessonId: string,
+  pageIdx: number,
+  hasMcq: boolean = true
+): 'READING' | 'MCQ' | 'REV_SAME' | 'REV_TODAY' | 'MISTAKE' | 'COMPLETED' {
+  if (!isRoutinePageRead(lessonId, pageIdx)) return 'READING';
+  if (hasMcq && !isRoutinePageMcqDone(lessonId, pageIdx)) return 'MCQ';
+  if (!isRoutineSameTopicRevDone(lessonId, pageIdx)) return 'REV_SAME';
+  if (!isRoutineTodayTopicRevDone(lessonId, pageIdx)) return 'REV_TODAY';
+  if (!isRoutineMistakeRevDone(lessonId, pageIdx)) return 'MISTAKE';
+  return 'COMPLETED';
+}
+
+/** Check if a page's complete 5-step sequence is finished */
+export function isPageSequenceCompleted(
+  lessonId: string,
+  pageIdx: number,
+  hasMcq: boolean = true
+): boolean {
+  return getSequentialPageStep(lessonId, pageIdx, hasMcq) === 'COMPLETED';
 }
 
 export function isMathKey(id: string): boolean {

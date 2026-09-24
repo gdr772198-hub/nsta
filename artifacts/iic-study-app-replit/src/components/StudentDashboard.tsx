@@ -73,11 +73,11 @@ import { isHomeSectionVisible } from "../utils/homeSections";
 import { checkFeatureAccess } from "../utils/permissionUtils";
 import { downloadAsMHTML, downloadAsHTML, downloadElementAsHTML } from "../utils/downloadUtils";
 import { renderMathInHtml, formatExplanationHtml } from "../utils/mathUtils";
-import { isSequentialReadingEnforced } from "../utils/readingRules";
+import { isSequentialReadingEnforced, isFirstLessonOfSubject, SEQUENTIAL_STEPS } from "../utils/readingRules";
 import { recordLogin, updateSessionDuration, getLoginHistory, formatDuration, formatLoginTime, type LoginSession } from "../utils/loginHistory";
 import { getNewContentItems, markContentItemSeen, markAllContentItemsSeen, formatContentDate, type ContentNotifItem } from "../utils/contentNotifications";
 import { clearAllRecentReads, saveRecentHomework, getRecentHomeworks, removeRecentHomework, getRecentChapters, removeRecentChapter, saveRecentLucent, getRecentLucent, removeRecentLucent, markNoteFullyRead, getFullyReadMap, markReadToday, getReadingStreak, getReadDates, getBestReadingDay, getTodayItemCount, type RecentChapterEntry, type RecentHwEntry, type RecentLucentEntry, type StreakInfo, type BestDay } from "../utils/recentReads";
-import { markRoutinePageRead, markRoutineMcqDone, isRoutinePageRead, isRoutineMcqDone, updateRoutineMcqScore, recordMistake, addPageTime, resetPageTime, calculatePageRequiredReadingSec, isLessonAutoComplete, isLessonRewarded, markLessonRewarded, markRoutinePageMcqDone, updateRoutinePageMcqScore, isRoutinePageMcqDone, getRoutinePageMcqScore, getAutoPageBoxState, getPageTime, getLessonStats, getMultiLessonStats, getProgressColor5, getProgressTicks } from "../utils/routineAutoTrack";
+import { markRoutinePageRead, markRoutineMcqDone, isRoutinePageRead, isRoutineMcqDone, updateRoutineMcqScore, recordMistake, addPageTime, resetPageTime, calculatePageRequiredReadingSec, isLessonAutoComplete, isLessonRewarded, markLessonRewarded, markRoutinePageMcqDone, updateRoutinePageMcqScore, isRoutinePageMcqDone, getRoutinePageMcqScore, getAutoPageBoxState, getPageTime, getLessonStats, getMultiLessonStats, getProgressColor5, getProgressTicks, markRoutineSameTopicRevDone, isRoutineSameTopicRevDone, markRoutineTodayTopicRevDone, isRoutineTodayTopicRevDone, markRoutineMistakeRevDone, isRoutineMistakeRevDone, getSequentialPageStep, isPageSequenceCompleted } from "../utils/routineAutoTrack";
 import { loadRoutineData, saveRoutineData, checkAndResetDaily, generateDailyTask, advanceLessonInCycle, getDiscountFactor, hasActiveDiscount, getPageReadReward, LESSON_COMPLETE_REWARD, unlockRevisionLesson, getUserSubTier, getDailyClaimAmount, getUnclaimedCoins, ensureTodayClaimEntry, claimAllPendingCoins } from "../utils/routineStorage";
 import { SubscriptionEngine } from "../utils/engines/subscriptionEngine";
 import { PedroEngine } from "../utils/engines/pedroEngine";
@@ -94,6 +94,7 @@ import { activateDiamondSub, canClaimDiamondSubToday } from "../utils/diamondUti
 import { Button } from "./ui/button";
 import { MathLessonViewer } from './MathLessonViewer';
 import { PremiumUpgradeModal } from './PremiumUpgradeModal';
+import { StudyModeRulesModal } from './StudyModeRulesModal';
 import { getActiveChallenges, saveChallenge20 } from "../services/questionBank";
 import { generateDailyChallengeQuestions, getChallengeDateKey, isDailyChallenge20 } from "../utils/challengeGenerator";
 import { searchNotesByWords, searchNotesByTitle, type NoteSearchResult } from "../utils/noteSearcher";
@@ -1293,12 +1294,21 @@ export const StudentDashboard: React.FC<Props> = ({
       }>;
     }
   ) => {
+    const isCreditMode = user.studyMode === 'CREDIT';
     const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
-    if (_isAdm) { action(); return; }
+    // If not in Credit Mode, admins bypass. In Credit Mode, coin gate popup must show!
+    if (_isAdm && !isCreditMode) { action(); return; }
+
+    // In Without Credit Mode (Free or VIP), all study content is 0 🪙 / 0 💎 free
+    const isWithoutCredit = (user.studyMode || 'WITHOUT_CREDIT') !== 'CREDIT';
+    if (isWithoutCredit) {
+      action();
+      return;
+    }
 
     const _allModesKey = pageInfo?.pageLabel ? `${pageInfo.pageLabel} (All Modes)` : '';
     const _singleModeKey = pageInfo?.pageLabel ? `${pageInfo.pageLabel} - ${reason}` : '';
-    const isPermanentlyUnlocked = !!(
+    const isPermanentlyUnlocked = !isCreditMode && !!(
       (user.unlockedContent || []).includes(reason) ||
       (_singleModeKey && (user.unlockedContent || []).includes(_singleModeKey)) ||
       (_allModesKey && (user.unlockedContent || []).includes(_allModesKey))
@@ -1332,8 +1342,11 @@ export const StudentDashboard: React.FC<Props> = ({
     action: () => void,
     onCancel?: () => void
   ) => {
+    const isCreditMode = user.studyMode === 'CREDIT';
     const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
-    if (_isAdm) { action(); return; }
+    if (_isAdm && !isCreditMode) { action(); return; }
+    const isWithoutCredit = (user.studyMode || 'WITHOUT_CREDIT') !== 'CREDIT';
+    if (isWithoutCredit) { action(); return; }
     setCoinGate({
       cost: 0,
       originalCost: 0,
@@ -1346,40 +1359,71 @@ export const StudentDashboard: React.FC<Props> = ({
     });
   };
 
+  // Study content is permanently free & unlocked for Without Credit users (Free & VIP), and 1st lesson of every subject for all users
+  const isStudyContentAlwaysUnlocked = (entry?: any) => {
+    const targetEntry = entry || lucentNoteViewer;
+    if (targetEntry && isFirstLessonOfSubject(targetEntry, settings?.lucentNotes)) return true;
+    // In Credit Economy Mode (VIP+ / Credit ON), pages require credit deduction & confirmation popup
+    if (user.studyMode === 'CREDIT') return false;
+    // In Without Credit Mode (VIP / Credit OFF), study content is 0 credits
+    return true;
+  };
+
   // Per-page / per-session unlock localStorage helpers
   const _pgReadUnlockKey   = (lid: string, pi: number) => `nst_pg_r_${user.id}_${lid}_${pi}`;
   const _pgWriteUnlockKey  = (lid: string, pi: number) => `nst_pg_w_${user.id}_${lid}_${pi}`;
   // Projector is a one-time 20 CR unlock for the current lesson/page.
   const _projectorUnlockKey = (lid: string, pi: number) => `nst_projector_${user.id}_${lid}_${pi}`;
-  const isProjectorUnlocked = (lid: string, pi: number) => { try { return localStorage.getItem(_projectorUnlockKey(lid, pi)) === '1'; } catch { return false; } };
+  const isProjectorUnlocked = (lid: string, pi: number) => {
+    if (isStudyContentAlwaysUnlocked()) return true;
+    try { return localStorage.getItem(_projectorUnlockKey(lid, pi)) === '1'; } catch { return false; }
+  };
   const markProjectorUnlocked = (lid: string, pi: number) => { try { localStorage.setItem(_projectorUnlockKey(lid, pi), '1'); } catch {} };
   const _mcqSessUnlockKey  = (lid: string)             => `nst_mcq_s_${user.id}_${lid}`;
-  const isPgReadUnlocked   = (lid: string, pi: number) => { try { return localStorage.getItem(_pgReadUnlockKey(lid, pi)) === '1'; } catch { return false; } };
+  const isPgReadUnlocked   = (lid: string, pi: number) => {
+    if (isStudyContentAlwaysUnlocked()) return true;
+    try { return localStorage.getItem(_pgReadUnlockKey(lid, pi)) === '1'; } catch { return false; }
+  };
   const markPgReadUnlocked = (lid: string, pi: number) => { try { localStorage.setItem(_pgReadUnlockKey(lid, pi), '1'); } catch {} };
-  const isPgWriteUnlocked  = (lid: string, pi: number) => { try { return localStorage.getItem(_pgWriteUnlockKey(lid, pi)) === '1'; } catch { return false; } };
+  const isPgWriteUnlocked  = (lid: string, pi: number) => {
+    if (isStudyContentAlwaysUnlocked()) return true;
+    try { return localStorage.getItem(_pgWriteUnlockKey(lid, pi)) === '1'; } catch { return false; }
+  };
   const markPgWriteUnlocked = (lid: string, pi: number) => { try { localStorage.setItem(_pgWriteUnlockKey(lid, pi), '1'); } catch {} };
-  const isMcqSessUnlocked  = (lid: string) => { try { return localStorage.getItem(_mcqSessUnlockKey(lid)) === '1'; } catch { return false; } };
+  const isMcqSessUnlocked  = (lid: string) => {
+    if (isStudyContentAlwaysUnlocked()) return true;
+    try { return localStorage.getItem(_mcqSessUnlockKey(lid)) === '1'; } catch { return false; }
+  };
   const markMcqSessUnlocked = (lid: string) => { try { localStorage.setItem(_mcqSessUnlockKey(lid), '1'); } catch {} };
 
   // Per-page per-tab unlock keys (one-time 20 coins each — Notes already handled by _pgReadUnlockKey)
   const _mcqPageUnlockKey   = (lid: string, pi: number) => `nst_mcq_p_${user.id}_${lid}_${pi}`;
   const _fcPageUnlockKey    = (lid: string, pi: number) => `nst_fc_p_${user.id}_${lid}_${pi}`;
   const _qaPageUnlockKey    = (lid: string, pi: number) => `nst_qa_p_${user.id}_${lid}_${pi}`;
-  const isMcqPageUnlocked   = (lid: string, pi: number) => { try { return localStorage.getItem(_mcqPageUnlockKey(lid, pi)) === '1'; } catch { return false; } };
+  const isMcqPageUnlocked   = (lid: string, pi: number) => {
+    if (isStudyContentAlwaysUnlocked()) return true;
+    try { return localStorage.getItem(_mcqPageUnlockKey(lid, pi)) === '1'; } catch { return false; }
+  };
   const markMcqPageUnlocked  = (lid: string, pi: number) => { try { localStorage.setItem(_mcqPageUnlockKey(lid, pi), '1'); } catch {} };
-  const isFcPageUnlocked    = (lid: string, pi: number) => { try { return localStorage.getItem(_fcPageUnlockKey(lid, pi)) === '1'; } catch { return false; } };
+  const isFcPageUnlocked    = (lid: string, pi: number) => {
+    if (isStudyContentAlwaysUnlocked()) return true;
+    try { return localStorage.getItem(_fcPageUnlockKey(lid, pi)) === '1'; } catch { return false; }
+  };
   const markFcPageUnlocked   = (lid: string, pi: number) => { try { localStorage.setItem(_fcPageUnlockKey(lid, pi), '1'); } catch {} };
   const _qaLessonUnlockKey  = (lid: string) => `nst_qa_l_${user.id}_${lid}`;
   // Q&A is per-LESSON unlock — ek baar kisi bhi page/tab se pay karo, poore lesson ke liye unlock.
   // Old per-page keys bhi check karta hai backward compatibility ke liye.
-  const isQaPageUnlocked    = (lid: string, pi: number) => { try { return localStorage.getItem(_qaLessonUnlockKey(lid)) === '1' || localStorage.getItem(_qaPageUnlockKey(lid, pi)) === '1'; } catch { return false; } };
+  const isQaPageUnlocked    = (lid: string, pi: number) => {
+    if (isStudyContentAlwaysUnlocked()) return true;
+    try { return localStorage.getItem(_qaLessonUnlockKey(lid)) === '1' || localStorage.getItem(_qaPageUnlockKey(lid, pi)) === '1'; } catch { return false; }
+  };
   const markQaPageUnlocked   = (lid: string, _pi: number) => { try { localStorage.setItem(_qaLessonUnlockKey(lid), '1'); } catch {} };
 
   // ── WRITE MODE GATE: now uses coin gate popup (20 coins per page, once) ──
   const _wmAutoSkipKey = `nst_wm_autoskip_${user.id}`;
   const handleWriteModeGate = (action: () => void, pgInfo?: Parameters<typeof showCoinGate>[5], overrideLid?: string, overridePi?: number) => {
     const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
-    if (_isAdm) { action(); return; }
+    if (_isAdm || isStudyContentAlwaysUnlocked()) { action(); return; }
     // overrideLid/overridePi: competition player passes activeHw.id so unlock persists per-lesson.
     // Without override, falls back to Lucent page (lucentNoteViewer.id).
     const _lid = overrideLid ?? (lucentNoteViewer as any)?.id ?? '';
@@ -1391,8 +1435,7 @@ export const StudentDashboard: React.FC<Props> = ({
     }, undefined, undefined, pgInfo);
   };
 
-  // Projector costs 20 CR once and has an independent unlock from every other mode.
-  // Reading, Writing, MCQ, and Projector are NEVER free with any subscription.
+  // Projector mode: Free in Without Credit mode and for VIP users.
   const handleProjectorModeGate = (
     lid: string,
     pi: number,
@@ -1400,7 +1443,7 @@ export const StudentDashboard: React.FC<Props> = ({
     pgInfo?: Parameters<typeof showCoinGate>[5],
   ) => {
     const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
-    if (_isAdm || isProjectorUnlocked(lid, pi)) { action(); return; }
+    if (_isAdm || isStudyContentAlwaysUnlocked() || isProjectorUnlocked(lid, pi)) { action(); return; }
     showCoinGate(20, 'Projector Mode', () => {
       if (lid) markProjectorUnlocked(lid, pi);
       action();
@@ -2981,7 +3024,7 @@ export const StudentDashboard: React.FC<Props> = ({
   const [showContentNewSheet, setShowContentNewSheet] = useState(false);
   const [showCreditsMini, setShowCreditsMini] = useState(false);
   const [storeSubTab, setStoreSubTab] = useState<'STORE' | 'CREDITS'>('STORE');
-  const [storeInitialTier, setStoreInitialTier] = useState<'FREE' | 'SUBSCRIPTION' | 'CREDITS' | 'DIAMONDS' | 'HISTORY' | undefined>(undefined);
+  const [storeInitialTier, setStoreInitialTier] = useState<'FREE' | 'SUBSCRIPTION' | 'VIP_PLUS' | 'CREDITS' | 'DIAMONDS' | 'HISTORY' | undefined>(undefined);
   const [inboxTab, setInboxTab] = useState<'MESSAGES' | 'UPDATES' | 'REWARDS' | 'HISTORY' | 'RULES'>('UPDATES');
   const [claimingDailyPass, setClaimingDailyPass] = useState(false);
   const [showSubDetailsModal, setShowSubDetailsModal] = useState(false);
@@ -3111,7 +3154,31 @@ export const StudentDashboard: React.FC<Props> = ({
   const [splashPurchaseDuration, setSplashPurchaseDuration] = useState<1 | 7 | 30>(7);
   const [showLevelChooser, setShowLevelChooser] = useState(false);
   const [showProfileSettings, setShowProfileSettings] = useState(false);
+  const [showStudyModeModal, setShowStudyModeModal] = useState(false);
   const [isUpdatingName, setIsUpdatingName] = useState(false);
+
+  const handleSelectStudyMode = async (mode: 'WITHOUT_CREDIT' | 'CREDIT') => {
+    try {
+      const uRef = doc(db, 'users', user.id);
+      await updateDoc(uRef, { studyMode: mode });
+      const updated = { ...user, studyMode: mode };
+      handleUserUpdate(updated);
+      try {
+        const curRd = loadRoutineData(user.id);
+        saveRoutineData(user.id, { ...curRd, studyMode: mode });
+      } catch (_) {}
+      setShowStudyModeModal(false);
+      showAlert(
+        mode === 'WITHOUT_CREDIT'
+          ? '🎓 Without Credit Mode Set! 0 Credits, Step-by-Step Sequential Reading & MCQ Unlock.'
+          : '💰 Credit Mode Set! Credits Spend & Earn System Active.',
+        'SUCCESS',
+        'Study Mode Updated'
+      );
+    } catch {
+      showAlert('❌ Study Mode update nahi ho paya. Dobara koshish karein.', 'ERROR');
+    }
+  };
 
   const handleChangeName = async (currency: 'CREDITS' | 'DIAMONDS') => {
     const trimmed = newNameInput.trim();
@@ -4096,7 +4163,7 @@ export const StudentDashboard: React.FC<Props> = ({
   useEffect(() => {
     const unsub = subscribeMcqLessons((lessons) => {
       setCompMcqPracticeLessons(
-        lessons.filter((l: any) => l.classLevel === 'COMPETITION' && l.subject === 'MCQ_PRACTICE')
+        lessons.filter((l: any) => l.classLevel === 'COMPETITION' && l.subject === 'MCQ_PRACTICE' && Array.isArray(l.mcqs) && l.mcqs.length > 0)
       );
     });
     return unsub;
@@ -6120,6 +6187,9 @@ export const StudentDashboard: React.FC<Props> = ({
 
   // Returns true if a Lucent entry is locked AND this user doesn't have valid access.
   const _lucentIsLocked = (entry: any): boolean => {
+    if (!entry) return false;
+    // Rule: Har user ko har subject ka 1st lesson 100% free milega
+    if (isFirstLessonOfSubject(entry, settings?.lucentNotes)) return false;
     if (!entry?.locked) return false;
     const timedUnlocks = (user as any).timedUnlocks || [];
     const hasTimedAccess = timedUnlocks.some((u: any) => u.contentId === entry.id && new Date(u.expiresAt) > new Date());
@@ -6190,9 +6260,21 @@ export const StudentDashboard: React.FC<Props> = ({
 
     // Check sequential page reading rule: Free users always ON, Basic/Ultra configurable
     if (isSequentialReadingEnforced(user, settings) && pageIdx > 0) {
-      const prevRead = isRoutinePageRead(entry.id, pageIdx - 1);
-      if (!prevRead) {
-        showAlert(`🔒 Page ${pageIdx} jab tak complete read na hoga, Page ${pageIdx + 1} lock rahega! Pehle Page ${pageIdx} complete read karein.`, 'INFO', 'Page Locked');
+      const prevHasMcq = ((entry.pages || [])[pageIdx - 1]?.mcqs?.length ?? 0) > 0;
+      const prevStep = getSequentialPageStep(entry.id, pageIdx - 1, prevHasMcq);
+      if (prevStep !== 'COMPLETED') {
+        const stepNames: Record<string, string> = {
+          READING: '1. Reading Mode / Notes poora padhein',
+          MCQ: '2. Is page ka MCQ Practice solve karein',
+          REV_SAME: '3. Revision Hub me Same Topic Revise karein',
+          REV_TODAY: '4. Revision Hub me Today Topic Revise karein',
+          MISTAKE: '5. My Mistake me apni mistakes review karein',
+        };
+        showAlert(
+          `🔒 Sequential Page Reading Rule:\nPage ${pageIdx} jab tak poora complete nahi hota, agla Page ${pageIdx + 1} lock rahega!\nPehle Step: ${stepNames[prevStep] || prevStep}\n\nFlow: 1. Reading ➔ 2. MCQ ➔ 3. Rev Same ➔ 4. Rev Today ➔ 5. My Mistake`,
+          'INFO',
+          'Page Locked'
+        );
         return;
       }
     }
@@ -6202,14 +6284,14 @@ export const StudentDashboard: React.FC<Props> = ({
       setLucentPageIndex(pageIdx);
     };
 
-    // Sample lesson — permanently free for everyone, no daily limit
-    if (entry.isSampleLesson) {
+    // Sample lesson or 1st lesson of subject — permanently free for everyone, no daily limit
+    if (entry.isSampleLesson || isFirstLessonOfSubject(entry, settings?.lucentNotes)) {
       doOpen();
       return;
     }
 
-    // Admins bypass coin gates
-    if (isAdmin) {
+    // Admins bypass coin gates only when NOT in Credit Mode
+    if (isAdmin && user.studyMode !== 'CREDIT') {
       doOpen();
       return;
     }
@@ -6264,6 +6346,8 @@ export const StudentDashboard: React.FC<Props> = ({
       }
     } catch {}
     // ────────────────────────────────────────────────────────────────────────────
+    // Study content is completely free for Without Credit mode and VIP users
+    if (isStudyContentAlwaysUnlocked()) { doOpen(); return; }
     // ── Coin gate: 20 coins per page (reading, writing, mcq), once each ──
     const _intendedTab  = lucentInitialTabRef.current?.tab;
     const _intendedVm   = lucentInitialTabRef.current?.viewMode;
@@ -6467,7 +6551,7 @@ export const StudentDashboard: React.FC<Props> = ({
     doOpen: () => void
   ) => {
     const _lid = hw.id || '';
-    if (_isAdminUser) { doOpen(); return; }
+    if ((_isAdminUser && user.studyMode !== 'CREDIT') || isStudyContentAlwaysUnlocked()) { doOpen(); return; }
     const _hasMcq = (hw.parsedMcqs || []).length > 0;
     const _pgInfo = {
       pageLabel: hw.title || 'Competition Lesson',
@@ -9912,11 +9996,11 @@ export const StudentDashboard: React.FC<Props> = ({
               const _isWriteActive = effectiveMode === 'notes' && hwNotesViewMode === 'html';
               const _hwSave = (tab: string, vm?: string) => { try { if (activeHw?.id) { localStorage.setItem(`iic_hw_tab_${activeHw.id}`, tab); if (vm) localStorage.setItem(`iic_hw_tabvm_${activeHw.id}`, vm); } } catch {} };
               // Tier access flags — same as Lucent
-              const _qaLocked        = !_isAdminUser && !_isBasicUser && !_isUltraUser;
-              const _fcLocked        = !_isAdminUser && !_isUltraUser;
-              const _pdfLocked       = !_isAdminUser && !_isBasicUser && !_isUltraUser;
-              const _vidLocked       = !_isAdminUser && !_isUltraUser;
-              const _audLocked       = !_isAdminUser && !_isUltraUser;
+              const _qaLocked        = !_isAdminUser && !_isBasicUser && !_isUltraUser && !isStudyContentAlwaysUnlocked();
+              const _fcLocked        = !_isAdminUser && !_isUltraUser && !isStudyContentAlwaysUnlocked();
+              const _pdfLocked       = !_isAdminUser && !_isBasicUser && !_isUltraUser && !isStudyContentAlwaysUnlocked();
+              const _vidLocked       = !_isAdminUser && !_isUltraUser && !isStudyContentAlwaysUnlocked();
+              const _audLocked       = !_isAdminUser && !_isUltraUser && !isStudyContentAlwaysUnlocked();
               const _canProjector    = true; // Sab users ko available
               const _hwMcqs = (activeHw.parsedMcqs || []) as any[];
 
@@ -9934,11 +10018,11 @@ export const StudentDashboard: React.FC<Props> = ({
                     { mode: 'PROJECTOR', label: 'Premium MCQ',   emoji: '🎯', cost: 20,
                       isUnlocked: isProjectorUnlocked(activeHw.id, 0), isAccessible: true,                       requiredTier: 'free'  as const, unlockAction: () => markProjectorUnlocked(activeHw.id, 0) },
                     { mode: 'FLASHCARD', label: 'Flashcard',     emoji: '🃏', cost: 20,
-                      isUnlocked: isFcPageUnlocked(activeHw.id, 0),  isAccessible: _isUltraUser,                 requiredTier: 'ultra' as const, unlockAction: () => markFcPageUnlocked(activeHw.id, 0) },
+                      isUnlocked: isFcPageUnlocked(activeHw.id, 0),  isAccessible: _isUltraUser || isStudyContentAlwaysUnlocked(), requiredTier: 'ultra' as const, unlockAction: () => markFcPageUnlocked(activeHw.id, 0) },
                   ] : []),
-                  ...(hasPdf   ? [{ mode: 'PDF',   label: 'PDF',   emoji: '📄', cost: 0, isUnlocked: true, isAccessible: _isBasicUser || _isUltraUser, requiredTier: 'basic' as const, unlockAction: undefined }] : []),
-                  ...(hasVideo ? [{ mode: 'VIDEO', label: 'Video', emoji: '🎬', cost: 0, isUnlocked: true, isAccessible: _isUltraUser,                 requiredTier: 'ultra' as const, unlockAction: undefined }] : []),
-                  ...(hasAudio ? [{ mode: 'AUDIO', label: 'Audio', emoji: '🎵', cost: 0, isUnlocked: true, isAccessible: _isUltraUser,                 requiredTier: 'ultra' as const, unlockAction: undefined }] : []),
+                  ...(hasPdf   ? [{ mode: 'PDF',   label: 'PDF',   emoji: '📄', cost: 0, isUnlocked: true, isAccessible: _isBasicUser || _isUltraUser || isStudyContentAlwaysUnlocked(), requiredTier: 'basic' as const, unlockAction: undefined }] : []),
+                  ...(hasVideo ? [{ mode: 'VIDEO', label: 'Video', emoji: '🎬', cost: 0, isUnlocked: true, isAccessible: _isUltraUser || isStudyContentAlwaysUnlocked(),                 requiredTier: 'ultra' as const, unlockAction: undefined }] : []),
+                  ...(hasAudio ? [{ mode: 'AUDIO', label: 'Audio', emoji: '🎵', cost: 0, isUnlocked: true, isAccessible: _isUltraUser || isStudyContentAlwaysUnlocked(),                 requiredTier: 'ultra' as const, unlockAction: undefined }] : []),
                 ],
               };
 
@@ -9948,7 +10032,7 @@ export const StudentDashboard: React.FC<Props> = ({
                   stopSpeech();
                   setHwViewMode(tab); _hwSave(tab);
                 };
-                if (_isAdminUser) { _doSwitch(); return; }
+                if ((_isAdminUser && user.studyMode !== 'CREDIT') || isStudyContentAlwaysUnlocked()) { _doSwitch(); return; }
                 if (tab === 'mcq') {
                   if (isMcqPageUnlocked(activeHw.id, 0)) { _doSwitch(); return; }
                   showCoinGate(20, 'MCQ Practice', () => { markMcqPageUnlocked(activeHw.id, 0); _doSwitch(); }, undefined, undefined, _hwPgInfo);
@@ -9964,7 +10048,7 @@ export const StudentDashboard: React.FC<Props> = ({
                     {/* Free+ — Reading (coin gate: 20 coins, once per lesson) */}
                     <button data-tab-active={String(_isReadActive)} onClick={() => {
                       const _doRead = () => { stopSpeech(); setHwViewMode('notes'); setHwNotesViewMode('chunk'); _hwSave('notes', 'chunk'); };
-                      if (_isAdminUser || isPgReadUnlocked(activeHw.id, 0)) { _doRead(); return; }
+                      if ((_isAdminUser && user.studyMode !== 'CREDIT') || isStudyContentAlwaysUnlocked() || isPgReadUnlocked(activeHw.id, 0)) { _doRead(); return; }
                       showCoinGate(20, 'Reading Mode', () => { markPgReadUnlocked(activeHw.id, 0); _doRead(); }, undefined, undefined, _hwPgInfo);
                     }} style={_hwTabStyle} className={_hwTabCls(_isReadActive, 'bg-indigo-600', 'text-white')}>
                       Reading Mode
@@ -13869,7 +13953,7 @@ export const StudentDashboard: React.FC<Props> = ({
               <button
                 id="profile-diamonds-btn"
                 onClick={() => {
-                  setStoreInitialTier('DIAMONDS');
+                  setStoreInitialTier(settings?.showDiamondsStore === true ? 'DIAMONDS' : 'SUBSCRIPTION');
                   onTabChange("STORE");
                 }}
                 className="rounded-xl py-1.5 px-1 flex flex-col items-center justify-center active:scale-95 transition-transform cursor-pointer w-full text-center border"
@@ -13894,7 +13978,7 @@ export const StudentDashboard: React.FC<Props> = ({
               <button
                 id="profile-credits-btn"
                 onClick={() => {
-                  setStoreInitialTier('CREDITS');
+                  setStoreInitialTier(settings?.showCreditsStore === true ? 'CREDITS' : 'SUBSCRIPTION');
                   onTabChange("STORE");
                 }}
                 className="rounded-xl py-1.5 px-1 flex flex-col items-center justify-center active:scale-95 transition-transform cursor-pointer w-full text-center border"
@@ -14467,6 +14551,134 @@ export const StudentDashboard: React.FC<Props> = ({
               </div>
             </button>
 
+            {/* ── Padhai Ka Tareeqa (Study Mode Rules) Row ── */}
+            {(() => {
+              const currentMode = user.studyMode || 'WITHOUT_CREDIT';
+              const isCredit = currentMode === 'CREDIT';
+              return (
+                <div style={{ borderBottom: _pSep }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowStudyModeModal(true)}
+                    className={`w-full px-4 py-3.5 flex items-center gap-3.5 ${_pHovCls} transition-colors cursor-pointer text-left`}
+                  >
+                    <div
+                      className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-xs"
+                      style={{
+                        background: isCredit ? 'rgba(59,130,246,0.15)' : 'rgba(16,185,129,0.15)',
+                        border: `1.5px solid ${isCredit ? 'rgba(59,130,246,0.35)' : 'rgba(16,185,129,0.35)'}`,
+                      }}
+                    >
+                      <span className="text-lg leading-none">{isCredit ? '💰' : '🎓'}</span>
+                    </div>
+                    <div className="flex-1 text-left min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className={`text-sm font-bold ${_pTxt}`}>Study Mode Rules</p>
+                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 font-mono">
+                          Official Guide
+                        </span>
+                        <span
+                          className="text-[8.5px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wide font-mono"
+                          style={{
+                            background: isCredit ? 'rgba(59,130,246,0.20)' : 'rgba(16,185,129,0.20)',
+                            color: isCredit ? '#3b82f6' : '#10b981',
+                            border: `1px solid ${isCredit ? 'rgba(59,130,246,0.35)' : 'rgba(16,185,129,0.35)'}`,
+                          }}
+                        >
+                          {isCredit ? '💰 Credit Mode' : '🎓 Without Credit'}
+                        </span>
+                      </div>
+                      <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>
+                        {isCredit
+                          ? '100% Freedom! Credit spend & earn economy ke sabhi niyam'
+                          : '0 Credits! Sequential reading (Mandatory 5 steps) ke sabhi niyam'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <span className="text-[10px] font-bold text-sky-400/90 hidden sm:inline">Niyam Dekhein</span>
+                      <ChevronRight size={15} style={{ color: _pTxtMutedColor }} />
+                    </div>
+                  </button>
+
+                  {/* Inline Study Mode Rules in Profile Page */}
+                  <div className="px-4 pb-3.5 pt-0.5">
+                    <div
+                      className={`rounded-2xl p-3 border transition-all ${
+                        isCredit
+                          ? 'bg-blue-50/70 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800/60'
+                          : 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-sm">{isCredit ? '💰' : '🎓'}</span>
+                          <span className={`text-xs font-black truncate ${isCredit ? 'text-blue-900 dark:text-blue-100' : 'text-emerald-900 dark:text-emerald-100'}`}>
+                            {isCredit ? 'Credit Economy Mode Rules' : 'Without Credit Mode (Mandatory 5 Steps)'}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowStudyModeModal(true)}
+                          className={`text-[9.5px] font-bold px-2 py-0.5 rounded-full shrink-0 cursor-pointer shadow-xs transition-transform active:scale-95 ${
+                            isCredit
+                              ? 'bg-blue-600 text-white hover:bg-blue-700'
+                              : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                          }`}
+                        >
+                          Official Guide 📜
+                        </button>
+                      </div>
+
+                      {!isCredit ? (
+                        <div className="space-y-1.5">
+                          <p className="text-[10.5px] text-emerald-800/90 dark:text-emerald-300 leading-tight">
+                            0 Credits Required! Har page unlock karne ke liye ye 5 steps kramashah poore karein:
+                          </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[10px] text-slate-700 dark:text-slate-300">
+                            <div className="p-1.5 rounded-lg bg-white/80 dark:bg-slate-900/60 border border-emerald-200/50 dark:border-emerald-900/40 flex items-center gap-1">
+                              <span className="font-bold text-indigo-600 dark:text-indigo-400">Step 1:</span>
+                              <span className="truncate">📖 Reading Mode time</span>
+                            </div>
+                            <div className="p-1.5 rounded-lg bg-white/80 dark:bg-slate-900/60 border border-emerald-200/50 dark:border-emerald-900/40 flex items-center gap-1">
+                              <span className="font-bold text-purple-600 dark:text-purple-400">Step 2:</span>
+                              <span className="truncate">🧠 MCQ Practice</span>
+                            </div>
+                            <div className="p-1.5 rounded-lg bg-white/80 dark:bg-slate-900/60 border border-emerald-200/50 dark:border-emerald-900/40 flex items-center gap-1">
+                              <span className="font-bold text-cyan-600 dark:text-cyan-400">Step 3:</span>
+                              <span className="truncate">🔄 Same Topic Rev</span>
+                            </div>
+                            <div className="p-1.5 rounded-lg bg-white/80 dark:bg-slate-900/60 border border-emerald-200/50 dark:border-emerald-900/40 flex items-center gap-1">
+                              <span className="font-bold text-amber-600 dark:text-amber-400">Step 4:</span>
+                              <span className="truncate">📅 Today Topic Rev</span>
+                            </div>
+                          </div>
+                          <div className="p-1.5 rounded-lg bg-white/80 dark:bg-slate-900/60 border border-emerald-200/50 dark:border-emerald-900/40 flex items-center justify-between gap-1 text-[10px] text-slate-700 dark:text-slate-300">
+                            <div className="flex items-center gap-1">
+                              <span className="font-bold text-rose-600 dark:text-rose-400">Step 5:</span>
+                              <span>⚠️ My Mistake Review</span>
+                            </div>
+                            <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400 shrink-0">
+                              ✓ Next Page 0 Cr Unlock
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5 text-[10.5px] text-blue-800/90 dark:text-blue-300 leading-tight">
+                          <p>
+                            100% Freedom! Sequential flow ki koi bandish nahi — kisi bhi page, MCQ ya revision me direct ja sakte hain.
+                          </p>
+                          <div className="flex items-center justify-between gap-2 pt-1 text-[9.5px] text-slate-600 dark:text-slate-300">
+                            <span>Har subject ka 1st lesson 100% Free</span>
+                            <span className="font-bold text-blue-600 dark:text-blue-400">VIP+ Store Allowance</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* 3. Score History Row */}
             <button
               onClick={() => {
@@ -14718,6 +14930,37 @@ export const StudentDashboard: React.FC<Props> = ({
             {showProfileSettings && (
               <div className="p-2.5 sm:p-3 bg-black/5 dark:bg-black/25 border-t" style={{ borderColor: _pSep }}>
                 <div className="grid grid-cols-2 gap-2">
+                  {/* Study Mode Quick Setting */}
+                  <button
+                    type="button"
+                    onClick={() => setShowStudyModeModal(true)}
+                    className="p-2.5 rounded-xl border flex flex-col justify-between text-left active:scale-[0.97] transition-all cursor-pointer group"
+                    style={{
+                      background: _light ? 'rgba(255,255,255,0.85)' : 'rgba(30,41,59,0.55)',
+                      borderColor: _light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-1 mb-1.5 w-full">
+                      <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs" style={{
+                        background: user.studyMode === 'CREDIT' ? 'rgba(59,130,246,0.15)' : 'rgba(16,185,129,0.15)',
+                        border: `1px solid ${user.studyMode === 'CREDIT' ? 'rgba(59,130,246,0.40)' : 'rgba(16,185,129,0.40)'}`,
+                      }}>
+                        <span className="text-xs leading-none">{user.studyMode === 'CREDIT' ? '💰' : '🎓'}</span>
+                      </div>
+                      <span className={`text-[7.5px] font-black px-1.5 py-0.5 rounded font-mono shrink-0 ${
+                        user.studyMode === 'CREDIT' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                      }`}>
+                        {user.studyMode === 'CREDIT' ? 'CREDIT' : '0 CR'}
+                      </span>
+                    </div>
+                    <div className="w-full min-w-0">
+                      <p className={`text-[11.5px] font-bold ${_pTxt} truncate leading-tight`}>Study Mode</p>
+                      <p className={`text-[9px] ${_pTxtSub} truncate mt-0.5 leading-tight`}>
+                        {user.studyMode === 'CREDIT' ? 'Credit Economy' : 'Without Credit'}
+                      </p>
+                    </div>
+                  </button>
+
                   {/* 1. Change Name */}
                   <button
                     type="button"
@@ -15117,71 +15360,6 @@ export const StudentDashboard: React.FC<Props> = ({
               </div>
             )}
           </div>
-          {/* ── RARE MYTHIC LOGOUT CARD ── */}
-          {(settings?.isLogoutEnabled !== false || user.role === 'ADMIN' || isImpersonating) && (
-            <div
-              className="mx-3 rounded-2xl overflow-hidden mb-4 relative select-none shadow-xl transition-all duration-200 group"
-              style={{
-                background: 'linear-gradient(135deg, rgba(225, 29, 72, 0.22) 0%, rgba(15, 23, 42, 0.96) 50%, rgba(136, 19, 55, 0.30) 100%)',
-                border: '1.5px solid rgba(244, 63, 94, 0.55)',
-                boxShadow: '0 6px 25px rgba(225, 29, 72, 0.28), inset 0 0 20px rgba(244, 63, 94, 0.10)',
-              }}
-            >
-              {/* Holographic obsidian shimmer line */}
-              <div
-                className="absolute top-0 left-0 right-0 h-[1.5px] pointer-events-none"
-                style={{
-                  background: 'linear-gradient(90deg, transparent 0%, rgba(251, 113, 133, 0.9) 50%, transparent 100%)',
-                }}
-              />
-
-              <button
-                type="button"
-                onClick={() => setConfirmDialog({
-                  isOpen: true,
-                  message: 'Kya aap logout karna chahte hain?',
-                  onConfirm: () => { setConfirmDialog(null); onLogout?.(); }
-                })}
-                className="w-full px-4 py-3.5 flex items-center justify-between gap-3 text-left transition-all active:scale-[0.98] cursor-pointer"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border border-rose-400/40 shadow-lg relative overflow-hidden"
-                    style={{
-                      background: 'linear-gradient(135deg, #e11d48, #9f1239)',
-                      boxShadow: '0 0 14px rgba(225, 29, 72, 0.5)',
-                    }}
-                  >
-                    <LogOut size={18} className="text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.7)]" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-black tracking-wide text-rose-200 drop-shadow-[0_0_8px_rgba(244,63,94,0.4)]">
-                        Logout Account
-                      </span>
-                      <span className="text-[7.5px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-widest font-mono bg-rose-500/25 text-rose-300 border border-rose-500/40">
-                        ⚡ RARE EXIT
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-rose-300/70 mt-0.5 truncate">
-                      Sign out &amp; end active session safely
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <span className="text-[9.5px] font-black text-rose-400/90 uppercase tracking-wider font-mono hidden xs:inline">
-                    Sign Out
-                  </span>
-                  <div
-                    className="w-7 h-7 rounded-lg flex items-center justify-center border border-rose-400/30 text-rose-300 bg-rose-500/15 group-hover:translate-x-0.5 transition-transform"
-                  >
-                    <ChevronRight size={14} />
-                  </div>
-                </div>
-              </button>
-            </div>
-          )}
           {/* App info + Support — unified professional card */}
           <div className="mx-4 mb-6 mt-2 rounded-2xl overflow-hidden" style={{
              background: _pCard,
@@ -15331,6 +15509,72 @@ export const StudentDashboard: React.FC<Props> = ({
               </div>
             </button>
           </div>
+
+          {/* ── RARE MYTHIC LOGOUT CARD (SAB SE LAST ME PROFILE PAGE ME) ── */}
+          {(settings?.isLogoutEnabled !== false || user.role === 'ADMIN' || isImpersonating) && (
+            <div
+              className="mx-4 rounded-2xl overflow-hidden mb-12 relative select-none shadow-xl transition-all duration-200 group"
+              style={{
+                background: 'linear-gradient(135deg, rgba(225, 29, 72, 0.22) 0%, rgba(15, 23, 42, 0.96) 50%, rgba(136, 19, 55, 0.30) 100%)',
+                border: '1.5px solid rgba(244, 63, 94, 0.55)',
+                boxShadow: '0 6px 25px rgba(225, 29, 72, 0.28), inset 0 0 20px rgba(244, 63, 94, 0.10)',
+              }}
+            >
+              {/* Holographic obsidian shimmer line */}
+              <div
+                className="absolute top-0 left-0 right-0 h-[1.5px] pointer-events-none"
+                style={{
+                  background: 'linear-gradient(90deg, transparent 0%, rgba(251, 113, 133, 0.9) 50%, transparent 100%)',
+                }}
+              />
+
+              <button
+                type="button"
+                onClick={() => setConfirmDialog({
+                  isOpen: true,
+                  message: 'Kya aap logout karna chahte hain?',
+                  onConfirm: () => { setConfirmDialog(null); onLogout?.(); }
+                })}
+                className="w-full px-4 py-3.5 flex items-center justify-between gap-3 text-left transition-all active:scale-[0.98] cursor-pointer"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border border-rose-400/40 shadow-lg relative overflow-hidden"
+                    style={{
+                      background: 'linear-gradient(135deg, #e11d48, #9f1239)',
+                      boxShadow: '0 0 14px rgba(225, 29, 72, 0.5)',
+                    }}
+                  >
+                    <LogOut size={18} className="text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.7)]" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-black tracking-wide text-rose-200 drop-shadow-[0_0_8px_rgba(244,63,94,0.4)]">
+                        Logout Account
+                      </span>
+                      <span className="text-[7.5px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-widest font-mono bg-rose-500/25 text-rose-300 border border-rose-500/40">
+                        ⚡ RARE EXIT
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-rose-300/70 mt-0.5 truncate">
+                      Sign out &amp; end active session safely
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-[9.5px] font-black text-rose-400/90 uppercase tracking-wider font-mono hidden xs:inline">
+                    Sign Out
+                  </span>
+                  <div
+                    className="w-7 h-7 rounded-lg flex items-center justify-center border border-rose-400/30 text-rose-300 bg-rose-500/15 group-hover:translate-x-0.5 transition-transform"
+                  >
+                    <ChevronRight size={14} />
+                  </div>
+                </div>
+              </button>
+            </div>
+          )}
           </div>
           {/* ── Level Style Chooser Sheet ── */}
           {showLevelChooser && (
@@ -17218,7 +17462,7 @@ export const StudentDashboard: React.FC<Props> = ({
                 <button
                   id="topbar-row2-credits-btn"
                   onClick={() => {
-                    setStoreInitialTier('CREDITS');
+                    setStoreInitialTier(settings?.showCreditsStore === true ? 'CREDITS' : 'SUBSCRIPTION');
                     onTabChange("STORE");
                   }}
                   className={`absolute top-0.5 bottom-0.5 left-1/2 -translate-x-1/2 w-[94px] flex items-center justify-between px-2 rounded-full border transition-all duration-500 ease-out cursor-pointer active:scale-95 group ${
@@ -17246,7 +17490,7 @@ export const StudentDashboard: React.FC<Props> = ({
                 <button
                   id="topbar-row2-diamonds-btn"
                   onClick={() => {
-                    setStoreInitialTier('DIAMONDS');
+                    setStoreInitialTier(settings?.showDiamondsStore === true ? 'DIAMONDS' : 'SUBSCRIPTION');
                     onTabChange("STORE");
                   }}
                   className={`absolute top-0.5 bottom-0.5 left-1/2 -translate-x-1/2 w-[94px] flex items-center justify-between px-2 rounded-full border transition-all duration-500 ease-out cursor-pointer active:scale-95 group ${
@@ -21438,6 +21682,14 @@ export const StudentDashboard: React.FC<Props> = ({
         </div>
       )}
 
+      {/* STUDY MODE RULES MODAL (OFFICIAL GUIDE & SELECTION) */}
+      <StudyModeRulesModal
+        isOpen={showStudyModeModal}
+        onClose={() => setShowStudyModeModal(false)}
+        currentMode={user.studyMode || 'WITHOUT_CREDIT'}
+        onSelectMode={handleSelectStudyMode}
+      />
+
       {/* NAME CHANGE MODAL (100 CREDITS OR 20 DIAMONDS) */}
       {showNameChangeModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
@@ -23419,9 +23671,21 @@ export const StudentDashboard: React.FC<Props> = ({
           if (safeIndex < totalPages - 1) {
             const _nextIdx = safeIndex + 1;
             if (isSequentialReadingEnforced(user, settings)) {
-              const currentRead = isRoutinePageRead(entry.id, safeIndex);
-              if (!currentRead) {
-                showAlert(`🔒 Page ${safeIndex + 1} jab tak complete read na hoga, Page ${_nextIdx + 1} lock rahega! Pehle Page ${safeIndex + 1} poora padhein.`, 'INFO', 'Page Locked');
+              const _hasMcq = ((entry.pages || [])[safeIndex]?.mcqs?.length ?? 0) > 0;
+              const step = getSequentialPageStep(entry.id, safeIndex, _hasMcq);
+              if (step !== 'COMPLETED') {
+                const stepNames: Record<string, string> = {
+                  READING: '1. Reading Mode / Notes poora padhein',
+                  MCQ: '2. Is page ka MCQ Practice solve karein',
+                  REV_SAME: '3. Revision Hub me Same Topic Revise karein',
+                  REV_TODAY: '4. Revision Hub me Today Topic Revise karein',
+                  MISTAKE: '5. My Mistake me apni mistakes review karein',
+                };
+                showAlert(
+                  `🔒 Sequential Page Reading Rule:\nPage ${safeIndex + 1} ka step abhi baaki hai!\nPehle: ${stepNames[step] || step}\n\nFlow: 1. Reading ➔ 2. MCQ ➔ 3. Rev Same ➔ 4. Rev Today ➔ 5. My Mistake`,
+                  'INFO',
+                  'Page Locked'
+                );
                 return;
               }
             }
@@ -23835,7 +24099,7 @@ export const StudentDashboard: React.FC<Props> = ({
                   }
                    _save(tab === 'FLASHCARD' ? 'MCQS' : tab);
                 };
-                if (_isAdm) { _doSwitch(); return; }
+                if ((_isAdm && user.studyMode !== 'CREDIT') || isStudyContentAlwaysUnlocked()) { _doSwitch(); return; }
 
                 // Free vs Premium reading requirement gate:
                 // Free users MUST complete required reading time (Reading Mode + Writing Mode) before accessing MCQ or Flashcards!
@@ -23844,7 +24108,8 @@ export const StudentDashboard: React.FC<Props> = ({
                   user.subscriptionLevel === 'BASIC' ||
                   user.subscriptionLevel === 'ULTRA' ||
                   user.subscriptionTier === 'BASIC' ||
-                  user.subscriptionTier === 'ULTRA'
+                  user.subscriptionTier === 'ULTRA' ||
+                  isStudyContentAlwaysUnlocked()
                 );
                 if (tab === 'MCQS' || tab === 'FLASHCARD') {
                   if (!_isPremUser) {
@@ -23866,18 +24131,18 @@ export const StudentDashboard: React.FC<Props> = ({
                 }
 
                 if (tab === 'MCQS') {
-                  if (isMcqPageUnlocked(entry.id, safeIndex)) { _doSwitch(); return; }
+                  if (isStudyContentAlwaysUnlocked() || isMcqPageUnlocked(entry.id, safeIndex)) { _doSwitch(); return; }
                   showCoinGate(20, 'MCQ Practice', () => { markMcqPageUnlocked(entry.id, safeIndex); _doSwitch(); }, undefined, undefined, _pgInfo);
                 } else if (tab === 'QA') {
                   // Tier gate: Q&A requires BASIC or ULTRA subscription
-                  if (!_isBasicUser && !_isUltraUser) {
+                  if (!_isBasicUser && !_isUltraUser && !isStudyContentAlwaysUnlocked()) {
                     showAlert('🔒 Q&A Mode ke liye BASIC subscription chahiye! Store se upgrade karein.', 'INFO');
                     return;
                   }
-                  if (isQaPageUnlocked(entry.id, safeIndex)) { _doSwitch(); return; }
+                  if (isStudyContentAlwaysUnlocked() || isQaPageUnlocked(entry.id, safeIndex)) { _doSwitch(); return; }
                   showCoinGate(20, 'Q&A Mode', () => { markQaPageUnlocked(entry.id, safeIndex); _doSwitch(); }, undefined, undefined, _pgInfo);
                 } else if (tab === 'FLASHCARD') {
-                  if (_isUltraUser || _isAdm) {
+                  if (_isUltraUser || _isAdm || isStudyContentAlwaysUnlocked()) {
                     _doSwitch();
                     return;
                   }
@@ -23890,7 +24155,7 @@ export const StudentDashboard: React.FC<Props> = ({
                    <div className="flex min-w-max bg-[#17183a]">
                     <button data-tab-active={String(_isReadActive)} onClick={() => {
                       const _doRead = () => { stopSpeech(); setLucentActiveTab('NOTES'); setLucentNotesViewMode('chunk'); _save('NOTES', 'chunk'); };
-                      if (_isAdm || isPgReadUnlocked(entry.id, safeIndex)) { _doRead(); return; }
+                      if ((_isAdm && user.studyMode !== 'CREDIT') || isStudyContentAlwaysUnlocked() || isPgReadUnlocked(entry.id, safeIndex)) { _doRead(); return; }
                       showCoinGate(20, 'Reading Mode', () => { markPgReadUnlocked(entry.id, safeIndex); _doRead(); }, undefined, undefined, _pgInfo);
                     }} style={_tabStyle} className={_tabCls(_isReadActive, 'bg-indigo-600', 'text-white')}>
                       Reading Mode
@@ -23908,7 +24173,7 @@ export const StudentDashboard: React.FC<Props> = ({
                         style={_tabStyle}
                         className={_tabCls(false, 'bg-amber-500', 'text-white')}
                           onClick={() => {
-                            const _isPremUser = !!(user.isPremium || user.subscriptionLevel === 'BASIC' || user.subscriptionLevel === 'ULTRA' || user.subscriptionTier === 'BASIC' || user.subscriptionTier === 'ULTRA');
+                            const _isPremUser = !!(user.isPremium || user.subscriptionLevel === 'BASIC' || user.subscriptionLevel === 'ULTRA' || user.subscriptionTier === 'BASIC' || user.subscriptionTier === 'ULTRA' || isStudyContentAlwaysUnlocked());
                             if (!_isAdm && !_isPremUser) {
                               const _reqSec = calculatePageRequiredReadingSec(currentPage);
                               const _storedSec = getPageTime(entry.id, safeIndex);
@@ -23928,7 +24193,7 @@ export const StudentDashboard: React.FC<Props> = ({
                       </button>
                     )}
                     {_hasMcqTb && (() => {
-                      const _fcLocked = !_isAdm && !_isUltraUser;
+                      const _fcLocked = !_isAdm && !_isUltraUser && !isStudyContentAlwaysUnlocked();
                       return (
                         <button data-tab-active={String(lucentActiveTab === 'FLASHCARD')} onClick={() => _switchMcq('FLASHCARD')} style={_tabStyle} className={_tabCls(lucentActiveTab === 'FLASHCARD', 'bg-amber-500', 'text-white') + (_fcLocked ? ' opacity-60' : '')}>
                           {_fcLocked ? '🔒' : '🃏'} Flashcard{_fcLocked ? ' · ULTRA' : ''}
@@ -23936,7 +24201,7 @@ export const StudentDashboard: React.FC<Props> = ({
                       );
                     })()}
                     {_hasPdfTb && (() => {
-                      const _pdfLocked = !_isAdm && !_isBasicUser && !_isUltraUser;
+                      const _pdfLocked = !_isAdm && !_isBasicUser && !_isUltraUser && !isStudyContentAlwaysUnlocked();
                       return (
                         <button
                           data-tab-active={String(lucentActiveTab === 'PDF')}
@@ -23962,7 +24227,7 @@ export const StudentDashboard: React.FC<Props> = ({
                       );
                     })()}
                     {_hasVideoTb && (() => {
-                      const _vidLocked = !_isAdm && !_isUltraUser;
+                      const _vidLocked = !_isAdm && !_isUltraUser && !isStudyContentAlwaysUnlocked();
                       return (
                         <button
                           data-tab-active={String(lucentActiveTab === 'VIDEO')}
@@ -23988,7 +24253,7 @@ export const StudentDashboard: React.FC<Props> = ({
                       );
                     })()}
                     {_hasAudioTb && (() => {
-                      const _audLocked = !_isAdm && !_isUltraUser;
+                      const _audLocked = !_isAdm && !_isUltraUser && !isStudyContentAlwaysUnlocked();
                       return (
                         <button
                           data-tab-active={String(lucentActiveTab === 'AUDIO')}
@@ -24003,6 +24268,151 @@ export const StudentDashboard: React.FC<Props> = ({
                         </button>
                       );
                     })()}
+                  </div>
+                </div>
+              );
+            })()}
+            {/* ── SEQUENTIAL PAGE READING PROGRESS BAR (Only when Sequential Reading is Enforced) ── */}
+            {isSequentialReadingEnforced(user, settings) && (() => {
+              const _isReadD = isRoutinePageRead(entry.id, safeIndex);
+              const _isMcqD = !_hasMcqTb || isRoutinePageMcqDone(entry.id, safeIndex);
+              const _isRevSameD = isRoutineSameTopicRevDone(entry.id, safeIndex);
+              const _isRevTodayD = isRoutineTodayTopicRevDone(entry.id, safeIndex);
+              const _isMistakeD = isRoutineMistakeRevDone(entry.id, safeIndex);
+              const _curStep = getSequentialPageStep(entry.id, safeIndex, _hasMcqTb);
+              const _allDone = _curStep === 'COMPLETED';
+
+              return (
+                <div className="bg-[#0b0f1d] border-b border-indigo-950/80 px-2 sm:px-3 py-1.5 flex items-center justify-between gap-2 overflow-x-auto shadow-inner" style={{ scrollbarWidth: 'none' }}>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-cyan-400 flex items-center gap-1">
+                      <span>🔄</span> Flow (Pg {safeIndex + 1}):
+                    </span>
+                    {_allDone ? (
+                      <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        ✅ All 5 Steps Complete · Agla Page Unlocked
+                      </span>
+                    ) : (
+                      <span className="text-[9.5px] font-bold text-slate-400">
+                        1 ➔ 5 sequential order
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    {/* Step 1: Reading */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        stopSpeech();
+                        setLucentActiveTab('NOTES');
+                        setLucentNotesViewMode('chunk');
+                        _save('NOTES', 'chunk');
+                      }}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-black transition flex items-center gap-1 cursor-pointer ${
+                        _isReadD
+                          ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-600/40'
+                          : _curStep === 'READING'
+                          ? 'bg-indigo-600 text-white shadow-lg ring-1 ring-indigo-400'
+                          : 'bg-white/5 text-slate-400 border border-white/5'
+                      }`}
+                    >
+                      <span>{_isReadD ? '✔' : '1.'}</span>
+                      <span>📖 Reading</span>
+                    </button>
+
+                    {/* Step 2: MCQ */}
+                    <button
+                      type="button"
+                      onClick={() => _switchMcq('MCQS')}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-black transition flex items-center gap-1 cursor-pointer ${
+                        _isMcqD
+                          ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-600/40'
+                          : _curStep === 'MCQ'
+                          ? 'bg-purple-600 text-white shadow-lg ring-1 ring-purple-400'
+                          : 'bg-white/5 text-slate-400 border border-white/5'
+                      }`}
+                    >
+                      <span>{_isMcqD ? '✔' : '2.'}</span>
+                      <span>🧠 MCQ</span>
+                    </button>
+
+                    {/* Step 3: Rev Same */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!_isReadD) {
+                          showAlert('🔒 Pehle Step 1: Reading poora karein!', 'INFO');
+                          return;
+                        }
+                        if (_hasMcqTb && !isRoutinePageMcqDone(entry.id, safeIndex)) {
+                          showAlert('🔒 Pehle Step 2: MCQ Practice poora karein!', 'INFO');
+                          return;
+                        }
+                        markRoutineSameTopicRevDone(entry.id, safeIndex);
+                        setInitialRevisionLessonTitle(entry.lessonTitle || null);
+                        setShowRevisionHubScreen(true);
+                      }}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-black transition flex items-center gap-1 cursor-pointer ${
+                        _isRevSameD
+                          ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-600/40'
+                          : _curStep === 'REV_SAME'
+                          ? 'bg-cyan-600 text-white shadow-lg ring-1 ring-cyan-400 animate-pulse'
+                          : 'bg-white/5 text-slate-400 border border-white/5'
+                      }`}
+                    >
+                      <span>{_isRevSameD ? '✔' : '3.'}</span>
+                      <span>🔄 Rev Same</span>
+                    </button>
+
+                    {/* Step 4: Rev Today */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!_isRevSameD) {
+                          showAlert('🔒 Pehle Step 3: Revision Hub (Same Topic) poora karein!', 'INFO');
+                          return;
+                        }
+                        markRoutineTodayTopicRevDone(entry.id, safeIndex);
+                        setInitialRevisionLessonTitle(null);
+                        setShowRevisionHubScreen(true);
+                      }}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-black transition flex items-center gap-1 cursor-pointer ${
+                        _isRevTodayD
+                          ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-600/40'
+                          : _curStep === 'REV_TODAY'
+                          ? 'bg-amber-600 text-white shadow-lg ring-1 ring-amber-400 animate-pulse'
+                          : 'bg-white/5 text-slate-400 border border-white/5'
+                      }`}
+                    >
+                      <span>{_isRevTodayD ? '✔' : '4.'}</span>
+                      <span>📅 Rev Today</span>
+                    </button>
+
+                    {/* Step 5: Mistake */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!_isRevTodayD) {
+                          showAlert('🔒 Pehle Step 4: Revision Hub (Today Topic) poora karein!', 'INFO');
+                          return;
+                        }
+                        markRoutineMistakeRevDone(entry.id, safeIndex);
+                        const mList = getMistakeBankSync(user.id);
+                        setHomeMistakes(mList);
+                        setShowMistakePractice(true);
+                      }}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-black transition flex items-center gap-1 cursor-pointer ${
+                        _isMistakeD
+                          ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-600/40'
+                          : _curStep === 'MISTAKE'
+                          ? 'bg-rose-600 text-white shadow-lg ring-1 ring-rose-400 animate-pulse'
+                          : 'bg-white/5 text-slate-400 border border-white/5'
+                      }`}
+                    >
+                      <span>{_isMistakeD ? '✔' : '5.'}</span>
+                      <span>⚠️ My Mistake</span>
+                    </button>
                   </div>
                 </div>
               );
@@ -25301,7 +25711,7 @@ RULES:
             }
             if (lessonTitle) {
               const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
-              if (_isAdm) {
+              if ((_isAdm && user.studyMode !== 'CREDIT') || isStudyContentAlwaysUnlocked()) {
                 setInitialRevisionLessonTitle(lessonTitle);
                 setShowDailyEventPage(false);
                 setShowRevisionHubScreen(true);
@@ -25704,7 +26114,7 @@ RULES:
           const _entry = _todayLesson;
           const _pi    = 0;
           const _pgKey = `nst_pg_r_${user.id}_${_entry.id}_${_pi}`;
-          if (localStorage.getItem(_pgKey) === '1') {
+          if (isStudyContentAlwaysUnlocked() || localStorage.getItem(_pgKey) === '1') {
             if (_entry.mcqOnly) {
               lucentInitialTabRef.current = { tab: 'MCQS' };
               tryOpenLucentNote(_entry, _pi);
@@ -25935,7 +26345,7 @@ RULES:
             }
             if (lessonTitle) {
               const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
-              if (_isAdm) {
+              if ((_isAdm && user.studyMode !== 'CREDIT') || isStudyContentAlwaysUnlocked()) {
                 setInitialRevisionLessonTitle(lessonTitle);
                 setShowMyRoutine(false);
                 setShowRevisionHubScreen(true);
@@ -25968,7 +26378,7 @@ RULES:
             // Coming from Routine → 50-coin gate first, then open RevisionHub auto-navigated
             if (lessonTitle) {
               const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
-              if (_isAdm) {
+              if ((_isAdm && user.studyMode !== 'CREDIT') || isStudyContentAlwaysUnlocked()) {
                 setInitialRevisionLessonTitle(lessonTitle);
                 setShowMyRoutine(false);
                 setShowRevisionHubScreen(true);
@@ -26605,7 +27015,7 @@ RULES:
           mode: 'READING' | 'WRITING' | 'MCQ' | 'QA' | 'FLASHCARD',
           action: () => void,
         ) => {
-          if (_isAdminUser) { action(); return; }
+          if (_isAdminUser || isStudyContentAlwaysUnlocked()) { action(); return; }
           if (mode === 'FLASHCARD' && _isUltraUser) { action(); return; }
           const modeConfig = {
             READING: { label: 'Reading Mode', isUnlocked: isPgReadUnlocked(_overlayUnlockId, _overlayUnlockPage), mark: () => markPgReadUnlocked(_overlayUnlockId, _overlayUnlockPage) },
@@ -29536,7 +29946,9 @@ RULES:
           (_allModesKey && (user.unlockedContent || []).includes(_allModesKey)) ||
           (pageInfo?.pageLabel && (user.unlockedContent || []).includes(pageInfo.pageLabel))
         );
-        const isFree = !isDiamondOnly && (cost === 0 || isPermanentlyUnlocked);
+        const isCreditMode = user.studyMode === 'CREDIT';
+        const isWithoutCredit = (user.studyMode || 'WITHOUT_CREDIT') !== 'CREDIT';
+        const isFree = isWithoutCredit || (!isDiamondOnly && !isCreditMode && (cost === 0 || isPermanentlyUnlocked));
         if (isFree) {
           setTimeout(() => {
             setCoinGate(null);

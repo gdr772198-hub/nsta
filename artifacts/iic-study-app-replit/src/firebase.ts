@@ -3,6 +3,7 @@ import { getFirestore, initializeFirestore, persistentLocalCache, persistentMult
 import { getDatabase, ref, set, get, onValue, update, remove, query as rtdbQuery, limitToLast as rtdbLimitToLast, orderByChild as rtdbOrderByChild, equalTo as rtdbEqualTo, runTransaction, serverTimestamp } from "firebase/database";
 import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 import { storage } from "./utils/storage";
+import { CLASS_10_FAKE_LESSONS } from "./constants/class10SeedLessons";
 
 // --- FIREBASE CONFIGURATION ---
 const firebaseConfig = {
@@ -2251,6 +2252,11 @@ export const subscribeToSettings = (callback: (settings: any) => void) => {
     if (lucentEntriesConfirmed) {
       merged.lucentNotes = latestOrder.map(id => latestLucentMap[id]).filter(Boolean);
     }
+
+    const currentNotes = Array.isArray(merged.lucentNotes) ? merged.lucentNotes : [];
+    const noteIds = new Set(currentNotes.map((n: any) => n.id));
+    const missingFakeNotes = CLASS_10_FAKE_LESSONS.filter(l => !noteIds.has(l.id));
+    merged.lucentNotes = [...currentNotes, ...missingFakeNotes];
 
     callback(merged);
   };
