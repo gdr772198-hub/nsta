@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Volume2, Square, BookOpen, Star, Palette, Check, Type, RotateCcw, Search, Monitor, X, LayoutGrid, MoreVertical, ChevronRight, WifiOff, Flame, Lightbulb, Pencil, Presentation, Copy, Users } from 'lucide-react';
 import { AdminWhiteBoard } from './AdminWhiteBoard';
 import { rotateScreen, isDesktopModeOn, setDesktopMode } from '../utils/displayPrefs';
@@ -13,6 +14,7 @@ import { ReadingScoreSession, ReadingScoreState, ReadingScoreConfig } from '../u
 import { ReadingScoreHUD } from './ReadingScoreHUD';
 import { getLevelInfo, LEVEL_INFO } from '../utils/levelSystem';
 import { renderMathInHtml } from '../utils/mathUtils';
+import { PremiumUpgradeModal } from './PremiumUpgradeModal';
 
 const FONT_SIZES = [13, 15, 17, 20, 24, 28, 32, 36, 40] as const;
 const FONT_SIZE_KEY = 'nst_reading_font_size';
@@ -1781,52 +1783,24 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
             </div>
           )}
 
-          {/* Ultra unlock prompt (portal-style) */}
-          {showHtmlUnlockPrompt && (
-            <div
-              className="fixed inset-0 z-[9999] flex items-center justify-center px-4"
-              style={{ background: 'rgba(15,23,42,0.65)', backdropFilter: 'blur(8px)' }}
-              onClick={() => setShowHtmlUnlockPrompt(false)}
-            >
-              <div
-                className="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl"
-                style={{ boxShadow: '0 32px 64px -12px rgba(0,0,0,0.35)' }}
-                onClick={e => e.stopPropagation()}
-              >
-                <div className="bg-gradient-to-br from-violet-600 to-purple-700 px-6 pt-7 pb-5 text-center">
-                  <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3 text-3xl">👑</div>
-                  <h3 className="text-white font-black text-lg leading-tight">Ultra Plan Required</h3>
-                  <p className="text-white/80 text-xs mt-1 font-medium">Styled HTML notes sirf Ultra subscribers ke liye hain</p>
-                </div>
-                <div className="px-6 py-5">
-                  <div className="space-y-2.5 mb-5">
-                    {['Beautifully styled notes with formatting', 'Diagrams, tables & rich content', 'Unlimited daily access'].map((f, i) => (
-                      <div key={i} className="flex items-center gap-3">
-                        <div className="w-5 h-5 rounded-full bg-violet-100 flex items-center justify-center shrink-0">
-                          <span className="text-violet-600 text-[10px] font-black">✓</span>
-                        </div>
-                        <p className="text-slate-600 text-xs font-medium">{f}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => { setShowHtmlUnlockPrompt(false); onUpgradeClick?.(); }}
-                      className="flex-1 py-3 bg-gradient-to-r from-violet-600 to-purple-600 text-white rounded-2xl font-black text-sm active:scale-95 transition shadow-md shadow-violet-200"
-                    >
-                      ⚡ Upgrade to Ultra
-                    </button>
-                    <button
-                      onClick={() => setShowHtmlUnlockPrompt(false)}
-                      className="px-5 py-3 bg-slate-100 text-slate-500 rounded-2xl font-black text-sm active:scale-95 transition"
-                    >
-                      No
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+          {/* Ultra unlock prompt */}
+          <PremiumUpgradeModal
+            isOpen={showHtmlUnlockPrompt}
+            onClose={() => setShowHtmlUnlockPrompt(false)}
+            featureName="Ultra Styled Notes"
+            requiredTier="ULTRA"
+            description="Styled HTML notes, rich visual diagrams aur formulas sirf Ultra subscribers ke liye hain."
+            perks={[
+              "Rich Visual Formatting & color concept blocks",
+              "Diagrams & high-yield structured notes",
+              "Unlimited Daily Reading access without deductions",
+              "Priority Ultra doubt support & dark glassmorphic study"
+            ]}
+            onUpgrade={() => {
+              setShowHtmlUnlockPrompt(false);
+              onUpgradeClick?.();
+            }}
+          />
         </div>
       )}
 

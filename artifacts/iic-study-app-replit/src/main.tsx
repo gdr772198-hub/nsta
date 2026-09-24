@@ -100,3 +100,7 @@ root.render(
     </ErrorBoundary>
   </React.StrictMode>
 );
+
+if (typeof (window as any).hidePreReactSplash === 'function') {
+  (window as any).hidePreReactSplash();
+}

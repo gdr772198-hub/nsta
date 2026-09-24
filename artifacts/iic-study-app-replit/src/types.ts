@@ -744,6 +744,12 @@ export interface LucentNoteEntry {
    *  और आसान समझ (Explanation) sab unlock hote hain, daily reading limit nahi lagti.
    *  Har subject mein ek "sample" lesson ke liye use karo. */
   isSampleLesson?: boolean;
+  isMathLesson?: boolean;
+  mathBookPages?: MathImagePage[];
+  mathPremiumNotesPages?: MathImagePage[];
+  mathSolutionPages?: MathImagePage[];
+  chapterId?: string;
+  updatedAt?: string;
 }
 
 export interface AppNotification {

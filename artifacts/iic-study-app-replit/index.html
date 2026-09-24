@@ -184,9 +184,28 @@
       </div>
     </div>
     <script>
-      const bootSplash = document.getElementById('pre-react-splash');
-      const bootElapsed = Date.now() - window.__nstaBootStartedAt;
-      window.setTimeout(() => bootSplash?.remove(), Math.max(0, 3000 - bootElapsed));
+      window.__nstaReactMounted = false;
+      window.hidePreReactSplash = function() {
+        window.__nstaReactMounted = true;
+        const splash = document.getElementById('pre-react-splash');
+        if (splash) {
+          splash.style.transition = 'opacity 0.35s ease, transform 0.35s ease';
+          splash.style.opacity = '0';
+          splash.style.transform = 'scale(0.98)';
+          setTimeout(() => splash.remove(), 350);
+        }
+      };
+
+      // Failsafe: if React didn't mount after 6 seconds, show a recovery action inside the splash
+      setTimeout(() => {
+        const root = document.getElementById('root');
+        if (!window.__nstaReactMounted && (!root || root.children.length === 0)) {
+          const startingDiv = document.querySelector('.pre-react-splash-starting');
+          if (startingDiv) {
+            startingDiv.innerHTML = '<button onclick="window.location.reload()" style="background:#2563eb;color:#fff;border:none;padding:6px 14px;border-radius:12px;font-size:12px;font-weight:bold;cursor:pointer;margin-right:8px;box-shadow:0 4px 12px rgba(37,99,235,0.3)">Reload App</button><button onclick="try{localStorage.clear();sessionStorage.clear();}catch(e){}window.location.reload()" style="background:#e2e8f0;color:#334155;border:none;padding:6px 12px;border-radius:12px;font-size:12px;font-weight:bold;cursor:pointer">Reset</button>';
+          }
+        }
+      }, 6000);
     </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>

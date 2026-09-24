@@ -95,7 +95,11 @@ export class ErrorBoundary extends Component<Props, State> {
       errText.includes('Importing a module script failed');
 
     if (isChunkError) {
-      try { window.location.reload(); } catch {}
+      try {
+        sessionStorage.clear();
+        window.location.reload();
+      } catch {}
+      this.setState({ hasError: false, error: null, retryCount: 0 });
       return;
     }
     this.setState(s => ({ hasError: false, error: null, retryCount: s.retryCount + 1 }));

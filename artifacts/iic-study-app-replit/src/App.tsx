@@ -28,41 +28,57 @@ import { fetchChapters, fetchLessonContent } from './services/groq';
 import { AppLoadingScreen } from './components/AppLoadingScreen';
 import { SubjectSelection } from './components/SubjectSelection';
 import { StreamSelection } from './components/StreamSelection';
-// Resilient dynamic module loader with auto-retry for transient network / dev-server hiccups
+// Resilient dynamic module loader with auto-retry loop for transient network / dev-server hiccups
 function lazyWithRetry<T extends React.ComponentType<any>>(
   factory: () => Promise<{ default: T }>,
   chunkName = 'module'
 ): React.LazyExoticComponent<T> {
   return lazy(async () => {
     const key = `nst_chunk_retry_${chunkName}`;
-    try {
-      const mod = await factory();
-      try { sessionStorage.removeItem(key); } catch {}
-      return mod;
-    } catch (error: any) {
-      const msg = error?.message || String(error);
-      const isImportError =
-        msg.includes('Failed to fetch dynamically') ||
-        msg.includes('error loading dynamically imported module') ||
-        msg.includes('Importing a module script failed') ||
-        msg.includes('Loading chunk') ||
-        msg.includes('ChunkLoadError');
+    const maxRetries = 3;
+    let lastError: any = null;
 
-      const alreadyRetried = sessionStorage.getItem(key);
-      if (isImportError && !alreadyRetried) {
-        try { sessionStorage.setItem(key, 'true'); } catch {}
-        window.location.reload();
-        return new Promise<{ default: T }>(() => {});
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const mod = await factory();
+        try { sessionStorage.removeItem(key); } catch {}
+        return mod;
+      } catch (error: any) {
+        lastError = error;
+        const msg = error?.message || String(error);
+        const isImportError =
+          msg.includes('Failed to fetch dynamically') ||
+          msg.includes('error loading dynamically imported module') ||
+          msg.includes('Importing a module script failed') ||
+          msg.includes('Loading chunk') ||
+          msg.includes('ChunkLoadError');
+
+        if (!isImportError) {
+          throw error;
+        }
+
+        // Wait with backoff before next attempt
+        if (attempt < maxRetries - 1) {
+          await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+        }
       }
-      throw error;
     }
+
+    const alreadyRetried = sessionStorage.getItem(key);
+    if (!alreadyRetried) {
+      try { sessionStorage.setItem(key, 'true'); } catch {}
+      try { window.location.reload(); } catch {}
+      return new Promise<{ default: T }>(() => {});
+    }
+
+    throw lastError;
   });
 }
 
 const LessonView = lazyWithRetry(() => import('./components/LessonView').then(m => ({ default: m.LessonView })), 'lesson');
 import { Auth } from './components/Auth';
 const AdminDashboard = lazyWithRetry(() => import('./components/AdminDashboard').then(m => ({ default: m.AdminDashboard })), 'admin');
-const StudentDashboard = lazyWithRetry(() => import('./components/StudentDashboard').then(m => ({ default: m.StudentDashboard })), 'student');
+const StudentDashboard = lazyWithRetry(() => import('./components/StudentDashboard').then(m => ({ default: m.StudentDashboard || (m as any).default })), 'student');
 const SchoolEcosystem = lazyWithRetry(() => import('./components/school/SchoolEcosystem').then(m => ({ default: m.SchoolEcosystem })), 'school');
 import { getSchoolUserProfile } from './school-firebase';
 const CoachingEcosystem = lazyWithRetry(() => import('./components/coaching/CoachingEcosystem').then(m => ({ default: m.CoachingEcosystem })));
@@ -75,6 +91,8 @@ import { IICPage } from './components/IICPage';
 const WeeklyTestView = lazyWithRetry(() => import('./components/WeeklyTestView').then(m => ({ default: m.WeeklyTestView })));
 const UniversalChat = lazyWithRetry(() => import('./components/UniversalChat').then(m => ({ default: m.UniversalChat })));
 const MarksheetCard = lazyWithRetry(() => import('./components/MarksheetCard').then(m => ({ default: m.MarksheetCard })));
+const UpdatesPage = lazyWithRetry(() => import('./components/UpdatesPage').then(m => ({ default: m.UpdatesPage || (m as any).default })), 'updates');
+const RevisionHubScreen = lazyWithRetry(() => import('./components/RevisionHubScreen').then(m => ({ default: m.RevisionHubScreen || (m as any).default })), 'revision');
 import { CreditConfirmationModal } from './components/CreditConfirmationModal';
 import { CustomAlert, CustomConfirm } from './components/CustomDialogs';
 import { UpdatePopup } from './components/UpdatePopup';
@@ -95,7 +113,7 @@ import { DailyChallengePopup } from './components/DailyChallengePopup';
 import { recordCreditTx } from './utils/creditHistory';
 import { getCreditCost, getRequiredTier } from './utils/creditSystem';
 import { generateDailyChallengeQuestions, getChallengeDateKey, getChallengeWeekKey, isDailyChallenge20 } from './utils/challengeGenerator';
-import { BrainCircuit, Globe, LogOut, LayoutDashboard, BookOpen, Headphones, HelpCircle, Newspaper, KeyRound, Lock, X, ShieldCheck, FileText, UserPlus, EyeOff, WifiOff, Cloud, ArrowLeft, ExternalLink } from 'lucide-react'; // eslint-disable-line @typescript-eslint/no-unused-vars
+import { BrainCircuit, Globe, LogOut, LayoutDashboard, BookOpen, Headphones, HelpCircle, Newspaper, KeyRound, Lock, X, ShieldCheck, FileText, UserPlus, EyeOff, WifiOff, Cloud, ArrowLeft, ExternalLink, ChevronRight } from 'lucide-react'; // eslint-disable-line @typescript-eslint/no-unused-vars
 import { SUPPORT_EMAIL, APP_VERSION } from './constants';
 import { StudentTab, PendingReward, MCQResult, SubscriptionHistoryEntry } from './types';
 import { PedroEngine } from './utils/engines/pedroEngine';
@@ -3238,38 +3256,43 @@ const App: React.FC = () => {
 
   if (isAppLoading) {
       return (
-        <AppLoadingScreen
-          isPremium={state.user?.isPremium || false}
-          subscriptionLevel={getUserPlan()}
-          userId={state.user?.id}
-          userRole={state.user?.role}
-           loadingScreenSlotAssignments={state.user?.loadingScreenSlotAssignments}
-           loadingScreenSlotUnlocks={state.user?.loadingScreenSlotUnlocks}
-           loadingScreenUnlocks={state.user?.loadingScreenUnlocks}
-           loadingScreenLibrary={state.settings?.adminLoadingScreenLibrary}
-          isPreview={isLoadingPreview}
-          onBack={() => {
-            sessionStorage.removeItem('nst_splash_preview_style');
-            setIsLoadingPreview(false);
-            setIsAppLoading(false);
-          }}
-          onApply={() => {
-             const previewStyle = parseInt(sessionStorage.getItem('nst_splash_preview_style') || '1', 10);
-             const currentUser = state.user;
-              if (currentUser && previewStyle >= 1 && previewStyle <= 4) {
-                localStorage.setItem(`nst_splash_style_preference_${currentUser.id}`, String(previewStyle));
-                localStorage.setItem('nst_splash_style_preference', String(previewStyle));
-              }
+        <ErrorBoundary fallbackLabel="Loading" onError={() => {
+          setIsAppLoading(false);
+          setIsLoadingPreview(false);
+        }}>
+          <AppLoadingScreen
+            isPremium={state.user?.isPremium || false}
+            subscriptionLevel={getUserPlan()}
+            userId={state.user?.id}
+            userRole={state.user?.role}
+             loadingScreenSlotAssignments={state.user?.loadingScreenSlotAssignments}
+             loadingScreenSlotUnlocks={state.user?.loadingScreenSlotUnlocks}
+             loadingScreenUnlocks={state.user?.loadingScreenUnlocks}
+             loadingScreenLibrary={state.settings?.adminLoadingScreenLibrary}
+            isPreview={isLoadingPreview}
+            onBack={() => {
               sessionStorage.removeItem('nst_splash_preview_style');
               setIsLoadingPreview(false);
               setIsAppLoading(false);
-          }}
-          onComplete={() => {
-            sessionStorage.removeItem('nst_splash_preview_style');
-            setIsLoadingPreview(false);
-            setIsAppLoading(false);
-          }}
-        />
+            }}
+            onApply={() => {
+               const previewStyle = parseInt(sessionStorage.getItem('nst_splash_preview_style') || '1', 10);
+               const currentUser = state.user;
+                if (currentUser && previewStyle >= 1 && previewStyle <= 4) {
+                  localStorage.setItem(`nst_splash_style_preference_${currentUser.id}`, String(previewStyle));
+                  localStorage.setItem('nst_splash_style_preference', String(previewStyle));
+                }
+                sessionStorage.removeItem('nst_splash_preview_style');
+                setIsLoadingPreview(false);
+                setIsAppLoading(false);
+            }}
+            onComplete={() => {
+              sessionStorage.removeItem('nst_splash_preview_style');
+              setIsLoadingPreview(false);
+              setIsAppLoading(false);
+            }}
+          />
+        </ErrorBoundary>
       );
   }
 
@@ -3541,7 +3564,7 @@ const App: React.FC = () => {
         ) : (
             <ErrorBoundary resetKey={state.view}>
             <>
-                {state.view === 'ADMIN_DASHBOARD' && (state.user.role === 'ADMIN' || state.user.role === 'SUB_ADMIN') && !adminDashCrashed && (
+                {(state.view === 'ADMIN_DASHBOARD' || (state.view as any) === 'ADMIN') && (state.user.role === 'ADMIN' || state.user.role === 'SUB_ADMIN') && !adminDashCrashed && (
                   <ErrorBoundary
                     fallbackLabel="Admin Dashboard"
                     resetKey={state.view}
@@ -3608,7 +3631,7 @@ const App: React.FC = () => {
                       </Suspense>
                     </ErrorBoundary>
                 ) : (
-                    state.view === 'STUDENT_DASHBOARD' as any && (
+                    (!['ADMIN_DASHBOARD', 'ADMIN', 'SCHOOL_ECOSYSTEM', 'COACHING_ECOSYSTEM', 'STREAMS', 'SUBJECTS', 'CHAPTERS', 'LESSON', 'UPDATES', 'REVISION_HUB'].includes(state.view as string)) && (
                         <>
                         {maintenanceState?.config?.active && state.user?.role !== 'ADMIN' && state.user?.role !== 'SUB_ADMIN' && (
                           <MaintenanceBanner
@@ -3646,6 +3669,7 @@ const App: React.FC = () => {
                                 dailyStudySeconds={dailyStudySeconds} 
                                 onSubjectSelect={handleSubjectSelect} 
                                 onRedeemSuccess={u => setState(prev => ({...prev, user: u}))} 
+                                onUpdateUser={u => setState(prev => ({...prev, user: u}))} 
                                 settings={state.settings} 
                                 onStartWeeklyTest={handleStartWeeklyTest} 
                                 activeTab={studentTab} 
@@ -3762,7 +3786,7 @@ const App: React.FC = () => {
                               onImmersiveChange={setIsLessonImmersive}
                               nextTitle={_nextChapter?.title}
                               isFirstChapter={_isFirstChapter}
-                              onAdminBoard={(state.user?.role === 'ADMIN' || state.user?.role === 'SUB_ADMIN') ? () => setState(prev => ({...prev, view: 'ADMIN'})) : undefined}
+                              onAdminBoard={(state.user?.role === 'ADMIN' || state.user?.role === 'SUB_ADMIN') ? () => setState(prev => ({...prev, view: 'ADMIN_DASHBOARD'})) : undefined}
                               onSendToMcqCommunity={(draft) => setAppMcqCommunityDraft(draft)}
                               onSessionCreditsEarned={handleSessionCreditsEarned}
                onAdminEdit={(state.user?.role === 'ADMIN' || state.user?.role === 'SUB_ADMIN') ? () => {
@@ -3774,13 +3798,120 @@ const App: React.FC = () => {
                                     localStorage.setItem('nst_admin_edit_pending', JSON.stringify({ chapterId: ch.id, chapterTitle: ch.title, subjectName: sub.name, classLevel: cls, board: state.selectedBoard }));
                                   }
                                 } catch {}
-                                setState(prev => ({...prev, view: 'ADMIN'}));
+                                setState(prev => ({...prev, view: 'ADMIN_DASHBOARD'}));
                               } : undefined}
                           />
                         );
                       })()}
                       </Suspense>
                     </ErrorBoundary>
+                )}
+
+                {state.view === 'CHAPTERS' && state.selectedSubject && (
+                  <ErrorBoundary fallbackLabel="Chapters" compact>
+                    <div className="w-full max-w-4xl mx-auto px-4 py-4 space-y-4">
+                      {/* Header */}
+                      <div className="flex items-center justify-between bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={goBack}
+                            className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all active:scale-95 cursor-pointer"
+                            title="Back"
+                          >
+                            <ArrowLeft size={18} />
+                          </button>
+                          <div>
+                            <h2 className="text-lg font-black text-slate-900 dark:text-white leading-tight">
+                              {state.selectedSubject?.name || 'Chapters'}
+                            </h2>
+                            <p className="text-xs font-semibold text-slate-500">
+                              Class {state.selectedClass} • {state.selectedBoard || 'CBSE'}
+                            </p>
+                          </div>
+                        </div>
+                        <span className="text-xs font-black px-3 py-1 bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 rounded-full border border-blue-200 dark:border-blue-800">
+                          {state.chapters.length} Chapters
+                        </span>
+                      </div>
+
+                      {/* Chapter list */}
+                      {state.loading ? (
+                        <div className="space-y-3">
+                          {[1, 2, 3, 4, 5].map((n) => (
+                            <div key={n} className="h-16 rounded-2xl bg-slate-100 dark:bg-slate-800 animate-pulse" />
+                          ))}
+                        </div>
+                      ) : state.chapters.length === 0 ? (
+                        <div className="text-center py-12 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 space-y-3">
+                          <div className="text-4xl">📚</div>
+                          <h3 className="text-base font-bold text-slate-800 dark:text-white">No chapters found yet</h3>
+                          <p className="text-xs text-slate-500">Is subject ke chapters syllabus me load ho rahe hain.</p>
+                          <button
+                            onClick={goBack}
+                            className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold shadow-md hover:bg-blue-700 cursor-pointer"
+                          >
+                            Back to Subjects
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {state.chapters.map((ch, idx) => (
+                            <div
+                              key={ch.id || idx}
+                              onClick={() => onChapterClick(ch, 'NOTES_HTML_FREE')}
+                              className="group flex items-center justify-between p-4 bg-white dark:bg-slate-900 hover:bg-blue-50/50 dark:hover:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-blue-300 dark:hover:border-blue-600 transition-all shadow-sm hover:shadow-md cursor-pointer active:scale-[0.99]"
+                            >
+                              <div className="flex items-center gap-3">
+                                <span className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 text-xs font-black flex items-center justify-center shrink-0 border border-blue-100 dark:border-blue-800">
+                                  {ch.serialNumber || (idx + 1 < 10 ? `0${idx + 1}` : `${idx + 1}`)}
+                                </span>
+                                <div className="text-left">
+                                  <h4 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors line-clamp-1">
+                                    {ch.title}
+                                  </h4>
+                                  {ch.description && (
+                                    <p className="text-[11px] text-slate-500 line-clamp-1">{ch.description}</p>
+                                  )}
+                                </div>
+                              </div>
+                              <ChevronRight size={16} className="text-slate-400 group-hover:text-blue-600 transition-transform group-hover:translate-x-0.5 shrink-0" />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </ErrorBoundary>
+                )}
+
+                {(state.view as any) === 'UPDATES' && state.user && (
+                  <ErrorBoundary fallbackLabel="Updates" compact>
+                    <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>}>
+                      <UpdatesPage
+                        user={state.user}
+                        settings={state.settings}
+                        isDarkMode={darkMode}
+                        onBack={goBack}
+                        onOpenMessenger={() => {}}
+                        onOpenStudyRoom={() => {}}
+                        onOpenRevisionHub={() => setState(prev => ({ ...prev, view: 'REVISION_HUB' as any }))}
+                        appName={state.settings?.appName}
+                      />
+                    </Suspense>
+                  </ErrorBoundary>
+                )}
+
+                {(state.view as any) === 'REVISION_HUB' && state.user && (
+                  <ErrorBoundary fallbackLabel="Revision Hub" compact>
+                    <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>}>
+                      <RevisionHubScreen
+                        user={state.user}
+                        settings={state.settings}
+                        onBack={goBack}
+                        onTabChange={setStudentTab}
+                        appName={state.settings?.appName}
+                      />
+                    </Suspense>
+                  </ErrorBoundary>
                 )}
             </>
             </ErrorBoundary>

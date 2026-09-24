@@ -3249,12 +3249,17 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
   }, [user, studyTimerSeconds]);
   const [position, setPosition] = useState<{ x: number; y: number }>(() => {
     if (typeof window !== 'undefined') {
+      const maxX = Math.max(10, window.innerWidth - 75);
+      const maxY = Math.max(65, window.innerHeight - 95);
       try {
         const saved = localStorage.getItem('nst_pedro_position');
         if (saved) {
           const parsed = JSON.parse(saved);
           if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number') {
-            return parsed;
+            return {
+              x: Math.min(Math.max(10, parsed.x), maxX),
+              y: Math.min(Math.max(65, parsed.y), maxY)
+            };
           }
         }
       } catch {}
@@ -3266,9 +3271,33 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
     return { x: 280, y: 550 };
   });
 
+  // Clamp position to visible viewport when window is resized or screen orientation changes
+  useEffect(() => {
+    const handleResize = () => {
+      setPosition(prev => {
+        const maxX = Math.max(10, window.innerWidth - 75);
+        const maxY = Math.max(65, window.innerHeight - 95);
+        const clampedX = Math.min(Math.max(10, prev.x), maxX);
+        const clampedY = Math.min(Math.max(65, prev.y), maxY);
+        if (clampedX !== prev.x || clampedY !== prev.y) {
+          return { x: clampedX, y: clampedY };
+        }
+        return prev;
+      });
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const [isDragging, setIsDragging] = useState(false);
   const [hasMoved, setHasMoved] = useState(false);
-  const [isHidden, setIsHidden] = useState(hidden);
+  const [isHidden, setIsHidden] = useState<boolean>(() => {
+    if (hidden) return true;
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('nst_pedro_hidden') === 'true';
+    }
+    return false;
+  });
   const [speechBubbleText, setSpeechBubbleText] = useState<string | null>(null);
   const [isSpeakingLive, setIsSpeakingLive] = useState(false);
   const dragStartRef = useRef<{ startX: number; startY: number; initX: number; initY: number }>({
@@ -3483,9 +3512,15 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
       setIsHidden(false);
       setRetirePhase('none');
       setFlyingHeadPos(null);
-      if (homePosRef.current) {
-        setPosition(homePosRef.current);
-      }
+      const safeX = typeof window !== 'undefined' ? Math.max(10, window.innerWidth - 75) : 280;
+      const safeY = typeof window !== 'undefined' ? Math.max(80, window.innerHeight - 150) : 550;
+      const targetX = homePosRef.current && homePosRef.current.y > 60
+        ? Math.min(Math.max(10, homePosRef.current.x), typeof window !== 'undefined' ? window.innerWidth - 75 : 300)
+        : safeX;
+      const targetY = homePosRef.current && homePosRef.current.y > 60
+        ? Math.min(Math.max(65, homePosRef.current.y), typeof window !== 'undefined' ? window.innerHeight - 95 : 550)
+        : safeY;
+      setPosition({ x: targetX, y: targetY });
       if (typeof window !== 'undefined') {
         localStorage.removeItem('nst_pedro_hidden');
         localStorage.removeItem('nst_pedro_sleeping');

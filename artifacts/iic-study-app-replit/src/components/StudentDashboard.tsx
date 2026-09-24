@@ -57,6 +57,7 @@ import { ref, query, limitToLast, onValue, set } from "firebase/database";
 import { GoogleAuthProvider, signInWithPopup, setPersistence, browserLocalPersistence } from "firebase/auth";
 import {
   getSubjectsList,
+  isSubjectMatch,
   DEFAULT_APP_FEATURES,
   ALL_APP_FEATURES,
   LEVEL_UNLOCKABLE_FEATURES,
@@ -91,6 +92,8 @@ import {
 } from "../utils/creditSubscriptionUtils";
 import { activateDiamondSub, canClaimDiamondSubToday } from "../utils/diamondUtils";
 import { Button } from "./ui/button";
+import { MathLessonViewer } from './MathLessonViewer';
+import { PremiumUpgradeModal } from './PremiumUpgradeModal';
 import { getActiveChallenges, saveChallenge20 } from "../services/questionBank";
 import { generateDailyChallengeQuestions, getChallengeDateKey, isDailyChallenge20 } from "../utils/challengeGenerator";
 import { searchNotesByWords, searchNotesByTitle, type NoteSearchResult } from "../utils/noteSearcher";
@@ -471,6 +474,7 @@ interface Props {
   onOpenSchool?: () => void;
   onOpenCoaching?: () => void;
   onOpenMcqAnalysis?: (result: import('../types').MCQResult) => void;
+  onUpdateUser?: (u: User) => void;
 }
 
 const DashboardSectionWrapper = ({
@@ -709,6 +713,7 @@ export const StudentDashboard: React.FC<Props> = ({
   onOpenSchool,
   onOpenCoaching,
   onOpenMcqAnalysis,
+  onUpdateUser,
 }) => {
   const [themeRevision, setThemeRevision] = useState(0);
   useEffect(() => {
@@ -725,6 +730,8 @@ export const StudentDashboard: React.FC<Props> = ({
   const isGameEnabled = settings?.isGameEnabled !== false;
 
   const handleTabChangeWrapper = (tab: any) => {
+    setMathViewerEntry(null);
+    setMathImmersive(false);
     if (
       tab === "OPEN_CATALOG_PREMIUM_NOTES" ||
       tab === "OPEN_CATALOG_DEEP_DIVE" ||
@@ -1378,7 +1385,7 @@ export const StudentDashboard: React.FC<Props> = ({
     const _lid = overrideLid ?? (lucentNoteViewer as any)?.id ?? '';
     const _pi  = overridePi  ?? lucentPageIndex ?? 0;
     if (_lid && isPgWriteUnlocked(_lid, _pi)) { action(); return; }
-    showCoinGate(20, 'Writing Mode', () => {
+    showCoinGate(20, 'Premium Notes', () => {
       if (_lid) markPgWriteUnlocked(_lid, _pi);
       action();
     }, undefined, undefined, pgInfo);
@@ -2811,6 +2818,7 @@ export const StudentDashboard: React.FC<Props> = ({
     };
   }, []);
   const [showCameraModal, setShowCameraModal] = useState(false);
+  const [showPhotoFullscreen, setShowPhotoFullscreen] = useState(false);
 
   const [showNameChangeModal, setShowNameChangeModal] = useState(false);
   const [newNameInput, setNewNameInput] = useState("");
@@ -3588,7 +3596,18 @@ export const StudentDashboard: React.FC<Props> = ({
       touchStartX = e.touches[0].clientX;
 
       // Ensure swipe only activates if it starts within the top banner area (roughly top 100px)
-      const target = e.target as HTMLElement;
+      const rawTarget = e.target;
+      const target = (rawTarget && typeof (rawTarget as any).closest === 'function')
+        ? (rawTarget as Element)
+        : ((rawTarget as any)?.parentElement && typeof (rawTarget as any).parentElement.closest === 'function')
+          ? ((rawTarget as any).parentElement as Element)
+          : null;
+
+      if (!target) {
+        isTouchingTopBar = false;
+        return;
+      }
+
       // Ignore swipe gesture if touching a table, slider, horizontal scrolling container, or any popup panel
       if (
         target.closest('table') ||
@@ -3864,6 +3883,63 @@ export const StudentDashboard: React.FC<Props> = ({
   const [lucentNoteViewer, setLucentNoteViewer] = useState<LucentNoteEntry | null>(null);
   const [lucentPageIndex, setLucentPageIndex] = useState(0);
   const [lucentPageListViewer, setLucentPageListViewer] = useState<LucentNoteEntry | null>(null);
+  const [mathViewerEntry, setMathViewerEntry] = useState<LucentNoteEntry | null>(null);
+  const [mathImmersive, setMathImmersive] = useState(false);
+  const [loadingMathLessonId, setLoadingMathLessonId] = useState<string | null>(null);
+  const [premiumUpgradeModal, setPremiumUpgradeModal] = useState<{
+    isOpen: boolean;
+    featureName: string;
+    requiredTier?: 'BASIC' | 'ULTRA' | 'BASIC_OR_ULTRA';
+    description?: string;
+    perks?: string[];
+  } | null>(null);
+
+  const openUpgradeModal = (
+    featureName: string,
+    requiredTier: 'BASIC' | 'ULTRA' | 'BASIC_OR_ULTRA' = 'BASIC_OR_ULTRA',
+    description?: string,
+    perks?: string[]
+  ) => {
+    setPremiumUpgradeModal({
+      isOpen: true,
+      featureName,
+      requiredTier,
+      description,
+      perks,
+    });
+  };
+
+  const handleOpenMathLesson = async (entry: LucentNoteEntry) => {
+    let fullEntry = { ...entry };
+    setLoadingMathLessonId(entry.id);
+    try {
+      if (!fullEntry.mathBookPages?.length && !fullEntry.mathPremiumNotesPages?.length && !fullEntry.mathSolutionPages?.length) {
+        const chId = entry.chapterId || entry.id.replace(/^math_[^_]+_[^_]+_/, '');
+        const b = entry.board || _curBoard || 'BSEB';
+        const c = entry.classLevel || class612SubjectView?.classLevel || '10';
+        const key = `nst_content_${b}_${c}_Mathematics_${chId}`;
+        const data = await getChapterData(key);
+        if (data) {
+          fullEntry.mathBookPages = data.mathBookPages || [];
+          fullEntry.mathPremiumNotesPages = data.mathPremiumNotesPages || [];
+          fullEntry.mathSolutionPages = data.mathSolutionPages || [];
+          if (!fullEntry.pages?.length && data.mathBookPages?.length) {
+            fullEntry.pages = data.mathBookPages.map((p: any, idx: number) => ({
+              id: p.id || `p_${idx + 1}`,
+              pageNo: String(p.pageNo || idx + 1),
+              content: p.imageUrl ? `<img src="${p.imageUrl}" class="w-full rounded" />` : (p.title || `Page ${idx + 1}`),
+            }));
+          }
+        }
+      }
+      setMathViewerEntry(fullEntry);
+    } catch (e) {
+      console.warn('Error loading math lesson full data:', e);
+      setMathViewerEntry(fullEntry);
+    } finally {
+      setLoadingMathLessonId(null);
+    }
+  };
   // Reading Resume / Restart prompt when re-opening a page with stored reading time
   const [pageResumePrompt, setPageResumePrompt] = useState<{
     entry: LucentNoteEntry;
@@ -4763,6 +4839,28 @@ export const StudentDashboard: React.FC<Props> = ({
       window.dispatchEvent(new CustomEvent('iic-mcq-session', { detail: { active: false } }));
     }
   }, [showRevisionHubScreen]);
+
+  // Automatically dismiss Math Lesson Viewer whenever the active tab or any page switches
+  const prevMathPageDepRef = useRef<string>('');
+  useEffect(() => {
+    const pageKey = `${activeTab}_${showRevisionHubScreen}_${showMyRoutine}_${showUpdatesPage}_${showStarredPage}_${showProgressDashboard}_${showDailyEventPage}_${showChat}_${showMcqCommunityPopup}_${showWhatsAppChatModal}`;
+    if (prevMathPageDepRef.current && prevMathPageDepRef.current !== pageKey && mathViewerEntry) {
+      setMathViewerEntry(null);
+    }
+    prevMathPageDepRef.current = pageKey;
+  }, [
+    activeTab,
+    showRevisionHubScreen,
+    showMyRoutine,
+    showUpdatesPage,
+    showStarredPage,
+    showProgressDashboard,
+    showDailyEventPage,
+    showChat,
+    showMcqCommunityPopup,
+    showWhatsAppChatModal,
+    mathViewerEntry,
+  ]);
   // 2-category view toggle for the Important Notes pages: 'list' = original
   // flat list, 'bybook' = grouped by source book / page.
   const [importantNotesView, setImportantNotesView] = useState<'list' | 'bybook'>('list');
@@ -6183,7 +6281,7 @@ export const StudentDashboard: React.FC<Props> = ({
       availableModes: [
         { mode: 'READING',  label: 'Reading Mode',  emoji: '📖', cost: 20,
           isUnlocked: isPgReadUnlocked(entry.id, pageIdx), isAccessible: true, requiredTier: 'free'  as const, unlockAction: () => markPgReadUnlocked(entry.id, pageIdx) },
-        { mode: 'WRITING',  label: 'Writing Mode',  emoji: '✍️', cost: 20,
+        { mode: 'WRITING',  label: 'Premium Notes', emoji: '✨', cost: 20,
           isUnlocked: isPgWriteUnlocked(entry.id, pageIdx), isAccessible: true, requiredTier: 'free' as const, unlockAction: () => markPgWriteUnlocked(entry.id, pageIdx) },
         { mode: 'PROJECTOR', label: 'Projector Mode', emoji: '📽️', cost: 20,
           isUnlocked: isProjectorUnlocked(entry.id, pageIdx), isAccessible: true, requiredTier: 'free' as const, unlockAction: () => markProjectorUnlocked(entry.id, pageIdx) },
@@ -6204,7 +6302,7 @@ export const StudentDashboard: React.FC<Props> = ({
       showCoinGate(20, 'MCQ Practice', () => { markMcqPageUnlocked(entry.id, pageIdx); doOpen(); }, undefined, undefined, _openPgInfo);
     } else if (_isWriteIntent) {
       if (isPgWriteUnlocked(entry.id, pageIdx)) { doOpen(); return; }
-      showCoinGate(20, 'Writing Mode', () => { markPgWriteUnlocked(entry.id, pageIdx); doOpen(); }, undefined, undefined, _openPgInfo);
+      showCoinGate(20, 'Premium Notes', () => { markPgWriteUnlocked(entry.id, pageIdx); doOpen(); }, undefined, undefined, _openPgInfo);
     } else {
       if (isPgReadUnlocked(entry.id, pageIdx)) { doOpen(); return; }
       showCoinGate(20, 'Reading Mode',
@@ -6376,7 +6474,7 @@ export const StudentDashboard: React.FC<Props> = ({
       availableModes: [
         { mode: 'READING',   label: 'Reading Mode', emoji: '📖', cost: 20,
           isUnlocked: isPgReadUnlocked(_lid, 0), isAccessible: true, requiredTier: 'free'  as const, unlockAction: () => markPgReadUnlocked(_lid, 0) },
-        { mode: 'WRITING',   label: 'Writing Mode', emoji: '✍️', cost: 20,
+        { mode: 'WRITING',   label: 'Premium Notes', emoji: '✨', cost: 20,
           isUnlocked: isPgWriteUnlocked(_lid, 0), isAccessible: true, requiredTier: 'free' as const, unlockAction: () => markPgWriteUnlocked(_lid, 0) },
         ...(_hasMcq ? [
           { mode: 'MCQ',       label: 'MCQ Practice', emoji: '🧠', cost: 20,
@@ -6390,7 +6488,7 @@ export const StudentDashboard: React.FC<Props> = ({
 
     if (mode === 'WRITING') {
       if (isPgWriteUnlocked(_lid, 0)) { doOpen(); return; }
-      showCoinGate(20, 'Writing Mode', () => { markPgWriteUnlocked(_lid, 0); doOpen(); }, undefined, undefined, _pgInfo);
+      showCoinGate(20, 'Premium Notes', () => { markPgWriteUnlocked(_lid, 0); doOpen(); }, undefined, undefined, _pgInfo);
     } else if (mode === 'MCQ') {
       if (isMcqPageUnlocked(_lid, 0)) { doOpen(); return; }
       showCoinGate(20, 'MCQ Practice', () => { markMcqPageUnlocked(_lid, 0); doOpen(); }, undefined, undefined, _pgInfo);
@@ -8287,6 +8385,9 @@ export const StudentDashboard: React.FC<Props> = ({
       }
     } catch (_) {}
     onRedeemSuccess(updatedUser);
+    if (onUpdateUser) {
+      try { onUpdateUser(updatedUser); } catch {}
+    }
 
     // Sync to cloud in background
     if (!isImpersonating) {
@@ -8690,8 +8791,119 @@ export const StudentDashboard: React.FC<Props> = ({
     if (class612SubjectView && contentViewStep === "SUBJECTS") {
       const { classLevel: cv, subject: sv } = class612SubjectView;
       const _allLucent = (settings?.lucentNotes || []) as LucentNoteEntry[];
-      const classLessons = _allLucent
-        .filter(n => String(n.classLevel) === String(cv) && String(n.subject).toLowerCase().trim() === String(sv.id).toLowerCase().trim() && (n.board === _curBoard || !n.board))
+
+      const isTargetMath =
+        String(sv.id || '').toLowerCase().trim() === 'math' ||
+        String(sv.id || '').toLowerCase().trim() === 'mathematics' ||
+        (sv.name && (sv.name.includes('गणित') || sv.name.toLowerCase().includes('math')));
+
+      // Auto-fallback: Also discover math chapters from index and localStorage if not yet in _allLucent
+      const mathFallbackEntries: LucentNoteEntry[] = [];
+      if (isTargetMath) {
+        try {
+          const rawIdx = localStorage.getItem('nst_math_chapters_index');
+          if (rawIdx) {
+            const parsedIdx = JSON.parse(rawIdx);
+            if (Array.isArray(parsedIdx)) {
+              parsedIdx.forEach((item: any) => {
+                if (String(item.classLevel) === String(cv)) {
+                  const bMatch = !item.board || item.board === 'ALL' || _curBoard === 'ALL' || item.board === _curBoard;
+                  if (bMatch) {
+                    const alreadyExists = _allLucent.some(
+                      n => n.chapterId === item.chapterId || n.id === item.key || n.id === `math_${item.board}_${item.classLevel}_${item.chapterId}`
+                    );
+                    if (!alreadyExists) {
+                      mathFallbackEntries.push({
+                        id: item.key || `math_${item.board}_${item.classLevel}_${item.chapterId}`,
+                        subject: 'math',
+                        bookName: 'गणित (Mathematics)',
+                        classLevel: item.classLevel,
+                        board: item.board === 'ALL' ? undefined : item.board,
+                        lessonTitle: item.chapterTitle || 'Math Chapter',
+                        pages: [],
+                        isMathLesson: true,
+                        chapterId: item.chapterId,
+                      });
+                    }
+                  }
+                }
+              });
+            }
+          }
+
+          // Scan localStorage keys for this class/board
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith('nst_content_') && (k.includes('_Mathematics_') || k.includes('_math_'))) {
+              const parts = k.slice('nst_content_'.length).split('_');
+              if (parts.length >= 4) {
+                const b = parts[0];
+                const c = parts[1];
+                const chId = parts[parts.length - 1];
+                if (String(c) === String(cv)) {
+                  const bMatch = !b || b === 'ALL' || _curBoard === 'ALL' || b === _curBoard;
+                  if (bMatch) {
+                    const alreadyPresent = _allLucent.some(n => n.chapterId === chId) || mathFallbackEntries.some(n => n.chapterId === chId);
+                    if (!alreadyPresent) {
+                      try {
+                        const parsedContent = JSON.parse(localStorage.getItem(k) || '{}');
+                        mathFallbackEntries.push({
+                          id: k,
+                          subject: 'math',
+                          bookName: 'गणित (Mathematics)',
+                          classLevel: c as any,
+                          board: b === 'ALL' ? undefined : (b as any),
+                          lessonTitle: parsedContent.chapterTitle || parsedContent.title || 'Math Chapter',
+                          pages: (parsedContent.mathBookPages || []).map((p: any, idx: number) => ({
+                            id: p.id || `p_${idx+1}`,
+                            pageNo: String(p.pageNo || idx+1),
+                            content: p.imageUrl ? `<img src="${p.imageUrl}" class="w-full rounded" />` : (p.title || `Page ${idx+1}`),
+                          })),
+                          mathBookPages: parsedContent.mathBookPages || [],
+                          mathPremiumNotesPages: parsedContent.mathPremiumNotesPages || [],
+                          mathSolutionPages: parsedContent.mathSolutionPages || [],
+                          isMathLesson: true,
+                          chapterId: chId,
+                        });
+                      } catch {}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+
+      const combinedNotes = [..._allLucent, ...mathFallbackEntries];
+      const classLessons = combinedNotes
+        .filter(n => {
+          if (String(n.classLevel) !== String(cv)) return false;
+
+          const nSub = String(n.subject || '').toLowerCase().trim();
+          const targetSub = String(sv.id || '').toLowerCase().trim();
+          const isMathNote =
+            nSub === 'math' ||
+            nSub === 'mathematics' ||
+            nSub === 'ganit' ||
+            nSub === 'गणित' ||
+            (n.bookName && n.bookName.toLowerCase().includes('math')) ||
+            !!n.isMathLesson ||
+            !!(n.mathBookPages && n.mathBookPages.length > 0);
+
+          if (isTargetMath) {
+            if (!isMathNote) return false;
+          } else {
+            if (nSub !== targetSub && !isSubjectMatch(n.subject, sv.id, cv, settings) && !isSubjectMatch(n.subject, sv.name, cv, settings)) {
+              return false;
+            }
+          }
+
+          if (n.board && n.board !== 'ALL' && _curBoard !== 'ALL' && n.board !== _curBoard) {
+            return false;
+          }
+          return true;
+        })
         .sort((a, b) => (a.lessonTitle || '').localeCompare(b.lessonTitle || ''));
 
       return (
@@ -8833,6 +9045,10 @@ export const StudentDashboard: React.FC<Props> = ({
                           setRoutineGate({ entry, pageIdx: 0 });
                           return;
                         }
+                        if (entry.isMathLesson || entry.mathBookPages?.length || entry.mathPremiumNotesPages?.length || entry.mathSolutionPages?.length || isTargetMath) {
+                          handleOpenMathLesson(entry);
+                          return;
+                        }
                         if (entry.mcqOnly) {
                           lucentInitialTabRef.current = { tab: 'MCQS' };
                           tryOpenLucentNote(entry, 0);
@@ -8840,13 +9056,27 @@ export const StudentDashboard: React.FC<Props> = ({
                           setLucentPageListViewer(_withSortedPages(entry));
                         }
                       }}
-                      className="w-full p-3 text-left active:scale-[0.98] flex items-center gap-3"
+                      className="w-full p-3 text-left active:scale-[0.98] flex items-center gap-3 cursor-pointer"
                     >
                       <div
                         className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${_isLocked ? 'bg-red-100 text-red-500' : _showRoutineLock ? 'bg-amber-50 text-amber-500' : _isTodayRoutineLesson ? 'bg-amber-100' : ''}`}
                         style={(_isLocked || _showRoutineLock || _isTodayRoutineLesson) ? {} : { background: `${tierTheme.primary}18`, color: tierTheme.primary }}
                       >
-                        {_isLocked ? <span className="text-xl">🔒</span> : _showRoutineLock ? <span className="text-xl">🔒</span> : _isTodayRoutineLesson ? <span className="text-xl" style={{ color: '#d97706' }}>📅</span> : entry.mcqOnly ? <span className="text-xl">🎯</span> : <BookOpen size={20} />}
+                        {loadingMathLessonId === entry.id ? (
+                          <span className="animate-spin text-xl">⏳</span>
+                        ) : _isLocked ? (
+                          <span className="text-xl">🔒</span>
+                        ) : _showRoutineLock ? (
+                          <span className="text-xl">🔒</span>
+                        ) : _isTodayRoutineLesson ? (
+                          <span className="text-xl" style={{ color: '#d97706' }}>📅</span>
+                        ) : (entry.isMathLesson || isTargetMath) ? (
+                          <span className="text-xl">📐</span>
+                        ) : entry.mcqOnly ? (
+                          <span className="text-xl">🎯</span>
+                        ) : (
+                          <BookOpen size={20} />
+                        )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className={`text-sm font-black truncate ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{entry.lessonTitle}</p>
@@ -8859,7 +9089,12 @@ export const StudentDashboard: React.FC<Props> = ({
                         ) : (
                           <p className={`text-[11px] font-bold mt-0.5 flex flex-wrap gap-1.5 items-center ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                             {entry.isSampleLesson && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-emerald-100 text-emerald-700">🆓 FREE</span>}
-                            {entry.mcqOnly ? <span className="text-emerald-600 font-black">🎯 MCQ Only</span> : <span>{entry.pages.length} page{entry.pages.length !== 1 ? 's' : ''}</span>}
+                            {(entry.isMathLesson || isTargetMath) && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-blue-100 text-blue-700">
+                                📖 Math Reader ({entry.mathBookPages?.length || entry.pages?.length || 0} Pages)
+                              </span>
+                            )}
+                            {entry.mcqOnly ? <span className="text-emerald-600 font-black">🎯 MCQ Only</span> : !entry.isMathLesson && <span>{entry.pages.length} page{entry.pages.length !== 1 ? 's' : ''}</span>}
                             {topicNames.length > 0 && <span>• {topicNames.length} topic{topicNames.length > 1 ? 's' : ''}</span>}
                             {hasMcqs && <span className="px-1.5 py-0.5 rounded text-[9px] font-black" style={{ background: `${tierTheme.primary}18`, color: tierTheme.primary }}>MCQ</span>}
                             {hasPdf && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-blue-100 text-blue-700">PDF</span>}
@@ -8892,7 +9127,7 @@ export const StudentDashboard: React.FC<Props> = ({
                       </div>
                       <ChevronRight size={18} className={isDarkMode ? 'text-slate-400' : 'text-slate-400'} />
                     </button>
-                    {topicNames.length > 0 && !_isLocked && (
+                    {topicNames.length > 0 && !_isLocked && !isTargetMath && !entry.isMathLesson && !(entry.mathBookPages && entry.mathBookPages.length > 0) && !((entry.subject || '').toLowerCase().includes('math') || (entry.subject || '').toLowerCase().includes('ganit') || (entry.subject || '').includes('गणित')) && !((entry.bookName || '').toLowerCase().includes('math') || (entry.bookName || '').includes('गणित')) && (
                       <button
                         onClick={() => { setLucentLessonCompare(entry); setLucentLessonCompareTab('topics'); }}
                         className={`w-full border-t px-3 py-2 flex items-center gap-2 active:scale-[0.99] transition-all ${isDarkMode ? 'border-slate-700 bg-slate-800/50' : 'border-slate-100 bg-slate-50'}`}
@@ -9216,8 +9451,8 @@ export const StudentDashboard: React.FC<Props> = ({
                     </div>
                     <ChevronRight size={18} className={`${theme.text} shrink-0`} />
                   </button>
-                  {/* Compare / Topics button — only if lesson has tagged topics */}
-                  {topicNames.length > 0 && (
+                  {/* Compare / Topics button — only if lesson has tagged topics and not a math lesson */}
+                  {topicNames.length > 0 && !entry.isMathLesson && !(entry.mathBookPages && entry.mathBookPages.length > 0) && !((entry.subject || '').toLowerCase().includes('math') || (entry.subject || '').toLowerCase().includes('ganit') || (entry.subject || '').includes('गणित')) && !((entry.bookName || '').toLowerCase().includes('math') || (entry.bookName || '').includes('गणित')) && (
                     <button
                       onClick={() => { setLucentLessonCompare(entry); setLucentLessonCompareTab('topics'); }}
                       className={`w-full border-t ${theme.border} px-3 py-2 flex items-center gap-2 ${theme.bgSoft} active:scale-[0.99] transition-all`}
@@ -9691,7 +9926,7 @@ export const StudentDashboard: React.FC<Props> = ({
                 availableModes: [
                   { mode: 'READING',   label: 'Reading Mode', emoji: '📖', cost: 20,
                     isUnlocked: isPgReadUnlocked(activeHw.id, 0),  isAccessible: true,                           requiredTier: 'free'  as const, unlockAction: () => markPgReadUnlocked(activeHw.id, 0) },
-                  { mode: 'WRITING',   label: 'Writing Mode', emoji: '✍️', cost: 20,
+                  { mode: 'WRITING',   label: 'Premium Notes', emoji: '✨', cost: 20,
                     isUnlocked: isPgWriteUnlocked(activeHw.id, 0), isAccessible: true,                           requiredTier: 'free'  as const, unlockAction: () => markPgWriteUnlocked(activeHw.id, 0) },
                   ...(hasMcq ? [
                     { mode: 'MCQ',       label: 'MCQ Practice', emoji: '🧠', cost: 20,
@@ -9734,9 +9969,9 @@ export const StudentDashboard: React.FC<Props> = ({
                     }} style={_hwTabStyle} className={_hwTabCls(_isReadActive, 'bg-indigo-600', 'text-white')}>
                       Reading Mode
                     </button>
-                    {/* Free+ — Writing (credit gate — pass activeHw.id so unlock is remembered per lesson) */}
+                    {/* Free+ — Premium Notes (credit gate — pass activeHw.id so unlock is remembered per lesson) */}
                     <button data-tab-active={String(_isWriteActive)} onClick={() => handleWriteModeGate(() => { setHwViewMode('notes'); setHwNotesViewMode('html'); _hwSave('notes', 'html'); }, _hwPgInfo, activeHw.id, 0)} style={_hwTabStyle} className={_hwTabCls(_isWriteActive, 'bg-teal-600', 'text-white')}>
-                      Writing Mode
+                      Premium Notes
                     </button>
                     {/* Free+ — MCQ Practice → Class 6-12 jaisa inline MCQ view */}
                     {hasMcq && (
@@ -13295,7 +13530,7 @@ export const StudentDashboard: React.FC<Props> = ({
       return (
         <div className="animate-in fade-in zoom-in duration-300 pb-28 min-h-screen" data-pw={_pw ? "1" : "0"} style={{ background: _pBg }}>
 
-          {/* ── CARD 1: Identity ── */}
+          {/* ── CARD 1: Identity & Recovery (Premium 2-Column Split) ── */}
           <div className="mx-3 mt-3 rounded-3xl overflow-hidden mb-3" style={{ background: _pCard, border: _pBdrMain, boxShadow: `0 12px 48px ${tierTheme.primary}30, 0 4px 20px rgba(0,0,0,0.42)` }}>
 
             {/* ── Profile Header ── */}
@@ -13303,7 +13538,7 @@ export const StudentDashboard: React.FC<Props> = ({
               background: _light
                 ? `linear-gradient(160deg, ${tierTheme.primary}10 0%, ${tierTheme.primary}04 50%, transparent 100%)`
                 : `linear-gradient(160deg, ${tierTheme.primary}18 0%, ${tierTheme.primary}06 50%, transparent 100%)`,
-              paddingTop: 28,
+              paddingTop: 20,
               paddingBottom: 20,
             }}>
 
@@ -13322,319 +13557,211 @@ export const StudentDashboard: React.FC<Props> = ({
                 </svg>
               )}
 
-              {/* ─── Avatar — Level-wise progressive frame ─── */}
-              <div className="flex justify-center mb-5">
-                {(() => {
-                  const _lvl = _pLvl.level;
-                  const _col = _pLvl.color;
-                  const _anim = !cardFxOff && !levelAnimOff;
-                  // Avatar grows with level
-                  const _sz  = _lvl >= 13 ? 114 : _lvl >= 9 ? 106 : _lvl >= 5 ? 98 : 90;
-                  // Extra space around avatar for decorations
-                  const _pad = _lvl >= 13 ? 30 : _lvl >= 9 ? 24 : _lvl >= 5 ? 18 : _lvl >= 3 ? 12 : 6;
-                  const _total = _sz + _pad * 2;
-                  const cx = _total / 2;
-                  const cy = _total / 2;
-                  // Ring radii
-                  const _rA = _sz / 2 + 5;   // closest ring
-                  const _rB = _sz / 2 + 12;  // second ring / orbit
-                  const _rC = _sz / 2 + 19;  // third ring / orbit
-                  const _rD = _sz / 2 + 26;  // outermost ring
-                  const _orbitDur = _lvl >= 13 ? '4s' : _lvl >= 10 ? '5.5s' : '7s';
+              {/* ═══ TWO-COLUMN SIDE-BY-SIDE CONTAINER (STRICT SIDE-BY-SIDE ON ALL SCREENS) ═══ */}
+              <div className="relative z-10 px-2 sm:px-4">
+                <div className="flex flex-row items-stretch gap-2.5 sm:gap-4">
 
-                  /* ── L15 PREMIUM COIN ── */
-                  if (_lvl >= 15) {
-                    const coinSz = 196;
-                    const ccx = coinSz / 2;
-                    const ccy = coinSz / 2;
-                    const outerR = 95;
-                    const rimR   = 85;
-                    const faceR  = 72;
-                    const textR  = 79;
-                    return (
-                      <div className="relative flex items-center justify-center" style={{ width: coinSz, height: coinSz + 26 }}>
-                        <svg width={coinSz} height={coinSz} viewBox={`0 0 ${coinSz} ${coinSz}`} xmlns="http://www.w3.org/2000/svg" style={{ overflow: 'visible', display: 'block' }}>
-                          <defs>
-                            <radialGradient id="l15rim" cx="42%" cy="32%" r="68%">
-                              <stop offset="0%" stopColor="#3c3c48"/>
-                              <stop offset="45%" stopColor="#22222c"/>
-                              <stop offset="100%" stopColor="#13131a"/>
-                            </radialGradient>
-                            <radialGradient id="l15face" cx="45%" cy="35%" r="65%">
-                              <stop offset="0%" stopColor="#242432"/>
-                              <stop offset="65%" stopColor="#14141e"/>
-                              <stop offset="100%" stopColor="#0c0c14"/>
-                            </radialGradient>
-                            <linearGradient id="l15gold" x1="0%" y1="0%" x2="100%" y2="100%">
-                              <stop offset="0%" stopColor="#f7e07a"/>
-                              <stop offset="28%" stopColor="#c9a227"/>
-                              <stop offset="55%" stopColor="#edc84a"/>
-                              <stop offset="78%" stopColor="#9e7618"/>
-                              <stop offset="100%" stopColor="#f7e07a"/>
-                            </linearGradient>
-                            <filter id="l15glow" x="-25%" y="-25%" width="150%" height="150%">
-                              <feGaussianBlur stdDeviation="3" result="b"/>
-                              <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-                            </filter>
-                            <filter id="l15textglow" x="-10%" y="-10%" width="120%" height="120%">
-                              <feGaussianBlur stdDeviation="1.5" result="b"/>
-                              <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-                            </filter>
-                            <clipPath id="l15logoClip">
-                              <circle cx={ccx} cy={ccy} r={faceR - 1}/>
-                            </clipPath>
-                          </defs>
-
-                          {/* Outer atmosphere rings */}
-                          <circle cx={ccx} cy={ccy} r={outerR + 8}  fill="none" stroke="#c9a227" strokeWidth="0.4" opacity="0.2"/>
-                          <circle cx={ccx} cy={ccy} r={outerR + 4}  fill="none" stroke="#c9a227" strokeWidth="0.6" opacity="0.3"/>
-
-                          {/* Main coin rim */}
-                          <circle cx={ccx} cy={ccy} r={outerR} fill="url(#l15rim)" stroke="url(#l15gold)" strokeWidth="2.8" filter="url(#l15glow)"/>
-
-                          {/* Inner rim ring */}
-                          <circle cx={ccx} cy={ccy} r={rimR} fill="none" stroke="#c9a227" strokeWidth="0.9" opacity="0.55"/>
-
-                          {/* Gold bar ornaments at 4 diagonal positions */}
-                          {[45, 135, 225, 315].map((deg, i) => {
-                            const rad = (deg * Math.PI) / 180;
-                            const x1 = ccx + Math.cos(rad) * (rimR + 3);
-                            const y1 = ccy + Math.sin(rad) * (rimR + 3);
-                            const x2 = ccx + Math.cos(rad) * (outerR - 3);
-                            const y2 = ccy + Math.sin(rad) * (outerR - 3);
-                            return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke="url(#l15gold)" strokeWidth="4" strokeLinecap="round" opacity="0.9"/>;
-                          })}
-
-                          {/* Small gold dots at cardinal positions on rim */}
-                          {[0, 90, 180, 270].map((deg, i) => {
-                            const rad = (deg * Math.PI) / 180;
-                            return <circle key={i} cx={ccx + Math.cos(rad) * (rimR + 4)} cy={ccy + Math.sin(rad) * (rimR + 4)} r="2.2" fill="#c9a227" opacity="0.75"/>;
-                          })}
-
-                          {/* Medal face */}
-                          <circle cx={ccx} cy={ccy} r={faceR} fill="url(#l15face)" stroke="url(#l15gold)" strokeWidth="1.8"/>
-
-                          {/* Curved text TOP: "THE PINNACLE OF RECOGNITION" */}
-                          <path id="l15top" d={`M ${ccx - textR} ${ccy} A ${textR} ${textR} 0 0 0 ${ccx + textR} ${ccy}`} fill="none"/>
-                          <text fontSize="7" fill="#c9a227" fontFamily="Arial,sans-serif" fontWeight="800" letterSpacing="1.4" filter="url(#l15textglow)">
-                            <textPath href="#l15top" startOffset="50%" textAnchor="middle">THE PINNACLE OF RECOGNITION</textPath>
-                          </text>
-
-                          {/* Curved text BOTTOM: "MAXIMUM ACHIEVED" */}
-                          <path id="l15bot" d={`M ${ccx + textR} ${ccy} A ${textR} ${textR} 0 0 0 ${ccx - textR} ${ccy}`} fill="none"/>
-                          <text fontSize="7" fill="#c9a227" fontFamily="Arial,sans-serif" fontWeight="800" letterSpacing="2.2" filter="url(#l15textglow)">
-                            <textPath href="#l15bot" startOffset="50%" textAnchor="middle">MAXIMUM ACHIEVED</textPath>
-                          </text>
-
-                          {/* Top & bottom text dots */}
-                          <circle cx={ccx} cy={ccy - textR + 1} r="1.8" fill="#c9a227" opacity="0.85"/>
-                          <circle cx={ccx} cy={ccy + textR - 1} r="1.8" fill="#c9a227" opacity="0.85"/>
-
-                          {/* Center content — Gmail photo / custom photo > app logo > emoji fallback */}
-                          {user.photoURL && (user.avatarChoice === 'gmail' || user.avatarChoice === 'custom' || !user.avatarChoice)
-                            ? <image href={user.photoURL}
-                                x={ccx - (faceR - 1)} y={ccy - (faceR - 1)}
-                                width={(faceR - 1) * 2} height={(faceR - 1) * 2}
-                                preserveAspectRatio="xMidYMid slice"
-                                clipPath="url(#l15logoClip)"/>
-                            : settings?.appLogo
-                              ? <image href={settings.appLogo}
-                                  x={ccx - (faceR - 1)} y={ccy - (faceR - 1)}
-                                  width={(faceR - 1) * 2} height={(faceR - 1) * 2}
-                                  preserveAspectRatio="xMidYMid meet"
-                                  clipPath="url(#l15logoClip)"/>
-                              : <>
-                                  <text x={ccx} y={ccy - 12} textAnchor="middle" fontSize="28" style={{ userSelect: 'none' }}>🎓</text>
-                                  <text x={ccx} y={ccy + 14} textAnchor="middle" fontSize="20" style={{ userSelect: 'none' }}>📖</text>
-                                  <text x={ccx} y={ccy + 38} textAnchor="middle" fontSize="17" fontWeight="900"
-                                    fill="url(#l15gold)" letterSpacing="5" fontFamily="'Arial Black',Arial,sans-serif"
-                                    filter="url(#l15glow)">IIC</text>
-                                </>
-                          }
-
-                          {/* Coin edge notch marks */}
-                          {Array.from({ length: 36 }, (_, i) => {
-                            const deg = i * 10;
-                            const rad = (deg * Math.PI) / 180;
-                            const skip = [45,135,225,315].some(d => Math.abs(deg-d) < 15);
-                            if (skip) return null;
-                            const r1 = outerR - 0.5;
-                            const r2 = outerR + 1.5;
-                            return <line key={i}
-                              x1={ccx + Math.cos(rad) * r1} y1={ccy + Math.sin(rad) * r1}
-                              x2={ccx + Math.cos(rad) * r2} y2={ccy + Math.sin(rad) * r2}
-                              stroke="#c9a227" strokeWidth="0.8" opacity="0.35"/>;
-                          })}
-                        </svg>
-
-                        {/* L15 badge floating at bottom */}
-                        <div className="absolute flex items-center gap-1.5 px-3 py-1 rounded-full z-10" style={{
-                          bottom: 0,
-                          left: '50%',
-                          transform: 'translateX(-50%)',
-                          background: 'linear-gradient(135deg, #22222c, #14141e)',
-                          border: '1.5px solid #c9a22780',
-                          boxShadow: '0 2px 16px rgba(201,162,39,0.45)',
-                        }}>
-                          <span style={{ fontSize: 11 }}>💠</span>
-                          <span className="font-black" style={{ fontSize: 10, color: '#d4a429', letterSpacing: '0.06em' }}>L15</span>
+                  {/* ── LEFT COLUMN: Account Recovery Data ── */}
+                  <div className="flex-1 min-w-0 flex flex-col justify-center">
+                    <div
+                      id="profile-recovery-card"
+                      className="rounded-2xl overflow-hidden h-full flex flex-col justify-between transition-all duration-300"
+                      style={{
+                        background: _light ? 'rgba(255,255,255,0.78)' : 'rgba(15,23,42,0.70)',
+                        backdropFilter: 'blur(12px)',
+                        border: `1px solid ${tierTheme.primary}35`,
+                        boxShadow: `0 8px 24px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.08)`,
+                      }}
+                    >
+                      {/* Header */}
+                      <div className="flex items-center justify-between gap-1.5 px-2.5 py-2" style={{ borderBottom: `1px solid ${tierTheme.primary}18` }}>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <div className="w-6 h-6 rounded-lg flex items-center justify-center shrink-0" style={{
+                            background: `linear-gradient(135deg, ${tierTheme.primary}35, ${tierTheme.primary}15)`,
+                            border: `1px solid ${tierTheme.primary}40`,
+                          }}>
+                            <span style={{ fontSize: 11 }}>🔐</span>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-black uppercase tracking-wider text-[9px] truncate" style={{ color: _pTxtColor }}>
+                              Recovery Data
+                            </p>
+                            <p className="text-[7.5px] truncate hidden sm:block" style={{ color: _pTxtSubColor }}>
+                              Protected credentials
+                            </p>
+                          </div>
                         </div>
-
-                        {/* L15 Camera Option Button */}
                         <button
-                          type="button"
-                          id="profile-camera-btn-l15"
-                          onClick={() => setShowCameraModal(true)}
-                          title="Profile photo badlein (Camera / Gallery)"
-                          className="absolute bottom-1 right-2 w-9 h-9 rounded-full bg-gradient-to-tr from-amber-500 to-amber-400 text-slate-950 font-black flex items-center justify-center shadow-xl border-2 border-slate-900 active:scale-90 transition-all z-20 cursor-pointer hover:scale-105"
+                          onClick={() => {
+                            setRecoveryData({
+                              mobile: (user as any).mobile || '',
+                              password: (user as any).password || '',
+                              email: user.email || '',
+                              securityQuestion: user.securityQuestion || "Aapka favorite subject kaunsa hai?",
+                              securityAnswer: user.securityAnswer || "",
+                            });
+                            setShowRecoveryModal(true);
+                          }}
+                          className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-lg font-black active:scale-95 transition-transform text-[8.5px] cursor-pointer"
+                          style={{
+                            background: `linear-gradient(135deg, ${tierTheme.primary}30, ${tierTheme.primary}18)`,
+                            color: tierTheme.primary,
+                            border: `1px solid ${tierTheme.primary}45`
+                          }}
                         >
-                          <Camera size={16} className="stroke-[2.5]" />
+                          ✏️ Edit
                         </button>
                       </div>
-                    );
-                  }
 
-                  return (
-                    <div className="relative flex items-center justify-center" style={{ width: _total, height: _total }}>
+                      {/* Credentials List */}
+                      <div className="divide-y divide-white/5 flex-1 flex flex-col justify-around text-left">
+                        {/* Mobile item */}
+                        <div className="flex items-center justify-between gap-1 px-2.5 py-1.5">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-[11px] shrink-0">📱</span>
+                            <div className="min-w-0">
+                              <span className="text-[7px] font-bold uppercase tracking-wider block" style={{ color: _pTxtSubColor }}>Mobile</span>
+                              <span className="text-[10px] font-bold truncate block" style={{ color: _pTxtColor }}>
+                                {(user as any).mobile || <span style={{ color: _pTxtMutedColor, fontWeight: 500 }}>Not set</span>}
+                              </span>
+                            </div>
+                          </div>
+                          <span className="text-[7.5px] font-black px-1.5 py-0.5 rounded shrink-0" style={{
+                            background: (user as any).mobile ? 'rgba(34,197,94,0.14)' : 'rgba(148,163,184,0.10)',
+                            color: (user as any).mobile ? '#16a34a' : '#94a3b8',
+                            border: `1px solid ${(user as any).mobile ? 'rgba(34,197,94,0.28)' : 'rgba(148,163,184,0.2)'}`,
+                          }}>
+                            {(user as any).mobile ? '✓ Set' : 'Empty'}
+                          </span>
+                        </div>
 
-                      {/* ── SVG decorative frame (rings, ornaments, orbits) ── */}
-                      <svg className="absolute inset-0 pointer-events-none" width={_total} height={_total} style={{ overflow: 'visible' }}>
+                        {/* Email item */}
+                        <div className="flex items-center justify-between gap-1 px-2.5 py-1.5">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-[11px] shrink-0">📧</span>
+                            <div className="min-w-0">
+                              <span className="text-[7px] font-bold uppercase tracking-wider block" style={{ color: _pTxtSubColor }}>Email</span>
+                              <span className="text-[10px] font-bold truncate block max-w-[100px] sm:max-w-[150px]" style={{ color: _pTxtColor }}>
+                                {user.email || <span style={{ color: _pTxtMutedColor, fontWeight: 500 }}>Not set</span>}
+                              </span>
+                            </div>
+                          </div>
+                          <span className="text-[7.5px] font-black px-1.5 py-0.5 rounded shrink-0" style={{
+                            background: user.email ? 'rgba(34,197,94,0.14)' : 'rgba(148,163,184,0.10)',
+                            color: user.email ? '#16a34a' : '#94a3b8',
+                            border: `1px solid ${user.email ? 'rgba(34,197,94,0.28)' : 'rgba(148,163,184,0.2)'}`,
+                          }}>
+                            {user.email ? '✓ Set' : 'Empty'}
+                          </span>
+                        </div>
 
-                        {/* L3+: Inner subtle ring */}
-                        {_lvl >= 3 && (
-                          <circle cx={cx} cy={cy} r={_rA} fill="none"
-                            stroke={_col} strokeWidth={_lvl >= 7 ? 1.5 : 1}
-                            strokeDasharray={_lvl >= 5 ? '5 8' : 'none'}
-                            opacity={0.45} />
-                        )}
+                        {/* Security question item */}
+                        <div className="flex items-center justify-between gap-1 px-2.5 py-1.5">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-[11px] shrink-0">❓</span>
+                            <div className="min-w-0">
+                              <span className="text-[7px] font-bold uppercase tracking-wider block" style={{ color: _pTxtSubColor }}>Sec. Answer</span>
+                              <span className="text-[9.5px] font-bold truncate block" style={{ color: _pTxtColor }}>
+                                {user.securityAnswer ? '••••••••' : <span style={{ color: _pTxtMutedColor, fontWeight: 500 }}>Not set</span>}
+                              </span>
+                            </div>
+                          </div>
+                          <span className="text-[7.5px] font-black px-1.5 py-0.5 rounded shrink-0" style={{
+                            background: user.securityAnswer ? 'rgba(34,197,94,0.14)' : 'rgba(148,163,184,0.10)',
+                            color: user.securityAnswer ? '#16a34a' : '#94a3b8',
+                            border: `1px solid ${user.securityAnswer ? 'rgba(34,197,94,0.28)' : 'rgba(148,163,184,0.2)'}`,
+                          }}>
+                            {user.securityAnswer ? '✓ Set' : 'Empty'}
+                          </span>
+                        </div>
 
-                        {/* L5+: Second dashed ring (rotates at L7+) */}
-                        {_lvl >= 5 && (
-                          <g style={{ transformOrigin: `${cx}px ${cy}px`, animation: _anim && _lvl >= 7 ? 'spin 12s linear infinite' : 'none' }}>
-                            <circle cx={cx} cy={cy} r={_rB} fill="none"
-                              stroke={_col} strokeWidth={1} strokeDasharray="7 10" opacity={0.35} />
-                          </g>
-                        )}
+                        {/* Student ID item */}
+                        <div className="flex items-center justify-between gap-1 px-2.5 py-1.5">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-[11px] shrink-0">🪪</span>
+                            <div className="min-w-0">
+                              <span className="text-[7px] font-bold uppercase tracking-wider block" style={{ color: _pTxtSubColor }}>ID</span>
+                              <span className="text-[9.5px] font-mono font-bold truncate block tracking-wider" style={{ color: _pTxtColor }}>
+                                {user.displayId || user.id}
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => { try { navigator.clipboard.writeText(user.displayId || user.id); showAlert('Student ID copied!', 'SUCCESS'); } catch {} }}
+                            className="shrink-0 px-1.5 py-0.5 rounded text-[8px] font-black active:scale-95 transition-transform"
+                            style={{ background: `${tierTheme.primary}18`, border: `1px solid ${tierTheme.primary}30`, color: tierTheme.primary }}
+                            title="Copy Student ID"
+                          >
+                            📋 Copy
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
 
-                        {/* L7+: 4 orbiting small dots on ring B */}
-                        {_lvl >= 7 && _anim && [0, 90, 180, 270].map((deg, i) => (
-                          <g key={`orb-${i}`}>
-                            <animateTransform attributeName="transform" type="rotate"
-                              from={`${deg} ${cx} ${cy}`} to={`${deg + 360} ${cx} ${cy}`}
-                              dur={_orbitDur} repeatCount="indefinite" />
-                            <circle cx={cx} cy={cy - _rB} r={_lvl >= 11 ? 4.5 : 3} fill={_col} opacity={0.9}>
-                              <animate attributeName="opacity" values="0.9;0.5;0.9" dur="2s" repeatCount="indefinite" />
-                            </circle>
-                          </g>
-                        ))}
+                  {/* ── RIGHT COLUMN: Avatar Picture (Bigger 4x3 Portrait) & User Name ── */}
+                  <div className="w-[155px] sm:w-[195px] shrink-0 flex flex-col items-center justify-between py-1 px-0.5">
+                    {/* 4x3 Portrait Photo Card (lambai 4, chaulai 3 — Bigger size 102x136) */}
+                    <div className="relative flex items-center justify-center">
+                      {/* Ambient Halo / Glow behind the card */}
+                      <div
+                        className="absolute inset-0 rounded-2xl blur-md pointer-events-none opacity-60"
+                        style={{
+                          background: `radial-gradient(circle, ${_pLvl.color}60 0%, transparent 75%)`,
+                          transform: 'scale(1.10)',
+                        }}
+                      />
 
-                        {/* L9+: Third ring */}
-                        {_lvl >= 9 && (
-                          <g style={{ transformOrigin: `${cx}px ${cy}px`, animation: _anim ? 'spin 18s linear infinite reverse' : 'none' }}>
-                            <circle cx={cx} cy={cy} r={_rC} fill="none"
-                              stroke={_col} strokeWidth={1} strokeDasharray="3 12" opacity={0.28} />
-                          </g>
-                        )}
-
-                        {/* L11+: Diamond ornaments at N/E/S/W on ring C */}
-                        {_lvl >= 11 && [0, 90, 180, 270].map((deg, i) => {
-                          const rad = ((deg - 90) * Math.PI) / 180;
-                          const dx = Math.cos(rad) * _rC;
-                          const dy = Math.sin(rad) * _rC;
-                          const s = _lvl >= 13 ? 6 : 4.5;
-                          return (
-                            <g key={`dia-${i}`}>
-                              {_anim && <animateTransform attributeName="transform" type="rotate"
-                                from={`${deg} ${cx} ${cy}`} to={`${deg + 360} ${cx} ${cy}`}
-                                dur={`${_lvl >= 13 ? 6 : 9}s`} repeatCount="indefinite" />}
-                              <polygon
-                                points={`${cx+dx},${cy+dy-s} ${cx+dx+s},${cy+dy} ${cx+dx},${cy+dy+s} ${cx+dx-s},${cy+dy}`}
-                                fill={_col} opacity={0.8} />
-                            </g>
-                          );
-                        })}
-
-                        {/* L13+: Fourth outer ring + 4 extra larger dots on ring D */}
-                        {_lvl >= 13 && (
-                          <>
-                            <circle cx={cx} cy={cy} r={_rD} fill="none"
-                              stroke={_col} strokeWidth={1.5} strokeDasharray="4 14" opacity={0.22} />
-                            {_anim && [45, 135, 225, 315].map((deg, i) => (
-                              <g key={`orb2-${i}`}>
-                                <animateTransform attributeName="transform" type="rotate"
-                                  from={`${deg} ${cx} ${cy}`} to={`${deg + 360} ${cx} ${cy}`}
-                                  dur="5s" repeatCount="indefinite" />
-                                <circle cx={cx} cy={cy - _rD} r={3} fill={_col} opacity={0.7} />
-                              </g>
-                            ))}
-                          </>
-                        )}
-
-                        {/* L15: Outermost pulsing circle (pure SVG, no CSS) */}
-                        {_lvl >= 15 && (
-                          <circle cx={cx} cy={cy} r={_rD + 8} fill="none"
-                            stroke={_col} strokeWidth={1} opacity={0} >
-                            <animate attributeName="r" values={`${_rD+6};${_rD+18};${_rD+6}`} dur="2.5s" repeatCount="indefinite" />
-                            <animate attributeName="opacity" values="0.5;0;0.5" dur="2.5s" repeatCount="indefinite" />
-                          </circle>
-                        )}
-                      </svg>
-
-                      {/* ── Spinning conic halo (L6+) ── */}
-                      {_lvl >= 6 && (
-                        <div className="absolute rounded-full pointer-events-none" style={{
-                          inset: -(_lvl >= 9 ? 9 : 6),
-                          background: `conic-gradient(from 0deg, ${_col}00, ${_col}cc, ${_col}00)`,
-                          borderRadius: '50%',
-                          animation: _anim ? `spin ${_lvl >= 13 ? '2s' : _lvl >= 9 ? '3s' : '4s'} linear infinite` : 'none',
-                        }} />
-                      )}
-
-                      {/* ── Inner separator ring (card bg) ── */}
-                      <div className="absolute rounded-full pointer-events-none" style={{
-                        inset: -3, background: _pCard, borderRadius: '50%',
-                      }} />
-
-                      {/* ── Avatar circle ── */}
+                      {/* Portrait Container: 3:4 aspect ratio (Width: 102px, Height: 136px) */}
                       <div
                         id="profile-avatar-circle"
-                        onClick={() => setShowCameraModal(true)}
-                        title="Profile photo badlein (Camera / Gallery)"
-                        className="relative rounded-full overflow-hidden flex items-center justify-center cursor-pointer group active:scale-95 transition-transform"
+                        onClick={() => setShowPhotoFullscreen(true)}
+                        title="Photo fullscreen dekhne ke liye click karein"
+                        className="relative rounded-2xl overflow-hidden flex items-center justify-center cursor-pointer group active:scale-95 transition-all select-none shadow-xl border"
                         style={{
-                          width: _sz, height: _sz, flexShrink: 0,
-                          background: `linear-gradient(145deg, ${_col}40, ${_col}10)`,
-                          border: `${_lvl >= 9 ? 3.5 : _lvl >= 5 ? 3 : 2.5}px solid ${_col}cc`,
-                          boxShadow: `0 0 0 1.5px ${_col}28, 0 10px 40px ${_col}50, 0 4px 14px rgba(0,0,0,0.6)`,
+                          width: 102,
+                          height: 136,
+                          background: _light
+                            ? `linear-gradient(145deg, ${_pLvl.color}25 0%, rgba(255,255,255,0.9) 100%)`
+                            : `linear-gradient(145deg, ${_pLvl.color}35 0%, rgba(15,23,42,0.95) 100%)`,
+                          borderColor: `${_pLvl.color}75`,
+                          boxShadow: `0 6px 22px ${_pLvl.color}35, 0 2px 6px rgba(0,0,0,0.4)`,
                         }}
                       >
-                        {user.photoURL && (user.avatarChoice === 'gmail' || user.avatarChoice === 'custom' || !user.avatarChoice)
-                          ? <img src={user.photoURL} alt="Profile" className="w-full h-full object-cover" />
-                          : settings?.appLogo
-                            ? <img src={settings.appLogo} alt="logo" className="w-full h-full object-cover" />
-                            : <span className="font-black select-none" style={{ fontSize: _sz * 0.44, color: _col }}>
-                                {(user.name || 'S').charAt(0).toUpperCase()}
-                              </span>
-                        }
-                        {/* Hover/Tap hint */}
+                        {user.photoURL && (user.avatarChoice === 'gmail' || user.avatarChoice === 'custom' || !user.avatarChoice) ? (
+                          <img
+                            src={user.photoURL}
+                            alt="Profile"
+                            className="w-full h-full object-cover select-none transition-transform duration-300 group-hover:scale-105"
+                          />
+                        ) : settings?.appLogo ? (
+                          <img
+                            src={settings.appLogo}
+                            alt="logo"
+                            className="w-full h-full object-cover select-none transition-transform duration-300 group-hover:scale-105"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex flex-col items-center justify-center font-black" style={{ color: _pLvl.color }}>
+                            <span style={{ fontSize: 38 }}>{(user.name || 'S').charAt(0).toUpperCase()}</span>
+                            <span className="text-[10px] opacity-70 uppercase tracking-widest mt-1.5">Student</span>
+                          </div>
+                        )}
+
+                        {/* Subtle inner top-edge glass shine */}
+                        <div
+                          className="absolute inset-x-0 top-0 h-8 pointer-events-none opacity-40"
+                          style={{
+                            background: 'linear-gradient(180deg, rgba(255,255,255,0.7) 0%, transparent 100%)',
+                          }}
+                        />
+
+                        {/* Hover hint */}
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
-                          <Camera size={22} className="text-white drop-shadow" />
+                          <span className="text-white text-[8.5px] font-bold px-2 py-0.5 bg-black/60 rounded-full">Zoom</span>
                         </div>
                       </div>
 
-                      {/* ── Level badge (bottom of avatar) ── */}
-                      <div className="absolute flex items-center gap-1 px-2.5 py-0.5 rounded-full z-10 pointer-events-none" style={{
-                        bottom: _lvl >= 9 ? 3 : 1,
-                        left: '50%', transform: 'translateX(-50%)',
-                        background: _pCard,
-                        border: `1.5px solid ${_col}70`,
-                        boxShadow: `0 2px 10px ${_col}55, 0 0 0 1px ${_col}25`,
-                      }}>
-                        <span style={{ fontSize: _lvl >= 10 ? 13 : 11 }}>{_pLvl.emoji}</span>
-                        <span className="font-black tabular-nums" style={{ fontSize: 10, color: _col, letterSpacing: '0.04em' }}>L{_lvl}</span>
-                      </div>
-
-                      {/* ── Camera button pill on avatar ── */}
+                      {/* Camera Button at bottom-right */}
                       <button
                         type="button"
                         id="profile-camera-btn"
@@ -13642,953 +13769,779 @@ export const StudentDashboard: React.FC<Props> = ({
                           e.stopPropagation();
                           setShowCameraModal(true);
                         }}
-                        title="Profile photo badlein (Camera / Gallery)"
-                        className="absolute bottom-0 right-1 w-8 h-8 rounded-full bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 flex items-center justify-center shadow-lg border-2 border-white dark:border-slate-900 active:scale-90 transition-all z-20 hover:scale-105 cursor-pointer"
+                        title="Photo badlein ya naya click karein (Camera / Gallery)"
+                        className="absolute -bottom-2 -right-1.5 w-7 h-7 rounded-full bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 flex items-center justify-center shadow-lg border-2 border-white dark:border-slate-900 active:scale-90 transition-all z-20 hover:scale-110 cursor-pointer"
                       >
-                        <Camera size={14} className="stroke-[2.5]" />
+                        <Camera size={12.5} className="stroke-[2.5]" />
                       </button>
-
                     </div>
-                  );
-                })()}
-              </div>
 
-              {/* ─── Name row ─── */}
-              <div className="flex items-center justify-center gap-2.5 px-8 mb-1.5">
-                <h2 className="font-black leading-none tracking-tight truncate" style={{ ...(_nameStyle as object), fontSize: _pLvl.level >= 15 ? 24 : 26 }}>
-                  {_pLvl.level >= 15
-                    ? `(${(user.name || 'Student').replace(/^\(+|\)+$/g, '').toUpperCase()})`
-                    : (user.name || 'Student').toUpperCase()
-                  }
-                </h2>
-                <button
-                  onClick={() => { setNewNameInput(user.name); setShowNameChangeModal(true); }}
-                  className="shrink-0 w-8 h-8 rounded-xl flex items-center justify-center active:scale-90 transition-all"
-                  style={{
-                    background: _light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.10)',
-                    border: `1px solid ${_light ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.18)'}`,
-                  }}>
-                  <Edit size={12} style={{ color: _light ? '#475569' : '#cbd5e1' }} />
-                </button>
-              </div>
+                    {/* User Name Row */}
+                    <div className="flex items-center justify-center gap-1 max-w-[145px] sm:max-w-[185px] mt-2 mb-1">
+                      <h2 className="font-black leading-tight tracking-tight truncate text-center" style={{ ...(_nameStyle as object), fontSize: 13.5 }}>
+                        {_pLvl.level >= 15
+                          ? `(${(user.name || 'Student').replace(/^\(+|\)+$/g, '').toUpperCase()})`
+                          : (user.name || 'Student').toUpperCase()
+                        }
+                      </h2>
+                      <button
+                        onClick={() => { setNewNameInput(user.name); setShowNameChangeModal(true); }}
+                        className="shrink-0 w-4.5 h-4.5 rounded-md flex items-center justify-center active:scale-90 transition-all cursor-pointer"
+                        title="Edit Name"
+                        style={{
+                          background: _light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.10)',
+                          border: `1px solid ${_light ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.18)'}`,
+                        }}>
+                        <Edit size={9} style={{ color: _light ? '#475569' : '#cbd5e1' }} />
+                      </button>
+                    </div>
 
-              {/* ─── Tier badge ─── */}
-              <div className="flex justify-center mb-2">
-                {_pLvl.level >= 15 ? (
-                  <span className="inline-flex items-center gap-2 px-5 py-1.5 rounded-full text-[11px] font-black tracking-[0.16em] uppercase" style={{
-                    background: 'linear-gradient(135deg, #28282f, #18181f)',
-                    color: '#c9a227',
-                    border: '1px solid #c9a22755',
-                    boxShadow: '0 4px 20px rgba(0,0,0,0.55), inset 0 1px 0 rgba(201,162,39,0.15)',
-                  }}>
-                    ▪ {_pTierLabel}
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-2 px-5 py-1.5 rounded-full text-[11px] font-black tracking-[0.16em] uppercase" style={{
-                    background: _light ? `${tierTheme.primary}18` : tierTheme.pillGrad,
-                    color: _light ? tierTheme.primary : '#ffffff',
-                    border: `1px solid ${tierTheme.primary}50`,
-                    boxShadow: `0 6px 22px ${tierTheme.primary}3a`,
-                  }}>
-                    {tierTheme.emoji} {_pTierLabel}
-                  </span>
-                )}
-              </div>
+                    {/* Join Date (Actual formatted date) & Avatar switcher */}
+                    <div className="w-full flex items-center justify-between gap-1 text-[8px] px-0.5" style={{ color: _pTxtSubColor }}>
+                      <span className="flex items-center gap-0.5 font-bold whitespace-nowrap text-[7.5px]" title="Join Date">
+                        <span>📅</span>
+                        {(() => {
+                          if (!user.createdAt) return 'Join - 12/09/2026';
+                          const d = new Date(user.createdAt);
+                          if (isNaN(d.getTime())) return 'Join - 12/09/2026';
+                          const dd = String(d.getDate()).padStart(2, '0');
+                          const mm = String(d.getMonth() + 1).padStart(2, '0');
+                          const yyyy = d.getFullYear();
+                          return `Join - ${dd}/${mm}/${yyyy}`;
+                        })()}
+                      </span>
 
-              {/* ─── Single row: join date · days · avatar switcher ─── */}
-              <div className="flex items-center justify-center gap-2 mb-4 flex-wrap" style={{ color: _pTxtSubColor }}>
-                {_pJoinDate && (
-                  <span className="flex items-center gap-1 text-[10px] font-semibold">
-                    <span>📅</span>{_pJoinDate}
-                  </span>
-                )}
-                {_pJoinDate && <span className="text-[10px] opacity-30">·</span>}
-                <span className="flex items-center gap-1 text-[10px] font-semibold">
-                  <span>🔥</span>{_pDaysOnApp} days
-                </span>
-                <span className="text-[10px] opacity-30">·</span>
-                {/* Avatar switcher inline */}
-                <div className="inline-flex rounded-xl p-[2px]" style={{
-                  background: _light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.07)',
-                  border: `1px solid ${_light ? 'rgba(0,0,0,0.10)' : 'rgba(255,255,255,0.11)'}`,
-                }}>
-                  <button
-                    onClick={async () => {
-                      if (!user.photoURL) return;
-                      const updated = { ...user, avatarChoice: 'gmail' as const };
-                      handleUserUpdate(updated);
-                      await saveUserToLive(updated);
-                    }}
-                    disabled={!user.photoURL}
-                    className="px-3 py-1 rounded-lg text-[10px] font-bold transition-all active:scale-95"
-                    style={{
-                      background: user.avatarChoice === 'gmail' && user.photoURL
-                        ? (_light ? '#ffffff' : 'rgba(59,130,246,0.28)')
-                        : 'transparent',
-                      color: user.avatarChoice === 'gmail' && user.photoURL
-                        ? (_light ? '#1d4ed8' : '#93c5fd')
-                        : (_light ? '#94a3b8' : 'rgba(255,255,255,0.35)'),
-                      boxShadow: user.avatarChoice === 'gmail' && user.photoURL ? '0 2px 6px rgba(0,0,0,0.15)' : 'none',
-                      opacity: !user.photoURL ? 0.35 : 1,
-                    }}>
-                    📧 Gmail
-                  </button>
-                  <button
-                    onClick={async () => {
-                      const updated = { ...user, avatarChoice: 'app' as const };
-                      handleUserUpdate(updated);
-                      await saveUserToLive(updated);
-                    }}
-                    className="px-3 py-1 rounded-lg text-[10px] font-bold transition-all active:scale-95"
-                    style={{
-                      background: !user.photoURL || user.avatarChoice !== 'gmail'
-                        ? (_light ? '#ffffff' : `${tierTheme.primary}28`)
-                        : 'transparent',
-                      color: !user.photoURL || user.avatarChoice !== 'gmail'
-                        ? (_light ? tierTheme.primary : '#e2e8f0')
-                        : (_light ? '#94a3b8' : 'rgba(255,255,255,0.35)'),
-                      boxShadow: (!user.photoURL || user.avatarChoice !== 'gmail') ? '0 2px 6px rgba(0,0,0,0.15)' : 'none',
-                    }}>
-                    🏫 App
-                  </button>
-                </div>
-              </div>
-
-              {/* Bottom shimmer line */}
-              <div className="absolute bottom-0 left-0 right-0 h-[1px]" style={{
-                background: `linear-gradient(90deg, transparent 0%, ${tierTheme.primary}70 50%, transparent 100%)`,
-              }} />
-            </div>
-
-            {/* ── LEVEL HERO CARD ── */}
-            {(() => {
-              const _lvlNum   = _pLvl.level;
-              const _lvlCol   = _pLvl.color;
-              const _isMaxLvl = _lvlNum >= 15;
-              const _lvlDesc  = _lvlNum >= 15 ? 'Maximum Level Achieved — The Pinnacle of Learning'
-                : _lvlNum >= 13 ? 'Near Maximum Rank — Absolute Elite'
-                : _lvlNum >= 10 ? 'Champion Level — Elite Learning Achieved'
-                : _lvlNum >= 7  ? 'Expert Status — Making Great Progress'
-                : _lvlNum >= 4  ? 'Consistent Learner — Growing Fast!'
-                : 'Keep Learning — Reach New Heights!';
-              return (
-                <button
-                  id="profile-user-card"
-                  onClick={() => setShowScorePanel(true)}
-                  className="w-full text-left active:scale-[0.988] transition-all duration-150"
-                >
-                  {/* Gradient accent band */}
-                  <div style={{ height: 3, background: `linear-gradient(90deg, transparent 0%, ${_lvlCol}cc 35%, ${_lvlCol} 50%, ${_lvlCol}cc 65%, transparent 100%)` }} />
-
-                  <div style={{ padding: '18px 20px 16px', background: _light ? `${_lvlCol}07` : `${_lvlCol}09` }}>
-                    {/* Top row: big emoji + title block + chevron */}
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="shrink-0 flex items-center justify-center" style={{
-                        width: 62, height: 62,
-                        borderRadius: 18,
-                        background: `linear-gradient(145deg, ${_lvlCol}30, ${_lvlCol}10)`,
-                        border: `2px solid ${_lvlCol}50`,
-                        boxShadow: `0 4px 20px ${_lvlCol}35, inset 0 1px 0 ${_lvlCol}30`,
+                      <div className="inline-flex rounded-md p-[1px] shrink-0" style={{
+                        background: _light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)',
+                        border: `1px solid ${_light ? 'rgba(0,0,0,0.10)' : 'rgba(255,255,255,0.12)'}`,
                       }}>
-                        <span style={{ fontSize: 32, lineHeight: 1, filter: `drop-shadow(0 2px 6px ${_lvlCol}80)` }}>{_pLvl.emoji}</span>
+                        <button
+                          onClick={async () => {
+                            if (!user.photoURL) return;
+                            const updated = { ...user, avatarChoice: 'gmail' as const };
+                            handleUserUpdate(updated);
+                            await saveUserToLive(updated);
+                          }}
+                          disabled={!user.photoURL}
+                          className="px-1.5 py-0.2 rounded text-[7.5px] font-bold transition-all active:scale-95"
+                          style={{
+                            background: user.avatarChoice === 'gmail' && user.photoURL
+                              ? (_light ? '#ffffff' : 'rgba(59,130,246,0.30)')
+                              : 'transparent',
+                            color: user.avatarChoice === 'gmail' && user.photoURL
+                              ? (_light ? '#1d4ed8' : '#93c5fd')
+                              : (_light ? '#94a3b8' : 'rgba(255,255,255,0.40)'),
+                            opacity: !user.photoURL ? 0.35 : 1,
+                          }}>
+                          Gmail
+                        </button>
+                        <button
+                          onClick={async () => {
+                            const updated = { ...user, avatarChoice: 'app' as const };
+                            handleUserUpdate(updated);
+                            await saveUserToLive(updated);
+                          }}
+                          className="px-1.5 py-0.2 rounded text-[7.5px] font-bold transition-all active:scale-95"
+                          style={{
+                            background: !user.photoURL || user.avatarChoice !== 'gmail'
+                              ? (_light ? '#ffffff' : `${tierTheme.primary}28`)
+                              : 'transparent',
+                            color: !user.photoURL || user.avatarChoice !== 'gmail'
+                              ? (_light ? tierTheme.primary : '#e2e8f0')
+                              : (_light ? '#94a3b8' : 'rgba(255,255,255,0.40)'),
+                          }}>
+                          App
+                        </button>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-black truncate" style={{ fontSize: 18, color: _light ? '#0f172a' : '#f8fafc', letterSpacing: '-0.01em' }}>
-                            {_pLvl.label}
-                          </span>
-                          <span className="shrink-0 font-black px-2 py-0.5 rounded-lg" style={{
-                            fontSize: 10, color: '#fff',
-                            background: `linear-gradient(135deg, ${_lvlCol}dd, ${_lvlCol})`,
-                            boxShadow: `0 2px 8px ${_lvlCol}50`,
-                            letterSpacing: '0.04em',
-                          }}>L{_lvlNum}</span>
-                        </div>
-                        <p style={{ fontSize: 10.5, fontWeight: 500, color: _light ? '#64748b' : 'rgba(255,255,255,0.45)', lineHeight: 1.4 }}>
-                          {_lvlDesc}
-                        </p>
-                      </div>
-                      <ChevronRight size={16} style={{ color: _light ? '#94a3b8' : 'rgba(255,255,255,0.25)' }} className="shrink-0" />
-                    </div>
-
-                    {/* XP bar section */}
-                    <div className="rounded-xl px-4 py-3 mb-3" style={{
-                      background: _light ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.25)',
-                      border: `1px solid ${_lvlCol}22`,
-                    }}>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-black tabular-nums" style={{ fontSize: 13, color: _pTxtColor }}>
-                          {_pRawScore.toLocaleString('en-IN')} <span style={{ fontSize: 10, fontWeight: 600, color: _light ? '#64748b' : 'rgba(255,255,255,0.45)' }}>XP</span>
-                        </span>
-                        <span className="font-black px-2.5 py-0.5 rounded-full" style={{
-                          fontSize: 10, color: _lvlCol,
-                          background: `${_lvlCol}18`,
-                          border: `1px solid ${_lvlCol}35`,
-                        }}>
-                          {_isMaxLvl ? '✓ Max Level' : `${_pProgress}%`}
-                        </span>
-                      </div>
-                      <div className="rounded-full overflow-hidden" style={{ height: 8, background: _light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)' }}>
-                        <div className="h-full rounded-full transition-all duration-700" style={{
-                          width: `${_isMaxLvl ? 100 : _pProgress}%`,
-                          background: `linear-gradient(90deg, ${_lvlCol}88, ${_lvlCol}dd, ${_lvlCol})`,
-                          boxShadow: `0 0 10px ${_lvlCol}60`,
-                        }} />
-                      </div>
-                    </div>
-
-                    {/* Badges row */}
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {_pLvl.discount > 0 && (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full font-bold" style={{
-                          fontSize: 11, color: _lvlCol,
-                          background: `${_lvlCol}16`,
-                          border: `1.5px solid ${_lvlCol}40`,
-                          boxShadow: `0 2px 8px ${_lvlCol}22`,
-                        }}>
-                          🏷️ {_pLvl.discount}% Discount
-                        </span>
-                      )}
-                      {(user.role === 'ADMIN' || user.role === 'SUB_ADMIN') && (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full font-bold" style={{
-                          fontSize: 11,
-                          color: _light ? '#7c3aed' : '#c4b5fd',
-                          background: _light ? 'rgba(124,58,237,0.1)' : 'rgba(196,181,253,0.12)',
-                          border: `1.5px solid ${_light ? 'rgba(124,58,237,0.28)' : 'rgba(196,181,253,0.28)'}`,
-                          boxShadow: '0 2px 8px rgba(124,58,237,0.18)',
-                        }}>
-                          ⭐ {user.role === 'SUB_ADMIN' ? 'Sub Admin' : 'Admin'}
-                        </span>
-                      )}
                     </div>
                   </div>
-                </button>
-              );
-            })()}
+                </div>
+              </div>
 
-          </div>
+              {/* Divider Line between top 2-columns and full-length cards */}
+              <div className="mx-3 my-2.5 h-[1px]" style={{
+                background: `linear-gradient(90deg, transparent 0%, ${tierTheme.primary}40 50%, transparent 100%)`,
+              }} />
 
-          {/* ── RECOVERY OPTIONS CARD ── */}
-          <div className="px-3 mb-3">
-            <div
-              id="profile-recovery-card"
-              className="rounded-2xl overflow-hidden" style={{
-              background: _pCard,
-              border: `1px solid ${tierTheme.primary}22`,
-              boxShadow: `0 4px 20px rgba(0,0,0,0.12)`,
-            }}>
-              {/* Header */}
-              <div className="flex items-center gap-3 px-4 pt-4 pb-3" style={{ borderBottom: `1px solid ${tierTheme.primary}14` }}>
-                <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0" style={{
-                  background: `linear-gradient(135deg, ${tierTheme.primary}30, ${tierTheme.primary}15)`,
-                  border: `1px solid ${tierTheme.primary}35`,
-                }}>
-                  <span style={{ fontSize: 15 }}>🔐</span>
-                </div>
-                <div className="flex-1">
-                  <p className="font-black uppercase tracking-widest" style={{ fontSize: 10, color: _pTxtColor }}>Account Recovery</p>
-                  <p style={{ fontSize: 9.5, color: _pTxtSubColor, marginTop: 1 }}>Your saved recovery options</p>
-                </div>
-                <button
-                  onClick={() => {
-                    setRecoveryData({
-                      mobile: (user as any).mobile || '',
-                      password: (user as any).password || '',
-                      email: user.email || '',
-                      securityQuestion: user.securityQuestion || "Aapka favorite subject kaunsa hai?",
-                      securityAnswer: user.securityAnswer || "",
-                    });
-                    setShowRecoveryModal(true);
-                  }}
-                  className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-black active:opacity-60 transition-opacity"
-                  style={{ background: `linear-gradient(135deg, ${tierTheme.primary}28, ${tierTheme.primary}18)`, color: tierTheme.primary, fontSize: 10, border: `1px solid ${tierTheme.primary}30` }}
-                >
-                  ✏️ Edit
-                </button>
-              </div>
-              {/* Mobile row */}
-              <div className="flex items-center gap-3 px-4 py-3.5" style={{ borderBottom: `1px solid ${tierTheme.primary}10` }}>
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.2)' }}>
-                  <span style={{ fontSize: 16 }}>📱</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-bold uppercase tracking-wider" style={{ fontSize: 9, color: _pTxtSubColor, marginBottom: 2 }}>Mobile Number</p>
-                  <p className="font-bold truncate" style={{ fontSize: 13, color: _pTxtColor }}>
-                    {(user as any).mobile ? (user as any).mobile : <span style={{ color: _pTxtMutedColor, fontWeight: 500 }}>Set nahi hai</span>}
-                  </p>
-                </div>
-                <span className="font-black px-2.5 py-1 rounded-lg" style={{
-                  fontSize: 9,
-                  background: (user as any).mobile ? 'rgba(34,197,94,0.14)' : 'rgba(148,163,184,0.10)',
-                  color: (user as any).mobile ? '#16a34a' : '#94a3b8',
-                  border: `1px solid ${(user as any).mobile ? 'rgba(34,197,94,0.28)' : 'rgba(148,163,184,0.2)'}`,
-                }}>{(user as any).mobile ? '✓ Active' : 'Inactive'}</span>
-              </div>
-              {/* Email row */}
-              <div className="flex items-center gap-3 px-4 py-3.5" style={{ borderBottom: `1px solid ${tierTheme.primary}10` }}>
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(168,85,247,0.12)', border: '1px solid rgba(168,85,247,0.2)' }}>
-                  <span style={{ fontSize: 16 }}>📧</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-bold uppercase tracking-wider" style={{ fontSize: 9, color: _pTxtSubColor, marginBottom: 2 }}>Email Address</p>
-                  <p className="font-bold truncate" style={{ fontSize: 13, color: _pTxtColor }}>
-                    {user.email ? user.email : <span style={{ color: _pTxtMutedColor, fontWeight: 500 }}>Set nahi hai</span>}
-                  </p>
-                </div>
-                <span className="font-black px-2.5 py-1 rounded-lg" style={{
-                  fontSize: 9,
-                  background: user.email ? 'rgba(34,197,94,0.14)' : 'rgba(148,163,184,0.10)',
-                  color: user.email ? '#16a34a' : '#94a3b8',
-                  border: `1px solid ${user.email ? 'rgba(34,197,94,0.28)' : 'rgba(148,163,184,0.2)'}`,
-                }}>{user.email ? '✓ Active' : 'Inactive'}</span>
-              </div>
-              {/* Security Question row */}
-              <div className="flex items-center gap-3 px-4 py-3.5" style={{ borderBottom: `1px solid ${tierTheme.primary}10` }}>
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(234,88,12,0.12)', border: '1px solid rgba(234,88,12,0.2)' }}>
-                  <span style={{ fontSize: 16 }}>❓</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-bold uppercase tracking-wider" style={{ fontSize: 9, color: _pTxtSubColor, marginBottom: 2 }}>Security Question</p>
-                  <p className="font-bold truncate" style={{ fontSize: 13, color: _pTxtColor }}>
-                    {user.securityQuestion ? user.securityQuestion : <span style={{ color: _pTxtMutedColor, fontWeight: 500 }}>Set nahi hai</span>}
-                  </p>
-                  <p className="text-xs text-slate-500 font-medium truncate mt-0.5">Ans: {user.securityAnswer ? '••••••••' : 'Not set'}</p>
-                </div>
-                <span className="font-black px-2.5 py-1 rounded-lg" style={{
-                  fontSize: 9,
-                  background: user.securityAnswer ? 'rgba(34,197,94,0.14)' : 'rgba(148,163,184,0.10)',
-                  color: user.securityAnswer ? '#16a34a' : '#94a3b8',
-                  border: `1px solid ${user.securityAnswer ? 'rgba(34,197,94,0.28)' : 'rgba(148,163,184,0.2)'}`,
-                }}>{user.securityAnswer ? '✓ Active' : 'Inactive'}</span>
-              </div>
-              {/* Student ID row */}
-              <div className="flex items-center gap-3 px-4 py-3.5">
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.2)' }}>
-                  <span style={{ fontSize: 16 }}>🪪</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-bold uppercase tracking-wider" style={{ fontSize: 9, color: _pTxtSubColor, marginBottom: 2 }}>Student ID</p>
-                  <p className="font-mono font-bold truncate tracking-wider" style={{ fontSize: 12, color: _pTxtColor }}>{user.displayId || user.id}</p>
-                </div>
-                <button
-                  onClick={() => { try { navigator.clipboard.writeText(user.displayId || user.id); showAlert('Student ID copied!', 'SUCCESS'); } catch {} }}
-                  className="shrink-0 px-2.5 py-1.5 rounded-xl font-black active:opacity-60 transition-opacity"
-                  style={{ background: `${tierTheme.primary}14`, border: `1px solid ${tierTheme.primary}22`, fontSize: 12 }}
-                >📋</button>
-              </div>
-            </div>
-          </div>
-
-          {/* ── STATS ROW ── */}
-          <div className="px-3 mb-3">
-            <div className="grid grid-cols-4 gap-1.5 sm:gap-2.5">
-              {/* Diamonds mini-card — Tap to open Diamond Store */}
+              {/* ── STATS ROW (SLIM & COMPACT) ── */}
+          <div className="px-3 mb-2">
+            <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
               <button
                 id="profile-diamonds-btn"
                 onClick={() => {
                   setStoreInitialTier('DIAMONDS');
                   onTabChange("STORE");
                 }}
-                className="rounded-2xl p-2 sm:p-3.5 flex flex-col items-center active:scale-95 transition-transform cursor-pointer w-full text-center group"
+                className="rounded-xl py-1.5 px-1 flex flex-col items-center justify-center active:scale-95 transition-transform cursor-pointer w-full text-center border"
                 style={{
                   background: _light
-                    ? 'linear-gradient(145deg, rgba(6,182,212,0.12), rgba(6,182,212,0.05))'
-                    : 'linear-gradient(145deg, rgba(6,182,212,0.22), rgba(6,182,212,0.08))',
-                  border: '1.5px solid rgba(6,182,212,0.30)',
-                  boxShadow: '0 4px 16px rgba(6,182,212,0.16)',
+                    ? 'linear-gradient(145deg, rgba(6,182,212,0.12), rgba(6,182,212,0.04))'
+                    : 'linear-gradient(145deg, rgba(6,182,212,0.20), rgba(6,182,212,0.06))',
+                  borderColor: 'rgba(6,182,212,0.32)',
+                  boxShadow: '0 2px 6px rgba(6,182,212,0.10)',
                 }}
-                title="Aapke Diamonds — Tap karke Diamond Store kholein"
+                title="Diamonds Store kholein"
               >
-                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center mb-1.5 sm:mb-2.5 text-base sm:text-lg" style={{
-                  background: 'linear-gradient(135deg, rgba(6,182,212,0.40), rgba(6,182,212,0.18))',
-                  border: '1px solid rgba(6,182,212,0.45)',
-                  boxShadow: '0 2px 10px rgba(6,182,212,0.28)',
-                }}>
-                  💎
+                <div className="flex items-center gap-1 mb-0.5">
+                  <span className="text-xs leading-none">💎</span>
+                  <span className="font-black tabular-nums leading-none text-cyan-300 text-xs sm:text-sm">
+                    {(user.diamonds ?? 0).toLocaleString('en-IN')}
+                  </span>
                 </div>
-                <div className="font-black tabular-nums text-center leading-none mb-1 text-cyan-300" style={{
-                  fontSize: (user.diamonds ?? 0) > 99999 ? 13 : 20,
-                }}>
-                  {(user.diamonds ?? 0).toLocaleString('en-IN')}
-                </div>
-                <div className="font-black uppercase tracking-widest" style={{ fontSize: 8, color: _pTxtSubColor }}>Diamonds</div>
+                <div className="font-black uppercase tracking-wider text-[7px] leading-tight text-cyan-400/80">Diamonds</div>
               </button>
 
-              {/* Credits mini-card — Tap to open Store */}
               <button
                 id="profile-credits-btn"
                 onClick={() => {
                   setStoreInitialTier('CREDITS');
                   onTabChange("STORE");
                 }}
-                className="rounded-2xl p-2 sm:p-3.5 flex flex-col items-center active:scale-95 transition-transform cursor-pointer w-full text-center group"
+                className="rounded-xl py-1.5 px-1 flex flex-col items-center justify-center active:scale-95 transition-transform cursor-pointer w-full text-center border"
                 style={{
                   background: _light
-                    ? `linear-gradient(145deg, ${tierTheme.primary}12, ${tierTheme.primary}06)`
-                    : `linear-gradient(145deg, ${tierTheme.primary}22, ${tierTheme.primary}0e)`,
-                  border: `1.5px solid ${tierTheme.primary}28`,
-                  boxShadow: `0 4px 16px ${tierTheme.primary}18`,
+                    ? `linear-gradient(145deg, ${tierTheme.primary}12, ${tierTheme.primary}04)`
+                    : `linear-gradient(145deg, ${tierTheme.primary}20, ${tierTheme.primary}06)`,
+                  borderColor: `${tierTheme.primary}32`,
+                  boxShadow: `0 2px 6px ${tierTheme.primary}10`,
                 }}
-                title="Aapke Credits — Tap karke Store se aur paayein"
+                title="Credits Store kholein"
               >
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-2.5" style={{
-                  background: `linear-gradient(135deg, ${tierTheme.primary}40, ${tierTheme.primary}20)`,
-                  border: `1px solid ${tierTheme.primary}45`,
-                  boxShadow: `0 2px 10px ${tierTheme.primary}30`,
-                }}>
-                  <Coins size={16} style={{ color: tierTheme.primary }} />
+                <div className="flex items-center gap-1 mb-0.5">
+                  <Coins size={12} style={{ color: tierTheme.primary }} />
+                  <span className="font-black tabular-nums leading-none text-xs sm:text-sm" style={{ color: _pTxtColor }}>
+                    {(user.credits ?? 0).toLocaleString('en-IN')}
+                  </span>
                 </div>
-                <div className="font-black tabular-nums text-center leading-none mb-1" style={{
-                  color: _pTxtColor,
-                  fontSize: (user.credits ?? 0) > 99999 ? 14 : 22,
-                }}>
-                  {(user.credits ?? 0).toLocaleString('en-IN')}
-                </div>
-                {(user.bonusCredits ?? 0) > 0 && (
-                  <div className="font-semibold tabular-nums mb-1" style={{ fontSize: 8, color: tierTheme.primary }}>
-                    +{(user.bonusCredits ?? 0).toLocaleString('en-IN')} perm
-                  </div>
-                )}
-                <div className="font-black uppercase tracking-widest" style={{ fontSize: 8, color: _pTxtSubColor }}>Credits</div>
+                <div className="font-black uppercase tracking-wider text-[7px] leading-tight" style={{ color: _pTxtSubColor }}>Credits</div>
               </button>
 
-              {/* Streak mini-card */}
               <button
                 id="profile-streak-btn"
                 onClick={() => setShowStreakPopup(true)}
-                className="rounded-2xl p-2 sm:p-3.5 flex flex-col items-center active:scale-95 transition-transform"
+                className="rounded-xl py-1.5 px-1 flex flex-col items-center justify-center active:scale-95 transition-transform cursor-pointer w-full text-center border"
                 style={{
                   background: _light
-                    ? 'linear-gradient(145deg, rgba(251,146,60,0.12), rgba(251,146,60,0.05))'
-                    : 'linear-gradient(145deg, rgba(251,146,60,0.20), rgba(251,146,60,0.08))',
-                  border: '1.5px solid rgba(251,146,60,0.30)',
-                  boxShadow: '0 4px 16px rgba(251,146,60,0.16)',
+                    ? 'linear-gradient(145deg, rgba(251,146,60,0.12), rgba(251,146,60,0.04))'
+                    : 'linear-gradient(145deg, rgba(251,146,60,0.20), rgba(251,146,60,0.06))',
+                  borderColor: 'rgba(251,146,60,0.32)',
+                  boxShadow: '0 2px 6px rgba(251,146,60,0.10)',
                 }}
               >
-                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center mb-1.5 sm:mb-2.5" style={{
-                  background: 'linear-gradient(135deg, rgba(251,146,60,0.40), rgba(251,146,60,0.18))',
-                  border: '1px solid rgba(251,146,60,0.45)',
-                  boxShadow: '0 2px 10px rgba(251,146,60,0.28)',
-                }}>
-                  <Flame size={16} style={{ color: '#fb923c' }} />
+                <div className="flex items-center gap-1 mb-0.5">
+                  <Flame size={12} style={{ color: '#fb923c' }} />
+                  <span className="font-black tabular-nums leading-none text-xs sm:text-sm" style={{ color: _pTxtColor }}>
+                    {user.streak > 0 ? user.streak : '0'}
+                  </span>
                 </div>
-                <div className="font-black tabular-nums leading-none mb-1" style={{ fontSize: 20, color: _pTxtColor }}>
-                  {user.streak > 0 ? user.streak : '0'}
-                </div>
-                <div className="font-black uppercase tracking-widest" style={{ fontSize: 8, color: _pTxtSubColor }}>Streak</div>
+                <div className="font-black uppercase tracking-wider text-[7px] leading-tight text-orange-400/80">Streak</div>
               </button>
 
-              {/* XP Score mini-card */}
               <div
                 id="profile-xp-btn"
-                className="rounded-2xl p-2 sm:p-3.5 flex flex-col items-center" style={{
-                background: _light
-                  ? 'linear-gradient(145deg, rgba(234,179,8,0.12), rgba(234,179,8,0.05))'
-                  : 'linear-gradient(145deg, rgba(234,179,8,0.20), rgba(234,179,8,0.08))',
-                border: '1.5px solid rgba(234,179,8,0.28)',
-                boxShadow: '0 4px 16px rgba(234,179,8,0.14)',
-              }}>
-                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center mb-1.5 sm:mb-2.5" style={{
-                  background: 'linear-gradient(135deg, rgba(234,179,8,0.40), rgba(234,179,8,0.18))',
-                  border: '1px solid rgba(234,179,8,0.45)',
-                  boxShadow: '0 2px 10px rgba(234,179,8,0.28)',
-                }}>
-                  <Star size={16} style={{ color: '#eab308' }} />
+                onClick={() => setShowScorePanel(true)}
+                className="rounded-xl py-1.5 px-1 flex flex-col items-center justify-center active:scale-95 transition-transform cursor-pointer w-full text-center border"
+                style={{
+                  background: _light
+                    ? 'linear-gradient(145deg, rgba(234,179,8,0.12), rgba(234,179,8,0.04))'
+                    : 'linear-gradient(145deg, rgba(234,179,8,0.20), rgba(234,179,8,0.06))',
+                  borderColor: 'rgba(234,179,8,0.32)',
+                  boxShadow: '0 2px 6px rgba(234,179,8,0.10)',
+                }}
+              >
+                <div className="flex items-center gap-1 mb-0.5">
+                  <Star size={12} style={{ color: '#eab308' }} />
+                  {(() => {
+                    const _s = _pRawScore >= 1_000_000
+                      ? `${(_pRawScore / 1_000_000).toFixed(1)}M`
+                      : _pRawScore >= 100_000
+                      ? `${Math.round(_pRawScore / 1000)}k`
+                      : _pRawScore >= 1_000
+                      ? `${(_pRawScore / 1000).toFixed(1)}k`
+                      : String(_pRawScore);
+                    return (
+                      <span className="font-black tabular-nums leading-none text-xs sm:text-sm" style={{ color: _pTxtColor }}>
+                        {_s}
+                      </span>
+                    );
+                  })()}
                 </div>
-                {(() => {
-                  const _s = _pRawScore >= 1_000_000
-                    ? `${(_pRawScore / 1_000_000).toFixed(1)}M`
-                    : _pRawScore >= 100_000
-                    ? `${Math.round(_pRawScore / 1000)}k`
-                    : _pRawScore >= 1_000
-                    ? `${(_pRawScore / 1000).toFixed(1)}k`
-                    : String(_pRawScore);
-                  return (
-                    <div className="font-black tabular-nums text-center leading-none mb-1" style={{
-                      color: _pTxtColor,
-                      fontSize: _s.length <= 4 ? 22 : _s.length <= 6 ? 17 : 14,
-                    }}>{_s}</div>
-                  );
-                })()}
-                <div className="font-black uppercase tracking-widest" style={{ fontSize: 8, color: _pTxtSubColor }}>XP Score</div>
+                <div className="font-black uppercase tracking-wider text-[7px] leading-tight text-amber-400/80">XP Score</div>
               </div>
             </div>
           </div>
 
-          {/* ── REFER & EARN (VIP) SHOWCASE BANNER (NO GREEN - ROYAL INDIGO / PURPLE / AMBER GOLD) ── */}
-          {(() => {
-            const refStats = getReferralStats(user);
-            const activeInvites = refStats.activeCount || 0;
-            const effectiveMilestones = getEffectiveReferralMilestones(settings?.referralMilestones);
-            const nextMilestone = effectiveMilestones.find(m => activeInvites < m.target) || effectiveMilestones[effectiveMilestones.length - 1];
-            const nextTarget = nextMilestone.target;
-            const canClaimAny = effectiveMilestones.some(m => activeInvites >= m.target && !(user.claimedReferralMilestones || []).includes(m.target));
+          {/* ── 2. FULL-WIDTH SUBSCRIPTION ACTIVE CARD (INSIDE CARD 1) ── */}
+              {(() => {
+                const hasSub = !!(user.isPremium || user.subscriptionTier || (user.subscriptionEndDate && !isNaN(new Date(user.subscriptionEndDate).getTime())));
+                const isLifetime = user.subscriptionTier === 'LIFETIME';
+                const endDate = user.subscriptionEndDate ? new Date(user.subscriptionEndDate) : null;
+                const isValidDate = !!(endDate && !isNaN(endDate.getTime()));
+                const daysLeft = isValidDate ? Math.max(0, Math.ceil((endDate.getTime() - _profileNow) / (1000 * 60 * 60 * 24))) : 0;
+                const isUrgent = hasSub && !isLifetime && daysLeft <= 3 && isValidDate;
+                const planDisplay = user.subscriptionTier
+                  ? (user.subscriptionTier.toUpperCase().includes('MONTH') ? 'ULTRA MONTHLY' : `${user.subscriptionTier} VIP`)
+                  : (user.isPremium ? 'PRO+ VIP' : 'PRO+ MEMBERSHIP');
 
-            return (
-              <div className="px-3 mb-3.5">
-                <div
-                  className="w-full text-left rounded-3xl p-4 relative overflow-hidden transition-all shadow-xl border select-none group"
+                return (
+                  <div className="px-3 mb-2">
+                    <div
+                      className="rounded-xl px-2.5 py-2 relative overflow-hidden transition-all duration-200 border shadow-xs flex items-center justify-between gap-2 select-none"
+                      style={{
+                        background: hasSub
+                          ? (isUrgent
+                              ? 'linear-gradient(135deg, rgba(239, 68, 68, 0.20) 0%, rgba(15, 23, 42, 0.92) 100%)'
+                              : 'linear-gradient(135deg, rgba(245, 158, 11, 0.18) 0%, rgba(124, 58, 237, 0.20) 50%, rgba(15, 23, 42, 0.90) 100%)')
+                          : 'linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(15, 23, 42, 0.90) 100%)',
+                        borderColor: hasSub
+                          ? (isUrgent ? 'rgba(239, 68, 68, 0.40)' : 'rgba(245, 158, 11, 0.38)')
+                          : 'rgba(59, 130, 246, 0.28)',
+                      }}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div
+                          className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs"
+                          style={{
+                            background: hasSub
+                              ? 'linear-gradient(135deg, #f59e0b, #d97706)'
+                              : 'linear-gradient(135deg, #3b82f6, #1d4ed8)',
+                            color: hasSub ? '#0f172a' : '#ffffff',
+                          }}
+                        >
+                          <Crown size={14} strokeWidth={2.6} />
+                        </div>
+
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-black tracking-tight text-white truncate">
+                              ⚡ {planDisplay}
+                            </span>
+                            <span
+                              className="text-[7.5px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-wider font-mono shrink-0"
+                              style={{
+                                background: hasSub ? (isUrgent ? 'rgba(239,68,68,0.25)' : 'rgba(34,197,94,0.20)') : 'rgba(59,130,246,0.18)',
+                                color: hasSub ? (isUrgent ? '#ef4444' : '#4ade80') : '#60a5fa',
+                                border: `1px solid ${hasSub ? (isUrgent ? '#ef444460' : '#4ade8060') : '#60a5fa40'}`,
+                              }}
+                            >
+                              {hasSub ? (isLifetime ? 'LIFETIME' : isUrgent ? 'EXPIRES SOON' : 'ACTIVE') : 'UPGRADE'}
+                            </span>
+                          </div>
+
+                          <p className="text-[9px] font-medium truncate mt-0.2" style={{ color: isUrgent ? '#f87171' : 'rgba(255,255,255,0.65)' }}>
+                            {hasSub
+                              ? (isLifetime
+                                  ? 'All VIP Tests & Features Unlocked Forever'
+                                  : isValidDate
+                                  ? `Valid till ${endDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} · ${daysLeft}d left`
+                                  : 'All VIP Features & Tests Unlocked')
+                              : 'Unlock Unlimited MCQ Tests, VIP Study Notes & Badges'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onTabChange('STORE' as any);
+                        }}
+                        className="shrink-0 px-2 py-1 rounded-lg text-[9.5px] font-black flex items-center gap-0.5 active:scale-95 transition-all cursor-pointer shadow-xs"
+                        style={{
+                          background: hasSub
+                            ? 'linear-gradient(135deg, #f59e0b, #d97706)'
+                            : 'linear-gradient(135deg, #3b82f6, #2563eb)',
+                          color: hasSub ? '#0f172a' : '#ffffff',
+                        }}
+                      >
+                        <span>{hasSub ? 'Manage' : 'Upgrade ⚡'}</span>
+                        <ChevronRight size={11} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── 1. FULL-WIDTH LEVEL HERO CARD (INSIDE CARD 1) ── */}
+              <div className="px-3 mb-2">
+                <button
+                  id="profile-user-card"
+                  onClick={() => setShowScorePanel(true)}
+                  className="w-full text-left active:scale-[0.99] transition-all duration-150 select-none group cursor-pointer rounded-2xl overflow-hidden shadow-xs border"
                   style={{
-                    background: 'linear-gradient(135deg, rgba(88, 28, 135, 0.40) 0%, rgba(49, 46, 129, 0.35) 50%, rgba(120, 53, 15, 0.28) 100%)',
-                    borderColor: 'rgba(192, 132, 252, 0.45)',
-                    boxShadow: '0 8px 28px rgba(76, 29, 149, 0.28), inset 0 1px 1px rgba(255, 255, 255, 0.15)',
+                    background: _light
+                      ? `linear-gradient(135deg, ${_pLvl.color}0c 0%, rgba(255,255,255,0.92) 55%, ${_pLvl.color}06 100%)`
+                      : `linear-gradient(135deg, ${_pLvl.color}16 0%, rgba(15,23,42,0.92) 55%, ${_pLvl.color}08 100%)`,
+                    borderColor: `${_pLvl.color}35`,
                   }}
                 >
-                  {/* Soft ambient glow accents */}
-                  <div className="absolute -top-10 -right-10 w-36 h-36 bg-amber-400/15 rounded-full blur-2xl pointer-events-none" />
-                  <div className="absolute -bottom-10 -left-10 w-36 h-36 bg-purple-500/20 rounded-full blur-2xl pointer-events-none" />
+                  <div className="px-3 py-2 sm:px-3.5 sm:py-2.5">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div
+                          className="shrink-0 flex items-center justify-center w-8 h-8 rounded-lg shadow-xs"
+                          style={{
+                            background: `linear-gradient(145deg, ${_pLvl.color}35, ${_pLvl.color}12)`,
+                            border: `1.2px solid ${_pLvl.color}55`,
+                            boxShadow: `0 2px 8px ${_pLvl.color}25`,
+                          }}
+                        >
+                          <span style={{ fontSize: 16, lineHeight: 1 }}>{_pLvl.emoji}</span>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-black text-xs sm:text-sm truncate" style={{ color: _light ? '#0f172a' : '#f8fafc' }}>
+                              {_pLvl.label}
+                            </span>
+                            <span
+                              className="shrink-0 font-black px-1.5 py-0.2 rounded-md text-[8.5px] text-white"
+                              style={{
+                                background: `linear-gradient(135deg, ${_pLvl.color}dd, ${_pLvl.color})`,
+                                boxShadow: `0 1px 5px ${_pLvl.color}40`,
+                              }}
+                            >
+                              L{_pLvl.level}
+                            </span>
+                          </div>
+                          <p className="text-[9px] font-medium truncate mt-0.2" style={{ color: _light ? '#64748b' : 'rgba(255,255,255,0.5)' }}>
+                            {_pLvl.level >= 15 ? 'Pinnacle Master' : _pLvl.level >= 10 ? 'Champion Level' : _pLvl.level >= 7 ? 'Expert Rank' : 'Keep Learning — Reach Heights!'}
+                          </p>
+                        </div>
+                      </div>
 
-                  {/* Header Row */}
-                  <div className="relative z-10 flex items-center justify-between gap-2.5 mb-3">
-                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="shrink-0 flex items-center gap-2">
+                        <div className="text-right">
+                          <span className="font-black tabular-nums text-xs sm:text-sm block leading-none" style={{ color: _pTxtColor }}>
+                            {_pRawScore.toLocaleString('en-IN')} <span className="text-[8.5px] font-semibold text-slate-400">XP</span>
+                          </span>
+                          <span className="text-[8.5px] font-black leading-none" style={{ color: _pLvl.color }}>
+                            {_pLvl.level >= 15 ? 'MAX' : `${_pProgress}% complete`}
+                          </span>
+                        </div>
+                        <ChevronRight size={13} style={{ color: _light ? '#94a3b8' : 'rgba(255,255,255,0.3)' }} />
+                      </div>
+                    </div>
+
+                    <div className="rounded-full overflow-hidden h-1.5" style={{ background: _light ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.08)' }}>
                       <div
-                        className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 shadow-lg relative border border-white/20"
+                        className="h-full rounded-full transition-all duration-700"
+                        style={{
+                          width: `${_pLvl.level >= 15 ? 100 : _pProgress}%`,
+                          background: `linear-gradient(90deg, ${_pLvl.color}88, ${_pLvl.color}dd, ${_pLvl.color})`,
+                          boxShadow: `0 0 6px ${_pLvl.color}60`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                </button>
+              </div>
+
+              {/* ── 3. FULL-WIDTH LEVEL PROGRESS CARD (1 TO 15 CARDS ROADMAP — INSIDE CARD 1) ── */}
+              {(() => {
+                const _curLvl = _pLvl.level;
+                const _lvlAchievements: { lvl: number; emoji: string; label: string; perk: string }[] = [
+                  { lvl: 1,  emoji: '🌱', label: 'Beginner', perk: 'Joined' },
+                  { lvl: 2,  emoji: '🌿', label: 'Learner', perk: '1k XP' },
+                  { lvl: 3,  emoji: '🔍', label: 'Active', perk: '2% OFF' },
+                  { lvl: 4,  emoji: '✨', label: 'Consistent', perk: '3% OFF' },
+                  { lvl: 5,  emoji: '⚡', label: 'Dedicated', perk: '5% OFF' },
+                  { lvl: 6,  emoji: '🔥', label: 'Achiever', perk: '8% OFF' },
+                  { lvl: 7,  emoji: '💫', label: 'Expert', perk: '10% OFF' },
+                  { lvl: 8,  emoji: '💎', label: 'Master', perk: '13% OFF' },
+                  { lvl: 9,  emoji: '🌟', label: 'Elite', perk: '17% OFF' },
+                  { lvl: 10, emoji: '👑', label: 'Champion', perk: '20% OFF' },
+                  { lvl: 11, emoji: '🏆', label: 'Legend', perk: '20% OFF' },
+                  { lvl: 12, emoji: '🔮', label: 'Mythic', perk: '22% OFF' },
+                  { lvl: 13, emoji: '⚜️', label: 'Supreme', perk: '25% OFF' },
+                  { lvl: 14, emoji: '🌠', label: 'Eternal', perk: '28% OFF' },
+                  { lvl: 15, emoji: '💠', label: 'Absolute', perk: '30% OFF' },
+                ];
+                const _lvlColors: Record<number, string> = {
+                  1:'#94a3b8',2:'#6ee7b7',3:'#38bdf8',4:'#06b6d4',5:'#3b82f6',
+                  6:'#f97316',7:'#a855f7',8:'#f59e0b',9:'#eab308',10:'#f59e0b',
+                  11:'#10b981',12:'#8b5cf6',13:'#ec4899',14:'#f43f5e',15:'#a5f3fc',
+                };
+                return (
+                  <div className="px-3 mb-2">
+                    <div className="rounded-xl overflow-hidden shadow-xs select-none border" style={{
+                      background: _pCard,
+                      borderColor: `${tierTheme.primary}25`,
+                    }}>
+                      <div className="px-2.5 py-1.5 sm:px-3 sm:py-2 border-b" style={{
+                        background: _light
+                          ? `linear-gradient(135deg, ${_pLvl.color}0a, transparent 60%)`
+                          : `linear-gradient(135deg, ${_pLvl.color}12, transparent 60%)`,
+                        borderColor: `${tierTheme.primary}15`,
+                      }}>
+                        <div className="flex items-center justify-between gap-1.5">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{
+                              background: `linear-gradient(135deg, ${_pLvl.color}35, ${_pLvl.color}12)`,
+                              border: `1px solid ${_pLvl.color}50`,
+                              fontSize: 13,
+                            }}>
+                              {_pLvl.emoji}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-black uppercase tracking-wider text-[9px] leading-tight" style={{ color: _pTxtColor }}>
+                                Level Roadmap (1 - 15)
+                              </p>
+                              <p className="text-[8px] leading-tight truncate" style={{ color: _pTxtSubColor }}>
+                                {_curLvl}/15 Unlocked · Tap cards for perks
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={() => setShowLevelLeaderboard(true)}
+                              className="px-1.5 py-0.5 rounded-md font-bold flex items-center gap-1 text-[8.5px] active:scale-95 transition-transform cursor-pointer"
+                              style={{
+                                background: 'rgba(245,158,11,0.18)',
+                                color: '#fbbf24',
+                                border: '1px solid rgba(245,158,11,0.35)',
+                              }}
+                              title="Open Level Leaderboard"
+                            >
+                              <Trophy size={9} className="text-amber-400" />
+                              <span>Ranks</span>
+                            </button>
+                            <div className="px-1.5 py-0.5 rounded-md font-black text-[9px] text-white" style={{
+                              background: `linear-gradient(135deg, ${_pLvl.color}cc, ${_pLvl.color})`,
+                              boxShadow: `0 1px 6px ${_pLvl.color}45`,
+                            }}>
+                              L{_curLvl}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-1.5 flex items-center gap-0.5">
+                          {Array.from({ length: 15 }, (_, i) => {
+                            const segLvl = i + 1;
+                            const done = _curLvl >= segLvl;
+                            const cur  = _curLvl === segLvl;
+                            const c    = _lvlColors[segLvl] ?? tierTheme.primary;
+                            return (
+                              <div key={segLvl} className="flex-1 rounded-full transition-all duration-500" style={{
+                                height: cur ? 3.5 : 2,
+                                background: done
+                                  ? `linear-gradient(90deg, ${c}bb, ${c})`
+                                  : (_light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)'),
+                                boxShadow: cur ? `0 0 5px ${c}90` : 'none',
+                              }} />
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="flex gap-1.5 p-2 overflow-x-auto scrollbar-none" style={{ scrollbarWidth: 'none' }}>
+                        {_lvlAchievements.map(({ lvl, emoji, label, perk }) => {
+                          const _isDone   = _curLvl > lvl;
+                          const _isCur    = _curLvl === lvl;
+                          const _isLocked = _curLvl < lvl;
+                          const _c = _isLocked ? (_light ? '#94a3b8' : '#475569') : (_lvlColors[lvl] ?? tierTheme.primary);
+
+                          return (
+                            <div
+                              key={lvl}
+                              onClick={() => setShowScorePanel(true)}
+                              className="shrink-0 flex flex-col items-center justify-between rounded-xl py-1.5 px-1 text-center cursor-pointer active:scale-95 transition-all select-none border"
+                              style={{
+                                width: 50,
+                                height: 72,
+                                background: _isCur
+                                  ? `linear-gradient(145deg, ${_lvlColors[lvl]}28, ${_lvlColors[lvl]}10)`
+                                  : _isDone ? `${_lvlColors[lvl]}0c`
+                                  : _light ? 'rgba(0,0,0,0.025)' : 'rgba(255,255,255,0.02)',
+                                borderColor: _isCur
+                                  ? _lvlColors[lvl]
+                                  : _isDone ? `${_lvlColors[lvl]}35`
+                                  : (_light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.05)'),
+                                boxShadow: _isCur ? `0 2px 8px ${_lvlColors[lvl]}35` : 'none',
+                              }}
+                            >
+                              <div className="flex items-center justify-between w-full px-0.5 leading-none">
+                                <span className="font-black text-[7.5px] font-mono leading-none" style={{ color: _isCur ? _c : _pTxtSubColor }}>
+                                  L{lvl}
+                                </span>
+                                {_isDone && (
+                                  <span className="text-[7px] font-black text-emerald-400 leading-none">✓</span>
+                                )}
+                                {_isCur && (
+                                  <span className="text-[7px] font-black text-amber-400 leading-none animate-pulse">★</span>
+                                )}
+                                {_isLocked && (
+                                  <span className="text-[6.5px] text-slate-500 leading-none">🔒</span>
+                                )}
+                              </div>
+
+                              <div className="relative flex items-center justify-center w-6 h-6 rounded-md" style={{
+                                background: _isCur ? `${_c}25` : 'transparent',
+                              }}>
+                                <span style={{
+                                  fontSize: 15,
+                                  lineHeight: 1,
+                                  opacity: _isLocked ? 0.35 : 1,
+                                  filter: _isCur ? `drop-shadow(0 1px 4px ${_c}80)` : 'none'
+                                }}>
+                                  {emoji}
+                                </span>
+                              </div>
+
+                              <div className="font-bold truncate w-full text-[7.5px] leading-tight" style={{
+                                color: _isCur ? (_light ? '#0f172a' : '#ffffff') : _pTxtColor,
+                                opacity: _isLocked ? 0.5 : 1,
+                              }}>
+                                {label}
+                              </div>
+
+                              <div className="w-full rounded py-0.2 text-[6.5px] font-black truncate leading-tight" style={{
+                                background: _isCur
+                                  ? `${_c}25`
+                                  : _isDone ? `${_c}15`
+                                  : (_light ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.04)'),
+                                color: _isLocked ? (_light ? '#94a3b8' : '#64748b') : _c,
+                                border: `1px solid ${_isLocked ? 'transparent' : `${_c}30`}`,
+                              }}>
+                                {perk}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Bottom shimmer line of CARD 1 */}
+              <div className="absolute bottom-0 left-0 right-0 h-[1px]" style={{
+                background: `linear-gradient(90deg, transparent 0%, ${tierTheme.primary}70 50%, transparent 100%)`,
+              }} />
+            </div>
+          </div>
+
+          {/* ── UNIFIED CARD: Refer & Earn (VIP), Theme Studio, Score History, Link Google Account ── */}
+          <div className="mx-3 mb-3 rounded-2xl overflow-hidden shadow-lg border" style={{ background: _pCard, border: _pBdrSoft }}>
+            {/* 1. Refer & Earn (VIP) Section */}
+            {(() => {
+              const refStats = getReferralStats(user);
+              const activeInvites = refStats.activeCount || 0;
+              const effectiveMilestones = getEffectiveReferralMilestones(settings?.referralMilestones);
+              const nextMilestone = effectiveMilestones.find(m => activeInvites < m.target) || effectiveMilestones[effectiveMilestones.length - 1];
+              const nextTarget = nextMilestone.target;
+              const canClaimAny = effectiveMilestones.some(m => activeInvites >= m.target && !(user.claimedReferralMilestones || []).includes(m.target));
+
+              return (
+                <div
+                  className="p-3 sm:p-3.5 relative overflow-hidden transition-all select-none border-b"
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(88, 28, 135, 0.38) 0%, rgba(49, 46, 129, 0.32) 50%, rgba(120, 53, 15, 0.25) 100%)',
+                    borderColor: _pSep,
+                  }}
+                >
+                  <div className="relative z-10 flex items-center justify-between gap-2 mb-1.5">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <div
+                        className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs relative border border-white/20"
                         style={{ background: 'linear-gradient(135deg, #7c3aed, #4f46e5)' }}
                       >
-                        <Gift size={20} className="text-amber-300" />
-                        <span className="absolute -top-1 -right-1 text-[10px]">👑</span>
+                        <Gift size={13} className="text-amber-300" />
+                        <span className="absolute -top-1 -right-1 text-[7px]">👑</span>
                       </div>
                       <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <h3 className={`text-sm sm:text-base font-black ${_pTxt} tracking-tight`}>
+                        <div className="flex items-center gap-1.5">
+                          <h3 className={`text-xs font-black ${_pTxt} tracking-tight`}>
                             Refer & Earn (VIP)
                           </h3>
-                          <span className="text-[8px] font-black px-2 py-0.5 rounded-full bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 uppercase tracking-wider shadow-sm font-mono">
+                          <span className="text-[7px] font-black px-1.5 py-0.2 rounded-full bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 uppercase tracking-wider font-mono">
                             FREE PASSES ⚡
                           </span>
                         </div>
-                        <p className="text-[10.5px] font-medium leading-tight text-purple-200/90 mt-0.5">
-                          Doston ko invite karein aur paayein VIP Passes, Free Royalty & Coins!
+                        <p className="text-[9px] font-medium leading-tight text-purple-200/90 truncate">
+                          Doston ko invite karein aur paayein VIP Passes & Coins!
                         </p>
                       </div>
                     </div>
 
-                    <span className="text-[11px] font-black px-2.5 py-1 rounded-xl bg-white/10 text-amber-300 border border-amber-400/30 shrink-0 font-mono">
+                    <span className="text-[9px] font-black px-2 py-0.2 rounded-md bg-white/10 text-amber-300 border border-amber-400/30 shrink-0 font-mono">
                       {activeInvites.toLocaleString('en-IN')} Active
                     </span>
                   </div>
 
-                  {/* BIG PROMINENT PRIZE / REWARD SHOWCASE BOX */}
                   <div
-                    className="relative z-10 p-3 sm:p-3.5 rounded-2xl mb-3 flex flex-col xs:flex-row items-start xs:items-center justify-between gap-3 border"
+                    className="relative z-10 p-1.5 sm:p-2 rounded-lg mb-1.5 flex items-center justify-between gap-2 border"
                     style={{
-                      background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.14) 0%, rgba(124, 58, 237, 0.18) 100%)',
-                      borderColor: 'rgba(251, 191, 36, 0.38)',
-                      boxShadow: 'inset 0 1px 2px rgba(255, 255, 255, 0.1)',
+                      background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.12) 0%, rgba(124, 58, 237, 0.15) 100%)',
+                      borderColor: 'rgba(251, 191, 36, 0.30)',
                     }}
                   >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-amber-400 via-amber-300 to-yellow-500 flex items-center justify-center shrink-0 shadow-lg shadow-amber-500/20 text-slate-950 font-black text-xl border border-amber-200">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <div className="w-6 h-6 rounded-md bg-gradient-to-tr from-amber-400 via-amber-300 to-yellow-500 flex items-center justify-center shrink-0 text-slate-950 font-black text-xs border border-amber-200">
                         🎁
                       </div>
                       <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[9px] font-black uppercase tracking-wider text-amber-300 bg-amber-400/15 px-2 py-0.5 rounded border border-amber-400/30">
+                        <div className="flex items-center gap-1">
+                          <span className="text-[7px] font-black uppercase text-amber-300 bg-amber-400/15 px-1 py-0.2 rounded border border-amber-400/30">
                             Prize Box
                           </span>
-                          <span className="text-[10px] text-purple-200 font-semibold">Target: {nextTarget.toLocaleString('en-IN')} Active</span>
+                          <span className="text-[8.5px] text-purple-200 font-semibold">Target: {nextTarget} Active</span>
                         </div>
-                        <p className="text-xs sm:text-sm font-black text-white mt-1 leading-snug truncate">
+                        <p className="text-[10px] font-black text-white mt-0.2 truncate">
                           {nextMilestone.title} ({nextMilestone.rewardDescription})
                         </p>
                       </div>
                     </div>
 
-                    <div className="shrink-0 flex items-center gap-2">
-                      <div className="text-right hidden xs:block">
-                        <span className="text-[9px] text-slate-300 block">Reward Status</span>
-                        <span className="text-[11px] font-black text-amber-300">
-                          {canClaimAny ? 'Ready to Claim!' : `${activeInvites.toLocaleString('en-IN')}/${nextTarget.toLocaleString('en-IN')} Active`}
-                        </span>
-                      </div>
+                    <div className="shrink-0 hidden xs:block text-right">
+                      <span className="text-[7.5px] text-slate-300 block">Status</span>
+                      <span className="text-[9px] font-black text-amber-300">
+                        {canClaimAny ? 'Claim Ready!' : `${activeInvites}/${nextTarget}`}
+                      </span>
                     </div>
                   </div>
 
-                  {/* ACTION BUTTONS ROW: "Claim Prize Now" / "Invite Friends" */}
-                  <div className="relative z-10 flex items-center gap-2 pt-0.5">
+                  <div className="relative z-10 flex items-center gap-1.5">
                     <button
                       onClick={() => setShowReferralPopup(true)}
-                      className="flex-1 py-2.5 px-3.5 rounded-xl font-black text-xs flex items-center justify-center gap-2 transition-all active:scale-[0.98] cursor-pointer shadow-lg tracking-wide border border-amber-300"
+                      className="flex-1 py-1.5 px-2.5 rounded-lg font-black text-[10px] flex items-center justify-center gap-1 transition-all active:scale-[0.98] cursor-pointer shadow-xs tracking-wide border border-amber-300"
                       style={{
                         background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 50%, #b45309 100%)',
                         color: '#0f172a',
-                        boxShadow: '0 4px 14px rgba(245, 158, 11, 0.35)',
                       }}
                     >
-                      <Gift size={15} strokeWidth={2.6} className="text-slate-950" />
-                      <span>{canClaimAny ? 'Claim VIP Prize Now 🎁' : 'Claim Prizes & Invite Doston 🎁'}</span>
+                      <Gift size={11} strokeWidth={2.6} className="text-slate-950" />
+                      <span>{canClaimAny ? 'Claim VIP Prize Now 🎁' : 'Claim Prizes & Invite 🎁'}</span>
                     </button>
 
                     <button
                       onClick={() => setShowReferralPopup(true)}
-                      className="py-2.5 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 bg-white/10 hover:bg-white/15 text-purple-200 border border-purple-400/30 transition-all active:scale-95 cursor-pointer shrink-0"
+                      className="py-1.5 px-2 rounded-lg font-black text-[10px] flex items-center justify-center gap-0.5 bg-white/10 hover:bg-white/15 text-purple-200 border border-purple-400/30 transition-all active:scale-95 cursor-pointer shrink-0"
                     >
                       <span>Details</span>
-                      <ChevronRight size={14} />
+                      <ChevronRight size={11} />
                     </button>
                   </div>
                 </div>
-              </div>
-            );
-          })()}
+              );
+            })()}
 
-
-          {/* ── LEVEL ACHIEVEMENTS ── */}
-          {(() => {
-            const _curLvl = _pLvl.level;
-            const _lvlAchievements: { lvl: number; emoji: string; label: string; perk: string }[] = [
-              { lvl: 1,  emoji: '🌱', label: 'Beginner',        perk: 'App joined' },
-              { lvl: 2,  emoji: '🌿', label: 'Learner',         perk: '1,000 XP' },
-              { lvl: 3,  emoji: '🔍', label: 'Active Learner',  perk: '2% OFF' },
-              { lvl: 4,  emoji: '✨', label: 'Consistent',      perk: '3% OFF' },
-              { lvl: 5,  emoji: '⚡', label: 'Dedicated',       perk: '5% OFF' },
-              { lvl: 6,  emoji: '🔥', label: 'Rising Achiever', perk: '8% OFF' },
-              { lvl: 7,  emoji: '💫', label: 'Expert',          perk: '10% OFF' },
-              { lvl: 8,  emoji: '💎', label: 'Master',          perk: '13% OFF' },
-              { lvl: 9,  emoji: '🌟', label: 'Elite',           perk: '17% OFF' },
-              { lvl: 10, emoji: '👑', label: 'Champion',        perk: '20% OFF' },
-              { lvl: 11, emoji: '🏆', label: 'Legend',          perk: '20% OFF' },
-              { lvl: 12, emoji: '🔮', label: 'Mythic',          perk: '22% OFF' },
-              { lvl: 13, emoji: '⚜️', label: 'Supreme',         perk: '25% OFF' },
-              { lvl: 14, emoji: '🌠', label: 'Eternal',         perk: '28% OFF' },
-              { lvl: 15, emoji: '💠', label: 'Absolute Legend', perk: '30% OFF' },
-            ];
-            const _lvlColors: Record<number, string> = {
-              1:'#94a3b8',2:'#6ee7b7',3:'#38bdf8',4:'#06b6d4',5:'#3b82f6',
-              6:'#f97316',7:'#a855f7',8:'#f59e0b',9:'#eab308',10:'#f59e0b',
-              11:'#10b981',12:'#8b5cf6',13:'#ec4899',14:'#f43f5e',15:'#a5f3fc',
-            };
-            const _progressPct = Math.round(((_curLvl - 1) / 14) * 100);
-            return (
-              <div className="px-3 mb-3">
-                <div className="rounded-2xl overflow-hidden" style={{
-                  background: _pCard,
-                  border: `1px solid ${tierTheme.primary}22`,
-                  boxShadow: `0 4px 20px rgba(0,0,0,0.12)`,
-                }}>
-                  {/* Header with gradient band */}
-                  <div style={{
-                    padding: '14px 16px 12px',
-                    background: _light
-                      ? `linear-gradient(135deg, ${_pLvl.color}0e, transparent 60%)`
-                      : `linear-gradient(135deg, ${_pLvl.color}12, transparent 60%)`,
-                    borderBottom: `1px solid ${tierTheme.primary}12`,
-                  }}>
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
-                        background: `linear-gradient(135deg, ${_pLvl.color}30, ${_pLvl.color}12)`,
-                        border: `1.5px solid ${_pLvl.color}40`,
-                        boxShadow: `0 2px 12px ${_pLvl.color}25`,
-                        fontSize: 20,
-                      }}>{_pLvl.emoji}</div>
-                      <div className="flex-1">
-                        <p className="font-black uppercase tracking-widest" style={{ fontSize: 10, color: _pTxtColor }}>Level Progress</p>
-                        <p style={{ fontSize: 9.5, color: _pTxtSubColor, marginTop: 1 }}>{_curLvl} / 15 levels unlocked</p>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={() => setShowLevelLeaderboard(true)}
-                          className="px-2 py-1 rounded-full font-bold flex items-center gap-1 text-[10px] active:scale-95 transition-transform"
-                          style={{
-                            background: 'rgba(245,158,11,0.18)',
-                            color: '#fbbf24',
-                            border: '1px solid rgba(245,158,11,0.35)',
-                          }}
-                          title="Open Level Leaderboard"
-                        >
-                          <Trophy size={11} className="text-amber-400" />
-                          <span>Leaderboard</span>
-                        </button>
-                        <div className="px-3 py-1.5 rounded-full font-black" style={{
-                          fontSize: 11,
-                          color: '#fff',
-                          background: `linear-gradient(135deg, ${_pLvl.color}cc, ${_pLvl.color})`,
-                          boxShadow: `0 2px 10px ${_pLvl.color}45`,
-                        }}>L{_curLvl}</div>
-                      </div>
-                    </div>
-                    {/* Segmented progress track */}
-                    <div className="mt-3 flex items-center gap-0.5">
-                      {Array.from({ length: 15 }, (_, i) => {
-                        const segLvl = i + 1;
-                        const done = _curLvl >= segLvl;
-                        const cur  = _curLvl === segLvl;
-                        const c    = _lvlColors[segLvl] ?? tierTheme.primary;
-                        return (
-                          <div key={segLvl} className="flex-1 rounded-full transition-all duration-500" style={{
-                            height: cur ? 8 : 5,
-                            background: done
-                              ? `linear-gradient(90deg, ${c}bb, ${c})`
-                              : (_light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)'),
-                            boxShadow: cur ? `0 0 8px ${c}80` : 'none',
-                          }} />
-                        );
-                      })}
-                    </div>
-                  </div>
-                  {/* Horizontal scroll badges */}
-                  <div className="flex gap-2 px-3 py-3 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
-                    {_lvlAchievements.map(({ lvl, emoji, label, perk }) => {
-                      const _isDone   = _curLvl > lvl;
-                      const _isCur    = _curLvl === lvl;
-                      const _isLocked = _curLvl < lvl;
-                      const _c = _isLocked ? (_light ? '#cbd5e1' : '#334155') : (_lvlColors[lvl] ?? tierTheme.primary);
-                      return (
-                        <div key={lvl} className="shrink-0 flex flex-col items-center rounded-xl py-3 px-2"
-                          style={{
-                            width: 66,
-                            background: _isCur
-                              ? `linear-gradient(145deg, ${_lvlColors[lvl] ?? tierTheme.primary}28, ${_lvlColors[lvl] ?? tierTheme.primary}10)`
-                              : _isDone ? `${_lvlColors[lvl] ?? tierTheme.primary}0e`
-                              : _light ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.025)',
-                            border: _isCur
-                              ? `1.5px solid ${_lvlColors[lvl] ?? tierTheme.primary}60`
-                              : _isDone ? `1px solid ${_lvlColors[lvl] ?? tierTheme.primary}28`
-                              : `1px solid ${_light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.05)'}`,
-                            boxShadow: _isCur ? `0 2px 12px ${_lvlColors[lvl] ?? tierTheme.primary}25` : 'none',
-                          }}>
-                          <div className="relative mb-1.5">
-                            <span style={{ fontSize: 22, lineHeight: 1, opacity: _isLocked ? 0.25 : 1, filter: _isCur ? `drop-shadow(0 1px 5px ${_c}80)` : 'none' }}>{emoji}</span>
-                            {_isDone && (
-                              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full flex items-center justify-center"
-                                style={{ background: `linear-gradient(135deg, ${_lvlColors[lvl] ?? tierTheme.primary}cc, ${_lvlColors[lvl] ?? tierTheme.primary})`, fontSize: 7, fontWeight: 900, color: '#fff' }}>✓</span>
-                            )}
-                            {_isCur && (
-                              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full flex items-center justify-center"
-                                style={{ background: `linear-gradient(135deg, ${_lvlColors[lvl] ?? tierTheme.primary}cc, ${_lvlColors[lvl] ?? tierTheme.primary})`, fontSize: 7, fontWeight: 900, color: '#fff' }}>★</span>
-                            )}
-                          </div>
-                          <span className="font-black mb-0.5" style={{ fontSize: 9, color: _c }}>L{lvl}</span>
-                          <span className="font-semibold text-center leading-tight mb-1" style={{ fontSize: 7.5, color: _isLocked ? (_light ? '#cbd5e1' : '#374151') : _pTxtColor, opacity: _isLocked ? 0.5 : 0.9 }}>{label}</span>
-                          <span className="font-bold" style={{ fontSize: 7.5, color: _c, opacity: _isLocked ? 0.35 : 0.9 }}>{perk}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* ── SUBSCRIPTION COUNTDOWN (redesigned) ── */}
-          {user.isPremium && user.subscriptionEndDate && user.subscriptionTier !== 'LIFETIME' && !isNaN(new Date(user.subscriptionEndDate).getTime()) && (() => {
-            const endMs   = new Date(user.subscriptionEndDate).getTime();
-            const totalMs = Math.max(1, endMs - (user.subscriptionHistory?.[0] ? new Date(user.subscriptionHistory[0].startDate).getTime() : endMs - 30*24*60*60*1000));
-            const diff    = Math.max(0, endMs - _profileNow);
-            const dDays   = Math.floor(diff / (1000 * 60 * 60 * 24));
-            const dHrs    = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-            const dMin    = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-            const dSec    = Math.floor((diff % (1000 * 60)) / 1000);
-            const isUrgent = dDays <= 3;
-            const cdAccent = isUrgent ? '#ef4444' : tierTheme.primary;
-            const pct      = Math.max(2, Math.min(100, Math.round((diff / totalMs) * 100)));
-            return (
-              <div className="px-3 mb-3">
-                <div className="rounded-2xl p-4" style={{ background: _pCard, border: `1px solid ${isUrgent ? 'rgba(239,68,68,0.28)' : tierTheme.primary + '22'}` }}>
-                  {/* Header row */}
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: `${cdAccent}18` }}>
-                      <Crown size={13} style={{ color: cdAccent }} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[11px] font-black uppercase tracking-wide" style={{ color: _pTxtColor }}>
-                        {_pTierLabel}
-                      </p>
-                      <p className="text-[10px]" style={{ color: isUrgent ? '#ef4444' : _pTxtSubColor }}>
-                        {isUrgent ? '⚠ Renew karo — khatam hone wala hai' : `Expires: ${new Date(user.subscriptionEndDate!).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}`}
-                      </p>
-                    </div>
-                    {isUrgent && (
-                      <span className="text-[9px] font-black px-2 py-1 rounded-full shrink-0" style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}>URGENT</span>
-                    )}
-                  </div>
-                  {/* Progress bar */}
-                  <div className="h-1.5 rounded-full overflow-hidden mb-3" style={{ background: _light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)' }}>
-                    <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: isUrgent ? 'linear-gradient(90deg,#ef4444,#f87171)' : `linear-gradient(90deg,${cdAccent}80,${cdAccent})` }} />
-                  </div>
-                  {/* Time blocks */}
-                  <div className="grid grid-cols-4 gap-2">
-                    {[
-                      { val: String(dDays).padStart(2,'0'), label: 'Days' },
-                      { val: String(dHrs).padStart(2,'0'),  label: 'Hrs' },
-                      { val: String(dMin).padStart(2,'0'),  label: 'Min' },
-                      { val: String(dSec).padStart(2,'0'),  label: 'Sec' },
-                    ].map(box => (
-                      <div key={box.label} className="rounded-xl py-2.5 text-center" style={{ background: _light ? `${cdAccent}0e` : `${cdAccent}10`, border: `1px solid ${cdAccent}22` }}>
-                        <div className="text-[18px] font-black tabular-nums leading-none" style={{ color: cdAccent, fontVariantNumeric: 'tabular-nums' }}>{box.val}</div>
-                        <div className="text-[8px] font-bold uppercase tracking-widest mt-1" style={{ color: _pTxtSubColor }}>{box.label}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* ── THEME STUDIO SHOWCASE CARD ── */}
-          <div className="px-3 mb-3">
-            <div
-              className="rounded-2xl overflow-hidden p-4 relative transition-all duration-200 border shadow-lg group"
-              style={{
-                background: _light
-                  ? `linear-gradient(135deg, ${tierTheme.primary}12 0%, rgba(255,255,255,0.92) 55%, ${tierTheme.primary}08 100%)`
-                  : `linear-gradient(135deg, ${tierTheme.primary}22 0%, rgba(15,23,42,0.88) 55%, ${tierTheme.primary}14 100%)`,
-                border: `1.5px solid ${tierTheme.primary}38`,
-                boxShadow: `0 8px 24px ${tierTheme.primary}18`,
+            {/* 2. Theme Studio Row */}
+            <button
+              onClick={() => {
+                themeOpenerRef.current = 'PROFILE';
+                onTabChange('THEME_CUSTOMIZER' as any);
               }}
+              className={`w-full px-4 py-3.5 flex items-center gap-3.5 ${_pHovCls} transition-colors cursor-pointer text-left`}
+              style={{ borderBottom: _pSep }}
             >
-              {/* Soft decorative glow */}
               <div
-                className="absolute -top-12 -right-12 w-32 h-32 rounded-full blur-2xl pointer-events-none opacity-40"
-                style={{ background: tierTheme.primary }}
-              />
-
-              {/* Header */}
-              <div className="relative z-10 flex items-center justify-between gap-2.5 mb-3">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-md text-white"
+                className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-xs"
+                style={{
+                  background: `${tierTheme.primary}18`,
+                  border: `1.5px solid ${tierTheme.primary}40`,
+                }}
+              >
+                <Palette size={19} style={{ color: tierTheme.primary }} />
+              </div>
+              <div className="flex-1 text-left min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <p className={`text-sm font-bold ${_pTxt}`}>Theme Studio</p>
+                  <span
+                    className="text-[8.5px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-wide font-mono"
                     style={{
-                      background: `linear-gradient(135deg, ${tierTheme.primary}, ${tierTheme.mid || tierTheme.primary})`,
-                      boxShadow: `0 4px 12px ${tierTheme.primary}40`,
+                      background: `${tierTheme.primary}20`,
+                      color: tierTheme.primary,
+                      border: `1px solid ${tierTheme.primary}35`,
                     }}
                   >
-                    <Palette size={20} className="text-white" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <h3 className={`text-sm sm:text-base font-black ${_pTxt} tracking-tight`}>
-                        Theme Studio
-                      </h3>
-                      <span
-                        className="text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider font-mono shadow-xs"
-                        style={{
-                          background: `${tierTheme.primary}25`,
-                          color: _light ? tierTheme.primary : '#e0e7ff',
-                          border: `1px solid ${tierTheme.primary}40`,
-                        }}
-                      >
-                        {user.personalTheme ? '🎨 Custom Theme' : '⚡ Official Theme'}
-                      </span>
-                    </div>
-                    <p className={`text-[10.5px] font-medium leading-tight mt-0.5 ${_pTxtSub}`}>
-                      App ke colors, top bar, navigation bar aur cards ka theme badlein
-                    </p>
-                  </div>
+                    {user.personalTheme ? '🎨 Custom Active' : 'Studio'}
+                  </span>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    themeOpenerRef.current = 'PROFILE';
-                    onTabChange('THEME_CUSTOMIZER' as any);
-                  }}
-                  className="shrink-0 px-2.5 py-1 rounded-xl text-[10px] font-black flex items-center gap-1 active:scale-95 transition cursor-pointer"
-                  style={{
-                    background: `${tierTheme.primary}18`,
-                    color: tierTheme.primary,
-                    border: `1px solid ${tierTheme.primary}35`,
-                  }}
-                >
-                  <Sparkles size={11} />
-                  <span>Open</span>
-                </button>
+                <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>
+                  App ke colors, top bar aur card themes badlein
+                </p>
               </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <span className="text-[10px] font-bold text-amber-400/90 hidden sm:inline">Customize</span>
+                <ChevronRight size={15} style={{ color: _pTxtMutedColor }} />
+              </div>
+            </button>
 
-              {/* Theme Preview Swatches Box */}
-              <div
-                className="relative z-10 p-3 rounded-xl mb-3 flex items-center justify-between gap-2"
-                style={{
-                  background: _light ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.04)',
-                  border: `1px solid ${_light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)'}`,
-                }}
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  {/* Swatches strip */}
-                  <div className="flex items-center -space-x-1.5 shrink-0">
-                    <div
-                      className="w-6 h-6 rounded-full border-2 border-slate-900 shadow-xs"
-                      style={{ background: user.personalTheme?.btnStart || tierTheme.primary }}
-                      title="Button / Accent Color"
-                    />
-                    <div
-                      className="w-6 h-6 rounded-full border-2 border-slate-900 shadow-xs"
-                      style={{ background: user.personalTheme?.topBarStart || tierTheme.topBarStart || tierTheme.primary }}
-                      title="Top Bar Color"
-                    />
-                    <div
-                      className="w-6 h-6 rounded-full border-2 border-slate-900 shadow-xs"
-                      style={{ background: user.personalTheme?.navActive || tierTheme.navActive || '#6366f1' }}
-                      title="Active Navigation Color"
-                    />
-                  </div>
-                  <div className="min-w-0">
-                    <p className={`text-xs font-bold truncate ${_pTxt}`}>
-                      {user.personalTheme?.themeName
-                        ? `${user.personalTheme.themeEmoji || '🎨'} ${user.personalTheme.themeName}`
-                        : `${tierTheme.emoji || '⚡'} ${tierTheme.label} Default Theme`}
-                    </p>
-                    <p className={`text-[9.5px] truncate ${_pTxtSub}`}>
-                      {user.personalTheme ? 'Aapka customized theme live active hai' : 'Default app tier theme active hai'}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {user.personalTheme && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setConfirmDialog({
-                          isOpen: true,
-                          message: 'Kya aap default tier theme par wapas switch karna chahte hain?',
-                          onConfirm: async () => {
-                            setConfirmDialog(null);
-                            const updated = { ...user } as any;
-                            delete updated.personalTheme;
-                            delete updated.personalThemeColor;
-                            delete updated.personalThemeExpiry;
-                            delete updated.activeAppliedThemeId;
-                            handleUserUpdate(updated);
-                            try {
-                              await saveUserToLive(updated);
-                              showAlert('Default theme wapas apply ho gaya!', 'SUCCESS');
-                            } catch {
-                              showAlert('Theme reset nahi ho paya', 'ERROR');
-                            }
-                          },
-                        });
-                      }}
-                      className="px-2 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-slate-200 active:scale-95 transition cursor-pointer"
-                      title="Reset to default theme"
-                    >
-                      Reset
-                    </button>
+            {/* 3. Score History Row */}
+            <button
+              onClick={() => {
+                const userLvl = user.level || getLevelInfo(user.totalScore || 0).level || 1;
+                const isScoreUnlocked = _isBasicUser || _isUltraUser || user.role === 'ADMIN' || userLvl >= 3;
+                if (!isScoreUnlocked) {
+                  showAlert('🔒 Score History Free users ke liye Level 3 par unlock hota hai. Basic aur Ultra members ke liye Level 1 se unlocked hai.', 'INFO');
+                  return;
+                }
+                setShowScoreHistoryDirect(true);
+              }}
+              className={`w-full px-4 py-3.5 flex items-center gap-3.5 ${_pHovCls} transition-colors cursor-pointer text-left`}
+              style={{ borderBottom: _pSep }}
+            >
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: _pIconBg, border: _pIconBdr }}>
+                <TrendingUp size={19} style={{ color: tierTheme.primary }} />
+              </div>
+              <div className="flex-1 text-left min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <p className={`text-sm font-bold ${_pTxt}`}>Score History</p>
+                  {!_isBasicUser && !_isUltraUser && user.role !== 'ADMIN' && (
+                    <span className="text-[8.5px] bg-amber-100 text-amber-700 px-1.5 py-0.2 rounded font-black font-mono">Lvl 3</span>
                   )}
                 </div>
+                <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>Apna activity score ka pura record</p>
               </div>
+              <ChevronRight size={15} style={{ color: _pTxtMutedColor }} className="shrink-0" />
+            </button>
 
-              {/* Action Button */}
-              <button
-                type="button"
-                onClick={() => {
-                  themeOpenerRef.current = 'PROFILE';
-                  onTabChange('THEME_CUSTOMIZER' as any);
-                }}
-                className="relative z-10 w-full py-2.5 px-4 rounded-xl font-black text-xs flex items-center justify-center gap-2 active:scale-[0.98] transition-all cursor-pointer shadow-md text-white"
-                style={{
-                  background: `linear-gradient(135deg, ${tierTheme.primary}, ${tierTheme.mid || tierTheme.primary})`,
-                  boxShadow: `0 4px 14px ${tierTheme.primary}40`,
-                }}
-              >
-                <Palette size={15} className="shrink-0" />
-                <span>Theme Studio Kholein &amp; Colors Badlein 🎨</span>
-                <ChevronRight size={14} className="shrink-0" />
-              </button>
-            </div>
+            {/* 4. Link Google Account Row */}
+            <button
+              onClick={async () => {
+                try {
+                  const googleProvider = new GoogleAuthProvider();
+                  await setPersistence(auth, browserLocalPersistence);
+                  const result = await signInWithPopup(auth, googleProvider);
+                  const gUser = result.user;
+                  const updated = {
+                    ...user,
+                    linkedGoogleUid: gUser.uid,
+                    linkedGoogleEmail: gUser.email || '',
+                    photoURL: user.photoURL || gUser.photoURL || '',
+                    avatarChoice: (user.avatarChoice === 'gmail' ? 'gmail' : (gUser.photoURL && !user.photoURL ? 'gmail' : user.avatarChoice)) as 'gmail' | 'app',
+                  };
+                  handleUserUpdate(updated);
+                  await saveUserToLive(updated);
+                  showAlert(`✅ Google account linked: ${gUser.email}`, 'SUCCESS');
+                } catch (err: any) {
+                  if (err?.code !== 'auth/popup-closed-by-user') {
+                    showAlert(err?.message || 'Google linking failed. Try again.', 'ERROR');
+                  }
+                }
+              }}
+              className={`w-full px-4 py-3.5 flex items-center gap-3.5 ${_pHovCls} transition-colors cursor-pointer text-left`}
+            >
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: _pIconBg, border: _pIconBdr }}>
+                <span className="text-base leading-none">🔗</span>
+              </div>
+              <div className="flex-1 text-left min-w-0">
+                <p className={`text-sm font-bold ${_pTxt}`}>Link Google Account</p>
+                {user.linkedGoogleEmail
+                  ? <p className="text-[10px] text-emerald-400 font-semibold mt-0.5 truncate">✓ Linked: {user.linkedGoogleEmail}</p>
+                  : <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>Google se bhi login kar sako ek hi account pe</p>
+                }
+              </div>
+              {user.linkedGoogleEmail ? (
+                <span className="text-[8.5px] font-black px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 shrink-0">
+                  Linked
+                </span>
+              ) : (
+                <ChevronRight size={15} style={{ color: _pTxtMutedColor }} className="shrink-0" />
+              )}
+            </button>
           </div>
-
-          {/* ── MY AFFILIATIONS — School & Coaching ── */}
+{/* ── MY AFFILIATIONS — School & Coaching ── */}
           {(() => {
             const _userSchoolId   = (user as any).schoolId as string | undefined;
             const _userCoachingId = (user as any).coachingId as string | undefined;
@@ -14740,566 +14693,495 @@ export const StudentDashboard: React.FC<Props> = ({
               </button>
             )}
 
-            {/* ── Link Google Account ── */}
-            {user.provider !== 'google' && (
-              <button
-                onClick={async () => {
-                  try {
-                    const googleProvider = new GoogleAuthProvider();
-                    await setPersistence(auth, browserLocalPersistence);
-                    const result = await signInWithPopup(auth, googleProvider);
-                    const gUser = result.user;
-                    const updated = {
-                      ...user,
-                      linkedGoogleUid: gUser.uid,
-                      linkedGoogleEmail: gUser.email || '',
-                      photoURL: user.photoURL || gUser.photoURL || '',
-                      avatarChoice: (user.avatarChoice === 'gmail' ? 'gmail' : (gUser.photoURL && !user.photoURL ? 'gmail' : user.avatarChoice)) as 'gmail' | 'app',
-                    };
-                    handleUserUpdate(updated);
-                    await saveUserToLive(updated);
-                    showAlert(`✅ Google account linked: ${gUser.email}`, 'SUCCESS');
-                  } catch (err: any) {
-                    if (err?.code !== 'auth/popup-closed-by-user') {
-                      showAlert(err?.message || 'Google linking failed. Try again.', 'ERROR');
-                    }
-                  }
-                }}
-                className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-                style={{ borderBottom: _pSep }}>
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: _pIconBg, border: _pIconBdr }}>
-                  <span className="text-base leading-none">🔗</span>
-                </div>
-                <div className="flex-1 text-left">
-                  <p className={`text-sm font-bold ${_pTxt}`}>Link Google Account</p>
-                  {user.linkedGoogleEmail
-                    ? <p className="text-[10px] text-emerald-400 font-semibold mt-0.5">✓ Linked: {user.linkedGoogleEmail}</p>
-                    : <p className={`text-[10px] mt-0.5 ${_pTxtSub}`}>Google se bhi login kar sako ek hi account pe</p>
-                  }
-                </div>
-                {user.linkedGoogleEmail
-                  ? <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">Linked</span>
-                  : <ChevronRight size={14} style={{ color: _pTxtMutedColor }} className="shrink-0" />
-                }
-              </button>
-            )}
-
-            {/* ── Score History Button ── */}
-            <button
-              onClick={() => {
-                const userLvl = user.level || getLevelInfo(user.totalScore || 0).level || 1;
-                const isScoreUnlocked = _isBasicUser || _isUltraUser || user.role === 'ADMIN' || userLvl >= 3;
-                if (!isScoreUnlocked) {
-                  showAlert('🔒 Score History Free users ke liye Level 3 par unlock hota hai. Basic aur Ultra members ke liye Level 1 se unlocked hai.', 'INFO');
-                  return;
-                }
-                setShowScoreHistoryDirect(true);
-              }}
-              className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-              style={{ borderBottom: _pSep }}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: _pIconBg, border: _pIconBdr }}>
-                <TrendingUp size={18} style={{ color: tierTheme.primary }} />
-              </div>
-              <div className="flex-1 text-left">
-                <div className="flex items-center gap-1.5">
-                  <p className={`text-sm font-bold ${_pTxt}`}>Score History</p>
-                  {!_isBasicUser && !_isUltraUser && user.role !== 'ADMIN' && (
-                    <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-black">Lvl 3</span>
-                  )}
-                </div>
-                <p className={`text-[10px] mt-0.5 ${_pTxtSub}`}>Apna activity score ka pura record</p>
-              </div>
-              <ChevronRight size={14} style={{ color: _pTxtMutedColor }} className="shrink-0" />
-            </button>
-
-            {/* ── Theme Studio Action Button ── */}
-            <button
-              onClick={() => {
-                themeOpenerRef.current = 'PROFILE';
-                onTabChange('THEME_CUSTOMIZER' as any);
-              }}
-              className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-              style={{ borderBottom: _pSep }}
-            >
-              <div
-                className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-                style={{
-                  background: `${tierTheme.primary}18`,
-                  border: `1px solid ${tierTheme.primary}40`,
-                }}
-              >
-                <Palette size={18} style={{ color: tierTheme.primary }} />
-              </div>
-              <div className="flex-1 text-left min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <p className={`text-sm font-bold ${_pTxt}`}>Theme Studio</p>
-                  <span
-                    className="text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide"
-                    style={{
-                      background: `${tierTheme.primary}20`,
-                      color: tierTheme.primary,
-                      border: `1px solid ${tierTheme.primary}30`,
-                    }}
-                  >
-                    {user.personalTheme ? 'Active' : 'Studio'}
-                  </span>
-                </div>
-                <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>
-                  App ke colors, top bar aur card themes badlein
-                </p>
-              </div>
-              <ChevronRight size={14} style={{ color: _pTxtMutedColor }} className="shrink-0" />
-            </button>
-
             {/* ── Settings Button ── */}
             <button
               onClick={() => setShowProfileSettings(v => !v)}
-              className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-              style={{ borderBottom: showProfileSettings ? _pSep : 'none' }}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: _pIconBg, border: _pIconBdr }}>
+              className={`w-full px-4 py-3.5 flex items-center gap-3.5 ${_pHovCls} transition-colors cursor-pointer text-left`}
+              style={{ borderBottom: showProfileSettings ? _pSep : 'none' }}
+            >
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-xs" style={{ background: _pIconBg, border: _pIconBdr }}>
                 <span className="text-base leading-none">⚙️</span>
               </div>
-              <p className={`flex-1 text-sm font-bold text-left ${_pTxt}`}>Settings</p>
-              <ChevronRight size={15} style={{ color: _pTxtMutedColor, transform: showProfileSettings ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} className="shrink-0" />
-            </button>
-            {showProfileSettings && (<>
-
-            {/* ── Theme Studio Quick Access in Settings ── */}
-            <button
-              onClick={() => {
-                themeOpenerRef.current = 'PROFILE';
-                onTabChange('THEME_CUSTOMIZER' as any);
-              }}
-              className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-              style={{ borderBottom: _pSep }}
-            >
-              <div
-                className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-                style={{
-                  background: 'rgba(236,72,153,0.14)',
-                  border: '1px solid rgba(236,72,153,0.35)',
-                }}
-              >
-                <span className="text-base leading-none">🎨</span>
-              </div>
               <div className="flex-1 text-left min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <p className={`text-sm font-bold ${_pTxt}`}>Theme Customizer</p>
-                  <span className="text-[9px] bg-pink-100 dark:bg-pink-950 text-pink-600 dark:text-pink-300 px-1.5 py-0.5 rounded font-black">Studio</span>
-                </div>
-                <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>
-                  Full color studio, presets aur dark/light customization
-                </p>
+                <p className={`text-sm font-bold ${_pTxt}`}>Settings</p>
+                <p className={`text-[10px] ${_pTxtSub} truncate mt-0.5`}>Preferences, theme lock, reading rules & animations</p>
               </div>
-              <ChevronRight size={14} style={{ color: _pTxtMutedColor }} className="shrink-0" />
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full font-mono" style={{ background: `${tierTheme.primary}18`, color: tierTheme.primary }}>
+                  {showProfileSettings ? 'Close' : 'Configure'}
+                </span>
+                <ChevronRight size={15} style={{ color: _pTxtMutedColor, transform: showProfileSettings ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
+              </div>
             </button>
 
-            {/* ── Change Name Button ── */}
-            <button
-              onClick={() => {
-                setNewNameInput(user.name || '');
-                setShowNameChangeModal(true);
-              }}
-              className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-              style={{ borderBottom: _pSep }}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
-                background: `${tierTheme.primary}18`,
-                border: `1px solid ${tierTheme.primary}40`,
-              }}>
-                <span className="text-base leading-none">👤</span>
-              </div>
-              <div className="flex-1 text-left">
-                <div className="flex items-center gap-1.5">
-                  <p className={`text-sm font-bold ${_pTxt}`}>Change Name</p>
-                  <span className="text-[9px] bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded font-black">100 Cr / 20 Dia</span>
-                </div>
-                <p className={`text-[10px] mt-0.5 ${_pTxtSub}`}>Apna profile name badlein</p>
-              </div>
-              <ChevronRight size={14} style={{ color: _pTxtMutedColor }} className="shrink-0" />
-            </button>
-
-            {/* ── Sequential Page Reading Control (Free: Always ON, Basic/Ultra: Self ON/OFF) ── */}
-            {(() => {
-              const isVip = Boolean(
-                user.isPremium && (user.subscriptionLevel === 'BASIC' || user.subscriptionLevel === 'ULTRA')
-              );
-              // For VIP users: sequentialReadingDisabled === true means OFF, else ON
-              const isEnabled = isVip ? !user.sequentialReadingDisabled : true;
-
-              return (
-                <button
-                  onClick={async () => {
-                    if (!isVip) {
-                      showAlert('🔒 Sequential Page Reading Free users ke liye hamesha ON rehta hai! Isko toggle karne ke liye Store se Basic ya Ultra plan lijiye.', 'INFO', 'Free Plan Rule');
-                      return;
-                    }
-                    try {
-                      const nextDisabled = !user.sequentialReadingDisabled;
-                      const uRef = doc(db, 'users', user.id);
-                      await updateDoc(uRef, { sequentialReadingDisabled: nextDisabled });
-                      const updated = { ...user, sequentialReadingDisabled: nextDisabled };
-                      handleUserUpdate(updated);
-                      showAlert(
-                        nextDisabled
-                          ? '🔓 Sequential Page Reading OFF! Ab aap kisi bhi page par direct ja sakte hain.'
-                          : '🔒 Sequential Page Reading ON! Pehle ka page poora padhne par hi agla page khulega.',
-                        'SUCCESS',
-                        'Reading Rule Updated'
-                      );
-                    } catch {
-                      showAlert('❌ Setting update nahi ho payi.', 'ERROR');
-                    }
-                  }}
-                  className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-                  style={{ borderBottom: _pSep }}>
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
-                    background: isEnabled ? 'rgba(14,165,233,0.15)' : 'rgba(100,116,139,0.15)',
-                    border: `1px solid ${isEnabled ? 'rgba(14,165,233,0.40)' : 'rgba(100,116,139,0.30)'}`,
-                  }}>
-                    <span className="text-base leading-none">{isEnabled ? '📖' : '📑'}</span>
-                  </div>
-                  <div className="flex-1 text-left">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <p className={`text-sm font-bold ${_pTxt}`}>
-                        Sequential Page Reading
-                      </p>
-                      {isVip ? (
-                        <span className="text-[9px] bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 px-1.5 py-0.5 rounded font-black">
-                          {user.subscriptionLevel} VIP Control
-                        </span>
-                      ) : (
-                        <span className="text-[9px] bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded font-black">
-                          Free (Always ON)
-                        </span>
-                      )}
+            {/* ── SETTINGS COMPACT 2-COLUMN GRID (1 RAW ME 2) ── */}
+            {showProfileSettings && (
+              <div className="p-2.5 sm:p-3 bg-black/5 dark:bg-black/25 border-t" style={{ borderColor: _pSep }}>
+                <div className="grid grid-cols-2 gap-2">
+                  {/* 1. Change Name */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewNameInput(user.name || '');
+                      setShowNameChangeModal(true);
+                    }}
+                    className="p-2.5 rounded-xl border flex flex-col justify-between text-left active:scale-[0.97] transition-all cursor-pointer group"
+                    style={{
+                      background: _light ? 'rgba(255,255,255,0.85)' : 'rgba(30,41,59,0.55)',
+                      borderColor: _light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-1 mb-1.5 w-full">
+                      <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs" style={{ background: `${tierTheme.primary}18`, border: `1px solid ${tierTheme.primary}40` }}>
+                        <span className="text-xs leading-none">👤</span>
+                      </div>
+                      <span className="text-[7.5px] font-bold px-1.5 py-0.5 rounded font-mono bg-indigo-500/15 text-indigo-400 border border-indigo-500/25 shrink-0">
+                        100 Cr
+                      </span>
                     </div>
-                    <p className={`text-[10px] mt-0.5 ${_pTxtSub}`}>
-                      {isVip
-                        ? isEnabled
-                          ? 'ON (Active) — Pehla page padhne ke baad hi agla page unlock hoga. Tap to turn OFF.'
-                          : 'OFF (Disabled) — Free navigation active! Aap kisi bhi page par ja sakte hain.'
-                        : 'Free students ke liye hamesha ON rehta hai (Strict sequence required).'}
-                    </p>
-                  </div>
-                  {/* Toggle pill */}
-                  <div className="shrink-0 w-10 h-5 rounded-full relative transition-all"
-                    style={{ background: isEnabled ? 'rgba(14,165,233,0.85)' : 'rgba(255,255,255,0.12)' }}>
-                    <div className="absolute top-0.5 w-4 h-4 rounded-full transition-all"
-                      style={{
-                        background: '#fff',
-                        left: isEnabled ? '1.375rem' : '0.125rem',
-                        boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
-                      }} />
-                  </div>
-                </button>
-              );
-            })()}
+                    <div className="w-full min-w-0">
+                      <p className={`text-[11.5px] font-bold ${_pTxt} truncate leading-tight`}>Change Name</p>
+                      <p className={`text-[9px] ${_pTxtSub} truncate mt-0.5 leading-tight`}>Profile name badlein</p>
+                    </div>
+                  </button>
 
-            {/* ── Theme Override Toggle ── */}
-            {(() => {
-              // useDefaultTheme !== false  →  LOCKED (default safe state, admin can't override)
-              // useDefaultTheme === false  →  UNLOCKED (user opted in to receive admin themes)
-              const _adminAllowed = (user as any).useDefaultTheme === false;
-              return (
-                <button
-                  onClick={async () => {
-                    try {
-                      const uRef = doc(db, 'users', user.id);
-                      if (_adminAllowed) {
-                        // Lock back to default — remove the explicit opt-in
-                        await updateDoc(uRef, { useDefaultTheme: deleteField() });
-                        const updated = { ...user } as any;
-                        delete updated.useDefaultTheme;
-                        handleUserUpdate(updated);
-                        showAlert('🔒 App default theme locked! Admin themes will no longer override yours.', 'SUCCESS');
-                      } else {
-                        // Allow admin themes
-                        await updateDoc(uRef, { useDefaultTheme: false });
-                        const updated = { ...user, useDefaultTheme: false } as any;
-                        handleUserUpdate(updated);
-                        showAlert('🔓 Admin themes enabled! You will now receive the theme set by admin.', 'SUCCESS');
+                  {/* 2. Sequential Reading */}
+                  {(() => {
+                    const isVip = Boolean(
+                      user.isPremium && (user.subscriptionLevel === 'BASIC' || user.subscriptionLevel === 'ULTRA')
+                    );
+                    const isEnabled = isVip ? !user.sequentialReadingDisabled : true;
+                    return (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!isVip) {
+                            showAlert('🔒 Sequential Page Reading Free users ke liye hamesha ON rehta hai! Isko toggle karne ke liye Store se Basic ya Ultra plan lijiye.', 'INFO', 'Free Plan Rule');
+                            return;
+                          }
+                          try {
+                            const nextDisabled = !user.sequentialReadingDisabled;
+                            const uRef = doc(db, 'users', user.id);
+                            await updateDoc(uRef, { sequentialReadingDisabled: nextDisabled });
+                            const updated = { ...user, sequentialReadingDisabled: nextDisabled };
+                            handleUserUpdate(updated);
+                            showAlert(
+                              nextDisabled
+                                ? '🔓 Sequential Page Reading OFF! Ab aap kisi bhi page par direct ja sakte hain.'
+                                : '🔒 Sequential Page Reading ON! Pehle ka page poora padhne par hi agla page khulega.',
+                              'SUCCESS',
+                              'Reading Rule Updated'
+                            );
+                          } catch {
+                            showAlert('❌ Setting update nahi ho payi.', 'ERROR');
+                          }
+                        }}
+                        className="p-2.5 rounded-xl border flex flex-col justify-between text-left active:scale-[0.97] transition-all cursor-pointer group"
+                        style={{
+                          background: _light ? 'rgba(255,255,255,0.85)' : 'rgba(30,41,59,0.55)',
+                          borderColor: _light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)',
+                        }}
+                      >
+                        <div className="flex items-center justify-between gap-1 mb-1.5 w-full">
+                          <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs" style={{
+                            background: isEnabled ? 'rgba(14,165,233,0.15)' : 'rgba(100,116,139,0.15)',
+                            border: `1px solid ${isEnabled ? 'rgba(14,165,233,0.40)' : 'rgba(100,116,139,0.30)'}`,
+                          }}>
+                            <span className="text-xs leading-none">{isEnabled ? '📖' : '📑'}</span>
+                          </div>
+                          <span className={`text-[7.5px] font-black px-1.5 py-0.5 rounded font-mono shrink-0 ${
+                            isEnabled ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30' : 'bg-slate-500/20 text-slate-400 border border-slate-500/30'
+                          }`}>
+                            {isVip ? (isEnabled ? 'VIP ON' : 'OFF') : 'FREE ON'}
+                          </span>
+                        </div>
+                        <div className="w-full min-w-0">
+                          <p className={`text-[11.5px] font-bold ${_pTxt} truncate leading-tight`}>Sequential Page</p>
+                          <p className={`text-[9px] ${_pTxtSub} truncate mt-0.5 leading-tight`}>
+                            {isVip ? (isEnabled ? 'Order lock active' : 'Free jump active') : 'Strict sequence'}
+                          </p>
+                        </div>
+                      </button>
+                    );
+                  })()}
+
+                  {/* 3. Admin Themes */}
+                  {(() => {
+                    const _adminAllowed = (user as any).useDefaultTheme === false;
+                    return (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const uRef = doc(db, 'users', user.id);
+                            if (_adminAllowed) {
+                              await updateDoc(uRef, { useDefaultTheme: deleteField() });
+                              const updated = { ...user } as any;
+                              delete updated.useDefaultTheme;
+                              handleUserUpdate(updated);
+                              showAlert('🔒 App default theme locked! Admin themes will no longer override yours.', 'SUCCESS');
+                            } else {
+                              await updateDoc(uRef, { useDefaultTheme: false });
+                              const updated = { ...user, useDefaultTheme: false } as any;
+                              handleUserUpdate(updated);
+                              showAlert('🔓 Admin themes enabled! You will now receive the theme set by admin.', 'SUCCESS');
+                            }
+                          } catch {
+                            showAlert('❌ Theme setting could not be updated', 'ERROR');
+                          }
+                        }}
+                        className="p-2.5 rounded-xl border flex flex-col justify-between text-left active:scale-[0.97] transition-all cursor-pointer group"
+                        style={{
+                          background: _light ? 'rgba(255,255,255,0.85)' : 'rgba(30,41,59,0.55)',
+                          borderColor: _light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)',
+                        }}
+                      >
+                        <div className="flex items-center justify-between gap-1 mb-1.5 w-full">
+                          <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs" style={{
+                            background: _adminAllowed ? 'rgba(245,158,11,0.15)' : `${tierTheme.primary}18`,
+                            border: `1px solid ${_adminAllowed ? 'rgba(245,158,11,0.40)' : tierTheme.primary + '40'}`,
+                          }}>
+                            <span className="text-xs leading-none">{_adminAllowed ? '🔓' : '🔒'}</span>
+                          </div>
+                          <span className={`text-[7.5px] font-black px-1.5 py-0.5 rounded font-mono shrink-0 ${
+                            _adminAllowed ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-slate-500/20 text-slate-400 border border-slate-500/30'
+                          }`}>
+                            {_adminAllowed ? 'BROADCAST' : 'LOCKED'}
+                          </span>
+                        </div>
+                        <div className="w-full min-w-0">
+                          <p className={`text-[11.5px] font-bold ${_pTxt} truncate leading-tight`}>Admin Themes</p>
+                          <p className={`text-[9px] ${_pTxtSub} truncate mt-0.5 leading-tight`}>
+                            {_adminAllowed ? 'Broadcast ON' : 'Default locked'}
+                          </p>
+                        </div>
+                      </button>
+                    );
+                  })()}
+
+                  {/* 4. Name Effect */}
+                  <button
+                    type="button"
+                    id="profile-name-fx-toggle-btn"
+                    onClick={() => {
+                      const next = !nameFxOff;
+                      setNameFxOff(next);
+                      try { localStorage.setItem('nst_name_fx_off', next ? '1' : '0'); } catch {}
+                    }}
+                    className="p-2.5 rounded-xl border flex flex-col justify-between text-left active:scale-[0.97] transition-all cursor-pointer group"
+                    style={{
+                      background: _light ? 'rgba(255,255,255,0.85)' : 'rgba(30,41,59,0.55)',
+                      borderColor: _light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-1 mb-1.5 w-full">
+                      <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs" style={{
+                        background: nameFxOff ? _pIconBg : `${_pLvl.color}22`,
+                        border: `1px solid ${nameFxOff ? 'rgba(255,255,255,0.10)' : _pLvl.color + '55'}`,
+                      }}>
+                        <span className="text-xs leading-none">{nameFxOff ? '✏️' : '✨'}</span>
+                      </div>
+                      <span className={`text-[7.5px] font-black px-1.5 py-0.5 rounded font-mono shrink-0 ${
+                        !nameFxOff ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-slate-500/20 text-slate-400 border border-slate-500/30'
+                      }`}>
+                        {!nameFxOff ? 'ACTIVE' : 'OFF'}
+                      </span>
+                    </div>
+                    <div className="w-full min-w-0">
+                      <p className={`text-[11.5px] font-bold ${_pTxt} truncate leading-tight`}>Name Effect</p>
+                      <p className={`text-[9px] ${_pTxtSub} truncate mt-0.5 leading-tight`}>
+                        {nameFxOff ? 'Plain text' : `${_pLvl.emoji} L${_pLvl.level} glow`}
+                      </p>
+                    </div>
+                  </button>
+
+                  {/* 5. Card Effect */}
+                  <button
+                    type="button"
+                    id="profile-card-fx-toggle-btn"
+                    onClick={() => {
+                      const next = !cardFxOff;
+                      setCardFxOff(next);
+                      try { localStorage.setItem('nst_card_fx_off', next ? '1' : '0'); } catch {}
+                    }}
+                    className="p-2.5 rounded-xl border flex flex-col justify-between text-left active:scale-[0.97] transition-all cursor-pointer group"
+                    style={{
+                      background: _light ? 'rgba(255,255,255,0.85)' : 'rgba(30,41,59,0.55)',
+                      borderColor: _light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-1 mb-1.5 w-full">
+                      <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs" style={{
+                        background: cardFxOff ? _pIconBg : `${_displayLvl.color}22`,
+                        border: `1px solid ${cardFxOff ? 'rgba(255,255,255,0.10)' : _displayLvl.color + '55'}`,
+                      }}>
+                        <span className="text-xs leading-none">{cardFxOff ? '🃏' : '💠'}</span>
+                      </div>
+                      <span className={`text-[7.5px] font-black px-1.5 py-0.5 rounded font-mono shrink-0 ${
+                        !cardFxOff ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-slate-500/20 text-slate-400 border border-slate-500/30'
+                      }`}>
+                        {!cardFxOff ? 'ACTIVE' : 'OFF'}
+                      </span>
+                    </div>
+                    <div className="w-full min-w-0">
+                      <p className={`text-[11.5px] font-bold ${_pTxt} truncate leading-tight`}>Card Glow</p>
+                      <p className={`text-[9px] ${_pTxtSub} truncate mt-0.5 leading-tight`}>
+                        {cardFxOff ? 'Plain card' : `${_displayLvl.emoji} L${_displayLvl.level} aura`}
+                      </p>
+                    </div>
+                  </button>
+
+                  {/* 6. Level Animation */}
+                  <button
+                    type="button"
+                    id="profile-level-anim-toggle-btn"
+                    onClick={() => {
+                      const next = !levelAnimOff;
+                      setLevelAnimOff(next);
+                      try {
+                        localStorage.setItem('nst_level_anim_off', next ? '1' : '0');
+                        window.dispatchEvent(new Event('nst-level-anim-change'));
+                      } catch {}
+                      showAlert(next ? '⏸️ Top Bar aur Profile Card animation off (Static)' : '⚡ Level animation on', 'SUCCESS');
+                    }}
+                    className="p-2.5 rounded-xl border flex flex-col justify-between text-left active:scale-[0.97] transition-all cursor-pointer group"
+                    style={{
+                      background: _light ? 'rgba(255,255,255,0.85)' : 'rgba(30,41,59,0.55)',
+                      borderColor: _light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-1 mb-1.5 w-full">
+                      <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs" style={{
+                        background: !levelAnimOff ? `${_displayLvl.color}22` : _pIconBg,
+                        border: `1px solid ${!levelAnimOff ? _displayLvl.color + '55' : 'rgba(255,255,255,0.10)'}`,
+                      }}>
+                        <span className="text-xs leading-none">{levelAnimOff ? '⏸️' : '⚡'}</span>
+                      </div>
+                      <span className={`text-[7.5px] font-black px-1.5 py-0.5 rounded font-mono shrink-0 ${
+                        !levelAnimOff ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-slate-500/20 text-slate-400 border border-slate-500/30'
+                      }`}>
+                        {!levelAnimOff ? 'ACTIVE' : 'STATIC'}
+                      </span>
+                    </div>
+                    <div className="w-full min-w-0">
+                      <p className={`text-[11.5px] font-bold ${_pTxt} truncate leading-tight`}>Level Anim</p>
+                      <p className={`text-[9px] ${_pTxtSub} truncate mt-0.5 leading-tight`}>
+                        {levelAnimOff ? 'Static mode' : 'Top bar & Card anim'}
+                      </p>
+                    </div>
+                  </button>
+
+                  {/* 7. Haptic Vibration */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !hapticEnabled;
+                      setHapticEnabled(next);
+                      try { localStorage.setItem('nst_haptic_enabled', next ? '1' : '0'); } catch {}
+                      if (next) { try { navigator.vibrate?.(25); } catch {} }
+                    }}
+                    className="p-2.5 rounded-xl border flex flex-col justify-between text-left active:scale-[0.97] transition-all cursor-pointer group"
+                    style={{
+                      background: _light ? 'rgba(255,255,255,0.85)' : 'rgba(30,41,59,0.55)',
+                      borderColor: _light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-1 mb-1.5 w-full">
+                      <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs" style={{
+                        background: hapticEnabled ? 'rgba(16,185,129,0.14)' : _pIconBg,
+                        border: `1px solid ${hapticEnabled ? 'rgba(16,185,129,0.45)' : 'rgba(255,255,255,0.10)'}`,
+                      }}>
+                        <span className="text-xs leading-none">{hapticEnabled ? '📳' : '📴'}</span>
+                      </div>
+                      <span className={`text-[7.5px] font-black px-1.5 py-0.5 rounded font-mono shrink-0 ${
+                        hapticEnabled ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-slate-500/20 text-slate-400 border border-slate-500/30'
+                      }`}>
+                        {hapticEnabled ? 'ON' : 'OFF'}
+                      </span>
+                    </div>
+                    <div className="w-full min-w-0">
+                      <p className={`text-[11.5px] font-bold ${_pTxt} truncate leading-tight`}>Haptic Touch</p>
+                      <p className={`text-[9px] ${_pTxtSub} truncate mt-0.5 leading-tight`}>
+                        {hapticEnabled ? 'Vibration on tap' : 'Silent feedback'}
+                      </p>
+                    </div>
+                  </button>
+
+                  {/* 8. Card Border Animation */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !cardBorderAnimOff;
+                      setCardBorderAnimOff(next);
+                      try {
+                        localStorage.setItem('nst_card_border_anim_off', next ? '1' : '0');
+                        if (next) {
+                          document.documentElement.classList.remove('global-rotating-border-cards');
+                        } else {
+                          document.documentElement.classList.add('global-rotating-border-cards');
+                        }
+                        window.dispatchEvent(new Event('nst-card-border-anim-change'));
+                      } catch {}
+                      showAlert(next ? '✨ Card rotating border off' : '✨ Card rotating border on', 'SUCCESS');
+                    }}
+                    className="p-2.5 rounded-xl border flex flex-col justify-between text-left active:scale-[0.97] transition-all cursor-pointer group"
+                    style={{
+                      background: _light ? 'rgba(255,255,255,0.85)' : 'rgba(30,41,59,0.55)',
+                      borderColor: _light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-1 mb-1.5 w-full">
+                      <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs" style={{
+                        background: !cardBorderAnimOff ? 'rgba(59,130,246,0.15)' : _pIconBg,
+                        border: `1px solid ${!cardBorderAnimOff ? 'rgba(59,130,246,0.45)' : 'rgba(255,255,255,0.10)'}`,
+                      }}>
+                        <span className="text-xs leading-none">✨</span>
+                      </div>
+                      <span className={`text-[7.5px] font-black px-1.5 py-0.5 rounded font-mono shrink-0 ${
+                        !cardBorderAnimOff ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-slate-500/20 text-slate-400 border border-slate-500/30'
+                      }`}>
+                        {!cardBorderAnimOff ? 'ACTIVE' : 'OFF'}
+                      </span>
+                    </div>
+                    <div className="w-full min-w-0">
+                      <p className={`text-[11.5px] font-bold ${_pTxt} truncate leading-tight`}>Border Glow</p>
+                      <p className={`text-[9px] ${_pTxtSub} truncate mt-0.5 leading-tight`}>
+                        {!cardBorderAnimOff ? 'Rotating glow' : 'Static border'}
+                      </p>
+                    </div>
+                  </button>
+
+                  {/* 9. Level Style */}
+                  {_pLvl.level >= 2 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowLevelChooser(true)}
+                      className="p-2.5 rounded-xl border flex flex-col justify-between text-left active:scale-[0.97] transition-all cursor-pointer group"
+                      style={{
+                        background: _light ? 'rgba(255,255,255,0.85)' : 'rgba(30,41,59,0.55)',
+                        borderColor: _light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)',
+                      }}
+                    >
+                      <div className="flex items-center justify-between gap-1 mb-1.5 w-full">
+                        <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs" style={{
+                          background: `${_displayLvl.color}22`,
+                          border: `1px solid ${_displayLvl.color}55`,
+                        }}>
+                          <span className="text-xs leading-none">{_displayLvl.emoji}</span>
+                        </div>
+                        <span className="text-[7.5px] font-black px-1.5 py-0.5 rounded font-mono shrink-0 bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                          L{_displayLvl.level}
+                        </span>
+                      </div>
+                      <div className="w-full min-w-0">
+                        <p className={`text-[11.5px] font-bold ${_pTxt} truncate leading-tight`}>Level Style</p>
+                        <p className={`text-[9px] ${_pTxtSub} truncate mt-0.5 leading-tight`}>
+                          {displayLevel && displayLevel !== _pLvl.level ? `${_displayLvl.label}` : 'Badge customize'}
+                        </p>
+                      </div>
+                    </button>
+                  )}
+
+                  {/* 10. Reset Settings */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const keysToRemove: string[] = [];
+                      for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        if (key && key.startsWith(`nst_credit_skip_${user.id}_`)) keysToRemove.push(key);
                       }
-                    } catch {
-                      showAlert('❌ Theme setting could not be updated', 'ERROR');
-                    }
-                  }}
-                  className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-                  style={{ borderBottom: _pSep }}>
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
-                    background: _adminAllowed ? 'rgba(245,158,11,0.15)' : `${tierTheme.primary}18`,
-                    border: `1px solid ${_adminAllowed ? 'rgba(245,158,11,0.40)' : tierTheme.primary + '40'}`,
-                  }}>
-                    <span className="text-base leading-none">{_adminAllowed ? '🔓' : '🔒'}</span>
-                  </div>
-                  <div className="flex-1 text-left">
-                    <p className={`text-sm font-bold ${_pTxt}`}>
-                      {_adminAllowed ? 'Admin Themes: ON' : 'App Default Theme'}
-                    </p>
-                    <p className={`text-[10px] mt-0.5 ${_pTxtSub}`}>
-                      {_adminAllowed
-                        ? 'You receive the theme broadcast by admin — tap to lock your own'
-                        : 'Your tier default theme is active — admin cannot override it'}
-                    </p>
-                  </div>
-                  {/* Toggle pill */}
-                  <div className="shrink-0 w-10 h-5 rounded-full relative transition-all"
-                    style={{ background: _adminAllowed ? 'rgba(245,158,11,0.70)' : 'rgba(255,255,255,0.12)' }}>
-                    <div className="absolute top-0.5 w-4 h-4 rounded-full transition-all"
-                      style={{
-                        background: '#fff',
-                        left: _adminAllowed ? '1.375rem' : '0.125rem',
-                        boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
-                      }} />
-                  </div>
-                </button>
-              );
-            })()}
-
-            {/* ── Name Effect Toggle ── */}
-            <button
-              id="profile-name-fx-toggle-btn"
-              onClick={() => {
-                const next = !nameFxOff;
-                setNameFxOff(next);
-                try { localStorage.setItem('nst_name_fx_off', next ? '1' : '0'); } catch {}
-              }}
-              className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-              style={{ borderBottom: _pSep }}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
-                background: nameFxOff ? _pIconBg : `${_pLvl.color}22`,
-                border: `1px solid ${nameFxOff ? 'rgba(255,255,255,0.10)' : _pLvl.color + '55'}`,
-              }}>
-                <span className="text-base leading-none">{nameFxOff ? '✏️' : '✨'}</span>
-              </div>
-              <div className="flex-1 text-left">
-                <p className={`text-sm font-bold ${_pTxt}`}>Name Effect</p>
-                <p className={`text-[10px] mt-0.5 ${_pTxtSub}`}>
-                  {nameFxOff
-                    ? `Plain text — ${_pLvl.emoji} Level ${_pLvl.level} effect off`
-                    : `${_pLvl.emoji} Level ${_pLvl.level} (${_pLvl.label}) — animated effect active`}
-                </p>
-              </div>
-              <div className="shrink-0 w-10 h-5 rounded-full relative transition-all"
-                style={{ background: nameFxOff ? 'rgba(255,255,255,0.12)' : `${_pLvl.color}bb` }}>
-                <div className="absolute top-0.5 w-4 h-4 rounded-full transition-all"
-                  style={{
-                    background: '#fff',
-                    left: nameFxOff ? '0.125rem' : '1.375rem',
-                    boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
-                  }} />
-              </div>
-            </button>
-
-            {/* ── Card Effect Toggle ── */}
-            <button
-              id="profile-card-fx-toggle-btn"
-              onClick={() => {
-                const next = !cardFxOff;
-                setCardFxOff(next);
-                try { localStorage.setItem('nst_card_fx_off', next ? '1' : '0'); } catch {}
-              }}
-              className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-              style={{ borderBottom: _pSep }}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
-                background: cardFxOff ? _pIconBg : `${_displayLvl.color}22`,
-                border: `1px solid ${cardFxOff ? 'rgba(255,255,255,0.10)' : _displayLvl.color + '55'}`,
-              }}>
-                <span className="text-base leading-none">{cardFxOff ? '🃏' : '💠'}</span>
-              </div>
-              <div className="flex-1 text-left">
-                <p className={`text-sm font-bold ${_pTxt}`}>Card Effect</p>
-                <p className={`text-[10px] mt-0.5 ${_pTxtSub}`}>
-                  {cardFxOff
-                    ? `Profile card plain hai — glow/border off`
-                    : `${_displayLvl.emoji} Level ${_displayLvl.level} card glow/border on`}
-                </p>
-              </div>
-              <div className="shrink-0 w-10 h-5 rounded-full relative transition-all"
-                style={{ background: cardFxOff ? 'rgba(255,255,255,0.12)' : `${_displayLvl.color}bb` }}>
-                <div className="absolute top-0.5 w-4 h-4 rounded-full transition-all"
-                  style={{
-                    background: '#fff',
-                    left: cardFxOff ? '0.125rem' : '1.375rem',
-                    boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
-                  }} />
-              </div>
-            </button>
-
-            {/* ── Level Animation Toggle (Top Bar & Profile Card) ── */}
-            <button
-              id="profile-level-anim-toggle-btn"
-              onClick={() => {
-                const next = !levelAnimOff;
-                setLevelAnimOff(next);
-                try {
-                  localStorage.setItem('nst_level_anim_off', next ? '1' : '0');
-                  window.dispatchEvent(new Event('nst-level-anim-change'));
-                } catch {}
-                showAlert(next ? '⏸️ Top Bar aur Profile Card animation off kar di gayi (Static)' : '⚡ Level animation on kar di gayi', 'SUCCESS');
-              }}
-              className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-              style={{ borderBottom: _pSep }}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
-                background: !levelAnimOff ? `${_displayLvl.color}22` : _pIconBg,
-                border: `1px solid ${!levelAnimOff ? _displayLvl.color + '55' : 'rgba(255,255,255,0.10)'}`,
-              }}>
-                <span className="text-base leading-none">{levelAnimOff ? '⏸️' : '⚡'}</span>
-              </div>
-              <div className="flex-1 text-left">
-                <p className={`text-sm font-bold ${_pTxt}`}>Level Animation</p>
-                <p className={`text-[10px] mt-0.5 ${_pTxtSub}`}>
-                  {levelAnimOff
-                    ? 'Top Bar aur Profile Card level animations off hain (Static mode)'
-                    : `${_displayLvl.emoji} Level ${_displayLvl.level} Top Bar aur Profile animations active hain`}
-                </p>
-              </div>
-              <div className="shrink-0 w-10 h-5 rounded-full relative transition-all cursor-pointer"
-                style={{ background: !levelAnimOff ? `${_displayLvl.color}bb` : 'rgba(255,255,255,0.14)' }}>
-                <div className="absolute top-0.5 w-4 h-4 rounded-full transition-all"
-                  style={{
-                    background: '#fff',
-                    left: !levelAnimOff ? '1.375rem' : '0.125rem',
-                    boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
-                  }} />
-              </div>
-            </button>
-
-            {/* ── Haptic Vibration Toggle ── */}
-            <button
-              onClick={() => {
-                const next = !hapticEnabled;
-                setHapticEnabled(next);
-                try { localStorage.setItem('nst_haptic_enabled', next ? '1' : '0'); } catch {}
-                if (next) { try { navigator.vibrate?.(25); } catch {} }
-              }}
-              className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-              style={{ borderBottom: _pSep }}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
-                background: hapticEnabled ? 'rgba(16,185,129,0.14)' : _pIconBg,
-                border: `1px solid ${hapticEnabled ? 'rgba(16,185,129,0.45)' : 'rgba(255,255,255,0.10)'}`,
-              }}>
-                <span className="text-base leading-none">{hapticEnabled ? '📳' : '📴'}</span>
-              </div>
-              <div className="flex-1 text-left">
-                <p className={`text-sm font-bold ${_pTxt}`}>Haptic Vibration</p>
-                <p className={`text-[10px] mt-0.5 ${_pTxtSub}`}>
-                  {hapticEnabled ? 'Button tap pe vibration on hai' : 'Vibration off hai'}
-                </p>
-              </div>
-              <div className="shrink-0 w-10 h-5 rounded-full relative transition-all cursor-pointer"
-                style={{ background: hapticEnabled ? 'rgba(16,185,129,0.7)' : 'rgba(255,255,255,0.14)' }}>
-                <div className="absolute top-0.5 w-4 h-4 rounded-full transition-all"
-                  style={{ background: '#fff', left: hapticEnabled ? '1.375rem' : '0.125rem', boxShadow: '0 1px 4px rgba(0,0,0,0.3)' }} />
-              </div>
-            </button>
-
-            {/* ── Rotating Card Border Animation Toggle ── */}
-            <button
-              onClick={() => {
-                const next = !cardBorderAnimOff;
-                setCardBorderAnimOff(next);
-                try {
-                  localStorage.setItem('nst_card_border_anim_off', next ? '1' : '0');
-                  if (next) {
-                    document.documentElement.classList.remove('global-rotating-border-cards');
-                  } else {
-                    document.documentElement.classList.add('global-rotating-border-cards');
-                  }
-                  window.dispatchEvent(new Event('nst-card-border-anim-change'));
-                } catch {}
-                showAlert(next ? '✨ Card rotating border animation off kar di gayi' : '✨ Card rotating border animation on kar di gayi', 'SUCCESS');
-              }}
-              className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-              style={{ borderBottom: _pSep }}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
-                background: !cardBorderAnimOff ? 'rgba(59,130,246,0.15)' : _pIconBg,
-                border: `1px solid ${!cardBorderAnimOff ? 'rgba(59,130,246,0.45)' : 'rgba(255,255,255,0.10)'}`,
-              }}>
-                <span className="text-base leading-none">✨</span>
-              </div>
-              <div className="flex-1 text-left">
-                <p className={`text-sm font-bold ${_pTxt}`}>Card Border Animation</p>
-                <p className={`text-[10px] mt-0.5 ${_pTxtSub}`}>
-                  {!cardBorderAnimOff
-                    ? 'Rotating border glow sabhi cards par active hai'
-                    : 'Rotating border animation off hai'}
-                </p>
-              </div>
-              <div className="shrink-0 w-10 h-5 rounded-full relative transition-all cursor-pointer"
-                style={{ background: !cardBorderAnimOff ? 'rgba(59,130,246,0.85)' : 'rgba(255,255,255,0.14)' }}>
-                <div className="absolute top-0.5 w-4 h-4 rounded-full transition-all"
-                  style={{
-                    background: '#fff',
-                    left: !cardBorderAnimOff ? '1.375rem' : '0.125rem',
-                    boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
-                  }} />
-              </div>
-            </button>
-
-
-            {/* ── Level Style Chooser ── */}
-            {_pLvl.level >= 2 && (
-              <button
-                onClick={() => setShowLevelChooser(true)}
-                className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-                style={{ borderBottom: _pSep }}>
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
-                  background: `${_displayLvl.color}22`,
-                  border: `1px solid ${_displayLvl.color}55`,
-                }}>
-                  <span className="text-base leading-none">{_displayLvl.emoji}</span>
+                      keysToRemove.forEach(k => localStorage.removeItem(k));
+                      showAlert('Settings reset successfully!', 'SUCCESS');
+                    }}
+                    className="p-2.5 rounded-xl border flex flex-col justify-between text-left active:scale-[0.97] transition-all cursor-pointer group"
+                    style={{
+                      background: _light ? 'rgba(255,255,255,0.85)' : 'rgba(30,41,59,0.55)',
+                      borderColor: _light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-1 mb-1.5 w-full">
+                      <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs" style={{ background: `${tierTheme.primary}18`, border: `1px solid ${tierTheme.primary}35` }}>
+                        <RotateCcw size={14} style={{ color: tierTheme.primary }} />
+                      </div>
+                      <span className="text-[7.5px] font-bold px-1.5 py-0.5 rounded font-mono bg-slate-500/20 text-slate-400 border border-slate-500/30 shrink-0">
+                        DEFAULT
+                      </span>
+                    </div>
+                    <div className="w-full min-w-0">
+                      <p className={`text-[11.5px] font-bold ${_pTxt} truncate leading-tight`}>Reset Settings</p>
+                      <p className={`text-[9px] ${_pTxtSub} truncate mt-0.5 leading-tight`}>Restore defaults</p>
+                    </div>
+                  </button>
                 </div>
-                <div className="flex-1 text-left">
-                  <p className={`text-sm font-bold ${_pTxt}`}>Level Style</p>
-                  <p className={`text-[10px] mt-0.5 ${_pTxtSub}`}>
-                    {displayLevel && displayLevel !== _pLvl.level
-                      ? `${_displayLvl.emoji} L${_displayLvl.level} (${_displayLvl.label}) — customized`
-                      : `${_displayLvl.emoji} L${_displayLvl.level} (${_displayLvl.label}) — current level`}
-                  </p>
-                </div>
-                <ChevronRight size={14} style={{ color: _pTxtMutedColor }} className="shrink-0" />
-              </button>
+              </div>
             )}
-
-            {/* Reset Settings */}
-            <button
-              onClick={() => {
-                const keysToRemove: string[] = [];
-                for (let i = 0; i < localStorage.length; i++) {
-                  const key = localStorage.key(i);
-                  if (key && key.startsWith(`nst_credit_skip_${user.id}_`)) keysToRemove.push(key);
-                }
-                keysToRemove.forEach(k => localStorage.removeItem(k));
-                showAlert('Settings reset successfully!', 'SUCCESS');
-              }}
-              className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-              style={{ borderBottom: 'none' }}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${tierTheme.primary}18`, border: `1px solid ${tierTheme.primary}35` }}>
-                <RotateCcw size={17} style={{ color: tierTheme.primary }} />
-              </div>
-              <p className={`flex-1 text-sm font-bold text-left ${_pTxt}`}>Reset Settings</p>
-              <ChevronRight size={15} style={{ color: _pTxtMutedColor }} className="shrink-0" />
-            </button>
-            </>)}
           </div>
-
-          {/* ── LOGOUT ── */}
+          {/* ── RARE MYTHIC LOGOUT CARD ── */}
           {(settings?.isLogoutEnabled !== false || user.role === 'ADMIN' || isImpersonating) && (
-            <div className="mx-3 rounded-2xl overflow-hidden mb-4" style={{ background: _pCard, border: '1px solid rgba(239,68,68,0.20)' }}>
-              <button onClick={() => setConfirmDialog({ isOpen: true, message: 'Kya aap logout karna chahte hain?', onConfirm: () => { setConfirmDialog(null); onLogout?.(); } })}
-                className="w-full px-4 py-4 flex items-center gap-3.5 hover:bg-red-500/8 active:bg-red-500/12 transition-colors">
-                <div className="w-10 h-10 rounded-xl bg-red-500/12 border border-red-500/22 flex items-center justify-center shrink-0">
-                  <LogOut size={17} className="text-red-400" />
+            <div
+              className="mx-3 rounded-2xl overflow-hidden mb-4 relative select-none shadow-xl transition-all duration-200 group"
+              style={{
+                background: 'linear-gradient(135deg, rgba(225, 29, 72, 0.22) 0%, rgba(15, 23, 42, 0.96) 50%, rgba(136, 19, 55, 0.30) 100%)',
+                border: '1.5px solid rgba(244, 63, 94, 0.55)',
+                boxShadow: '0 6px 25px rgba(225, 29, 72, 0.28), inset 0 0 20px rgba(244, 63, 94, 0.10)',
+              }}
+            >
+              {/* Holographic obsidian shimmer line */}
+              <div
+                className="absolute top-0 left-0 right-0 h-[1.5px] pointer-events-none"
+                style={{
+                  background: 'linear-gradient(90deg, transparent 0%, rgba(251, 113, 133, 0.9) 50%, transparent 100%)',
+                }}
+              />
+
+              <button
+                type="button"
+                onClick={() => setConfirmDialog({
+                  isOpen: true,
+                  message: 'Kya aap logout karna chahte hain?',
+                  onConfirm: () => { setConfirmDialog(null); onLogout?.(); }
+                })}
+                className="w-full px-4 py-3.5 flex items-center justify-between gap-3 text-left transition-all active:scale-[0.98] cursor-pointer"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border border-rose-400/40 shadow-lg relative overflow-hidden"
+                    style={{
+                      background: 'linear-gradient(135deg, #e11d48, #9f1239)',
+                      boxShadow: '0 0 14px rgba(225, 29, 72, 0.5)',
+                    }}
+                  >
+                    <LogOut size={18} className="text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.7)]" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-black tracking-wide text-rose-200 drop-shadow-[0_0_8px_rgba(244,63,94,0.4)]">
+                        Logout Account
+                      </span>
+                      <span className="text-[7.5px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-widest font-mono bg-rose-500/25 text-rose-300 border border-rose-500/40">
+                        ⚡ RARE EXIT
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-rose-300/70 mt-0.5 truncate">
+                      Sign out &amp; end active session safely
+                    </p>
+                  </div>
                 </div>
-                <div className="flex-1 text-left">
-                  <p className="text-sm font-bold text-red-400">Logout</p>
-                  <p className="text-[10px] text-red-400/50 mt-0.5">Sign out from this device</p>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-[9.5px] font-black text-rose-400/90 uppercase tracking-wider font-mono hidden xs:inline">
+                    Sign Out
+                  </span>
+                  <div
+                    className="w-7 h-7 rounded-lg flex items-center justify-center border border-rose-400/30 text-rose-300 bg-rose-500/15 group-hover:translate-x-0.5 transition-transform"
+                  >
+                    <ChevronRight size={14} />
+                  </div>
                 </div>
-                <ChevronRight size={15} className="text-red-900/40 shrink-0" />
               </button>
             </div>
           )}
-
           {/* App info + Support — unified professional card */}
           <div className="mx-4 mb-6 mt-2 rounded-2xl overflow-hidden" style={{
              background: _pCard,
@@ -15382,7 +15264,7 @@ export const StudentDashboard: React.FC<Props> = ({
            </div>
 
           {/* ── ADMIN SUPPORT (SAB SE NICHE PROFILE PAGE ME) ── */}
-          <div className="mx-4 mb-8">
+          <div className="mx-3 sm:mx-4 mb-8">
             <button
               type="button"
               onClick={() => {
@@ -15390,34 +15272,46 @@ export const StudentDashboard: React.FC<Props> = ({
                 setChatMode('SUPPORT');
                 setShowChat(true);
               }}
-              className="w-full p-4 rounded-2xl flex items-center justify-between text-left active:scale-[0.98] transition-all shadow-md cursor-pointer"
+              className="w-full p-4 rounded-2xl flex items-center justify-between text-left active:scale-[0.98] transition-all shadow-xl cursor-pointer relative overflow-hidden group"
               style={{
-                background: _pCard,
-                border: `1.5px solid ${tierTheme.primary || '#6366f1'}40`,
-                boxShadow: `0 4px 18px ${(tierTheme.primary || '#6366f1')}18`,
+                background: _light
+                  ? 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(255, 255, 255, 0.96) 60%, rgba(6, 182, 212, 0.08) 100%)'
+                  : 'linear-gradient(135deg, rgba(99, 102, 241, 0.22) 0%, rgba(15, 23, 42, 0.95) 55%, rgba(6, 182, 212, 0.18) 100%)',
+                border: '2px solid rgba(6, 182, 212, 0.65)',
+                boxShadow: '0 0 22px rgba(99, 102, 241, 0.35), 0 8px 24px rgba(0, 0, 0, 0.22)',
               }}
             >
-              <div className="flex items-center gap-3.5">
+              <div
+                className="absolute inset-0 rounded-2xl pointer-events-none"
+                style={{
+                  boxShadow: 'inset 0 0 15px rgba(6, 182, 212, 0.20)',
+                }}
+              />
+              <div className="absolute -top-8 -left-8 w-24 h-24 rounded-full bg-cyan-500/20 blur-xl pointer-events-none group-hover:bg-cyan-500/30 transition-all" />
+              <div className="absolute -bottom-8 -right-8 w-24 h-24 rounded-full bg-indigo-500/20 blur-xl pointer-events-none group-hover:bg-indigo-500/30 transition-all" />
+
+              <div className="flex items-center gap-3.5 relative z-10">
                 <div
-                  className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-sm"
+                  className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-md relative"
                   style={{
-                    background: `${tierTheme.primary || '#6366f1'}15`,
-                    color: tierTheme.primary || '#6366f1',
-                    border: `1px solid ${tierTheme.primary || '#6366f1'}30`,
+                    background: 'linear-gradient(135deg, #06b6d4, #6366f1)',
+                    color: '#ffffff',
+                    boxShadow: '0 4px 14px rgba(6, 182, 212, 0.45)',
                   }}
                 >
-                  <Headphones size={22} />
+                  <Headphones size={22} className="text-white drop-shadow-sm" />
+                  <span className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-400 rounded-full border-2 border-slate-900 animate-pulse" />
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
                     <h4 className={`text-sm font-black ${_pTxt}`}>Admin Support</h4>
                     <span
-                      className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider text-white"
+                      className="px-2 py-0.5 rounded-full text-[8.5px] font-black uppercase tracking-wider text-slate-950 font-mono shadow-xs"
                       style={{
-                        background: tierTheme.primary || '#6366f1',
+                        background: 'linear-gradient(90deg, #22d3ee, #818cf8)',
                       }}
                     >
-                      Direct Help
+                      Direct 24/7 Help
                     </span>
                   </div>
                   <p className={`text-[11px] mt-0.5 ${_pTxtSub}`}>
@@ -15426,10 +15320,11 @@ export const StudentDashboard: React.FC<Props> = ({
                 </div>
               </div>
               <div
-                className="w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black shadow-xs shrink-0"
+                className="w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black shadow-md shrink-0 relative z-10 transition-transform group-hover:translate-x-0.5"
                 style={{
-                  background: `${tierTheme.primary || '#6366f1'}18`,
-                  color: tierTheme.primary || '#6366f1',
+                  background: 'linear-gradient(135deg, rgba(6,182,212,0.25), rgba(99,102,241,0.25))',
+                  color: _light ? '#4338ca' : '#a5b4fc',
+                  border: '1px solid rgba(99,102,241,0.4)',
                 }}
               >
                 <ChevronRight size={16} />
@@ -15437,7 +15332,6 @@ export const StudentDashboard: React.FC<Props> = ({
             </button>
           </div>
           </div>
-
           {/* ── Level Style Chooser Sheet ── */}
           {showLevelChooser && (
             <div className="fixed inset-0 flex items-end" style={{ zIndex: 900, background: 'rgba(0,0,0,0.72)' }}
@@ -15527,7 +15421,12 @@ export const StudentDashboard: React.FC<Props> = ({
     if ((activeTab as string) === "DOWNLOADS") {
       return (
         <div className="animate-in fade-in duration-300">
-          <OfflineDownloads onBack={() => onTabChange("HOME")} />
+          <OfflineDownloads
+            onBack={() => onTabChange("HOME")}
+            user={user}
+            settings={settings}
+            onUpgradePlan={() => onTabChange("STORE")}
+          />
         </div>
       );
     }
@@ -15710,7 +15609,7 @@ export const StudentDashboard: React.FC<Props> = ({
   };
 
   const renderBottomNav = (inProjectorOverlay: boolean = false) => {
-    if (!inProjectorOverlay && flashcardMcqs?.startInProjectorMode) {
+    if (!inProjectorOverlay && (flashcardMcqs || compMcqSession)) {
       return null;
     }
     const isHiddenRoot =
@@ -15723,6 +15622,7 @@ export const StudentDashboard: React.FC<Props> = ({
         showNstaQuickWheel ||
         (hwActiveHwId ? hwImmersive : false) ||
         (lucentNoteViewer ? lucentImmersive : false) ||
+        (mathViewerEntry ? mathImmersive : false) ||
         coachingNotesReaderOpen);
 
     if (isHiddenRoot) return null;
@@ -15771,6 +15671,8 @@ export const StudentDashboard: React.FC<Props> = ({
             });
 
             const applySnapshot = (s: any) => {
+              setMathViewerEntry(null);
+              setMathImmersive(false);
               if (s.activeTab !== undefined) onTabChange(s.activeTab);
               setShowHomeworkHistory(!!s.showHomeworkHistory);
               setHomeworkSubjectView(s.homeworkSubjectView ?? null);
@@ -15880,6 +15782,8 @@ export const StudentDashboard: React.FC<Props> = ({
               try { stopSpeech(); } catch (_) {}
               setSpeakingId(null);
               setFlashcardMcqs(null);
+              setMathViewerEntry(null);
+              setMathImmersive(false);
               setShowChat(false);
               setShowMcqCommunityPopup(false);
               setMcqCommunityDraft(null);
@@ -16265,7 +16169,7 @@ export const StudentDashboard: React.FC<Props> = ({
       {/* NEW GLOBAL TOP BAR */}
       <div
         id="top-banner-container"
-        className={`sticky top-0 z-[100] w-full flex flex-col relative transition-all duration-150 ease-in-out overflow-hidden ${isFullscreenMode ? "hidden" : ""} ${(isTopBarHidden || isLandscapeUiHidden || showWhatsAppChatModal || showNstaQuickWheel || activeTab === 'STORE' || activeTab === 'CUSTOM_PAGE' || activeTab === 'PROFILE' || activeTab === 'UNIVERSAL_VIDEO') ? "-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none" : "translate-y-0 opacity-100"}`}
+        className={`sticky top-0 z-[100] w-full flex flex-col relative transition-all duration-150 ease-in-out overflow-hidden ${isFullscreenMode || Boolean(mathViewerEntry) ? "hidden" : ""} ${(isTopBarHidden || isLandscapeUiHidden || showWhatsAppChatModal || showNstaQuickWheel || activeTab === 'STORE' || activeTab === 'CUSTOM_PAGE' || activeTab === 'PROFILE' || activeTab === 'UNIVERSAL_VIDEO') ? "-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none" : "translate-y-0 opacity-100"}`}
         style={{ background: activeTopBarGrad }}
       >
         <TopBarEffectsLayer effects={activeTopBarEffects} />
@@ -17178,11 +17082,17 @@ export const StudentDashboard: React.FC<Props> = ({
                           {
                             label: 'Pedro Guide 🤖',
                             action: () => {
-                              setShowPedro(true);
-                              setShowDotsMenu(false);
+                              setIsPedroHidden(false);
                               if (typeof window !== 'undefined') {
+                                localStorage.removeItem('nst_pedro_hidden');
+                                localStorage.removeItem('nst_pedro_sleeping');
+                                window.dispatchEvent(new CustomEvent('nst-restore-pedro', { detail: { wakeUp: true } }));
+                                window.dispatchEvent(new CustomEvent('nst-show-pedro'));
+                                window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: false, isSleeping: false } }));
                                 window.dispatchEvent(new CustomEvent('nst-open-pedro-system-guide'));
                               }
+                              setShowPedro(true);
+                              setShowDotsMenu(false);
                             },
                           },
                         ];
@@ -18392,7 +18302,17 @@ export const StudentDashboard: React.FC<Props> = ({
                         <button
                           onClick={() => {
                             if (challenge.type === "DAILY_CHALLENGE" && !_isPaidUser) {
-                              alert('🔒 Daily Challenge feature Basic aur Ultra members ke liye hai. Plan upgrade karein!');
+                              openUpgradeModal(
+                                'Daily Challenge 2.0',
+                                'BASIC_OR_ULTRA',
+                                'Daily Challenge feature sirf Basic aur Ultra members ke liye uplabdh hai. Apne batchmates ke sath compete karein aur rewards jeetein!',
+                                [
+                                  'Daily 100 MCQs timed test with real exam timer',
+                                  'Live statewide leaderboards & rank certificates',
+                                  'Exclusive coin and diamond bonus rewards',
+                                  'Detailed step-by-step solutions & answer analysis'
+                                ]
+                              );
                               return;
                             }
                             if (onStartWeeklyTest) {
@@ -21646,6 +21566,85 @@ export const StudentDashboard: React.FC<Props> = ({
         />
       )}
 
+      {/* FULLSCREEN PROFILE PHOTO PREVIEW MODAL */}
+      {showPhotoFullscreen && (
+        <div
+          className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/90 backdrop-blur-md animate-in fade-in duration-200 p-4"
+          onClick={() => setShowPhotoFullscreen(false)}
+        >
+          <div
+            className="relative max-w-sm w-full flex flex-col items-center bg-slate-900/90 border border-amber-500/30 rounded-3xl p-6 shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Ambient gold glow behind avatar */}
+            <div className="absolute -top-24 -left-24 w-60 h-60 bg-amber-500/20 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute -bottom-24 -right-24 w-60 h-60 bg-yellow-500/20 rounded-full blur-3xl pointer-events-none" />
+
+            {/* Header with Close */}
+            <div className="w-full flex items-center justify-between mb-4 z-10">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">👑</span>
+                <div>
+                  <h3 className="text-sm font-black text-white tracking-wide">{user.name || 'Student'}</h3>
+                  <p className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">Profile Photo</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPhotoFullscreen(false)}
+                className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 active:scale-95 text-white flex items-center justify-center transition-all cursor-pointer border border-white/10"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Large Fullscreen Image */}
+            <div className="relative w-64 h-64 sm:w-72 sm:h-72 rounded-3xl overflow-hidden border-2 border-amber-400/50 shadow-2xl z-10 flex items-center justify-center bg-slate-950">
+              {user.photoURL && (user.avatarChoice === 'gmail' || user.avatarChoice === 'custom' || !user.avatarChoice) ? (
+                <img
+                  src={user.photoURL}
+                  alt="Profile Fullscreen"
+                  className="w-full h-full object-cover select-none"
+                />
+              ) : settings?.appLogo ? (
+                <img
+                  src={settings.appLogo}
+                  alt="App Logo"
+                  className="w-full h-full object-contain p-6 select-none"
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center text-center p-4">
+                  <span className="text-7xl mb-2">🎓</span>
+                  <span className="text-2xl font-black text-amber-300">{(user.name || 'S').toUpperCase()}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Actions: Change Photo (Camera icon button) & Close */}
+            <div className="w-full flex items-center gap-3 mt-6 z-10">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPhotoFullscreen(false);
+                  setShowCameraModal(true);
+                }}
+                className="flex-1 py-3 px-4 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 active:scale-95 transition-all cursor-pointer"
+              >
+                <Camera size={16} className="stroke-[2.5]" />
+                Photo Badlein / Naya Click
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowPhotoFullscreen(false)}
+                className="py-3 px-4 rounded-2xl bg-white/10 hover:bg-white/15 text-white font-bold text-xs active:scale-95 transition-all cursor-pointer border border-white/10"
+              >
+                Band Karein
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MAIN CONTENT AREA */}
       <div
         className={`relative ${
@@ -21918,7 +21917,7 @@ export const StudentDashboard: React.FC<Props> = ({
           return null;
         }
 
-        // Fullscreen player / doc reading modes mein button hide rahega
+        // Fullscreen player / doc reading modes / flashcard viewer / math viewer mein button hide rahega
         if (
           contentViewStep === "PLAYER" ||
           isDocFullscreen ||
@@ -21926,7 +21925,10 @@ export const StudentDashboard: React.FC<Props> = ({
           coachingNotesReaderOpen ||
           hwActiveHwId ||
           isInternalImmersive ||
-          activeExternalApp
+          activeExternalApp ||
+          Boolean(flashcardMcqs) ||
+          Boolean(compMcqSession) ||
+          Boolean(mathViewerEntry)
         ) {
           return null;
         }
@@ -23111,6 +23113,54 @@ export const StudentDashboard: React.FC<Props> = ({
       )}
 
 
+      {/* MATH LESSON VIEWER (Digital Book Reader with Pages, Premium Notes, Solutions & MCQs) */}
+      {mathViewerEntry && (
+        <>
+          <div className={`fixed inset-0 z-[200] bg-slate-950 flex flex-col overflow-hidden ${!mathImmersive ? 'pb-[64px]' : ''}`}>
+            <MathLessonViewer
+              content={{
+                id: mathViewerEntry.id,
+                title: mathViewerEntry.lessonTitle || 'Math Lesson',
+                subtitle: 'Math Digital Reader',
+                content: '',
+                type: 'NOTES_SIMPLE',
+                dateCreated: mathViewerEntry.createdAt || new Date().toISOString(),
+                subjectName: 'Mathematics',
+                isComingSoon: false,
+                mathBookPages: mathViewerEntry.mathBookPages || [],
+                mathPremiumNotesPages: mathViewerEntry.mathPremiumNotesPages || [],
+                mathSolutionPages: mathViewerEntry.mathSolutionPages || [],
+                mcqData: mathViewerEntry.pages?.flatMap((p: any) => p.mcqs || []) || [],
+              }}
+              chapterTitle={mathViewerEntry.lessonTitle || 'Math Lesson'}
+              subjectName="Mathematics"
+              user={user}
+              appLogo={settings?.appLogo}
+              appName={settings?.appShortName || settings?.appName || 'NSTA'}
+              isImmersive={mathImmersive}
+              onToggleImmersive={() => setMathImmersive(v => !v)}
+              onBack={() => {
+                setMathViewerEntry(null);
+                setMathImmersive(false);
+              }}
+              onUpdateUser={handleUserUpdate}
+            />
+          </div>
+          <DraggableNstaLogoFab
+            isActive={mathImmersive}
+            onToggle={() => setMathImmersive(v => !v)}
+            appLogo={settings?.appLogo}
+            appName={settings?.appShortName || settings?.appName || 'NSTA'}
+            title={mathImmersive ? 'बॉटम व टॉप बार दिखाएं • Screen pe move kar sakte hain' : 'बॉटम व टॉप बार छुपाएं • Screen pe move kar sakte hain'}
+            defaultPosition={{
+              bottom: mathImmersive ? 20 : 92,
+              right: 16,
+            }}
+            zIndex={99999}
+          />
+        </>
+      )}
+
       {/* LUCENT PAGE LIST — shown before opening a specific page */}
       {lucentPageListViewer && !lucentNoteViewer && (() => {
         const plEntry = lucentPageListViewer;
@@ -23746,7 +23796,7 @@ export const StudentDashboard: React.FC<Props> = ({
               const _pgModes = [
                 { mode: 'READING',  label: 'Reading Mode',  emoji: '📖', cost: 20,
                   isUnlocked: isPgReadUnlocked(entry.id, safeIndex),  isAccessible: true,                         requiredTier: 'free'  as const, unlockAction: () => markPgReadUnlocked(entry.id, safeIndex) },
-                { mode: 'WRITING',  label: 'Writing Mode',  emoji: '✍️', cost: 20,
+                { mode: 'WRITING',  label: 'Premium Notes', emoji: '✨', cost: 20,
                   isUnlocked: isPgWriteUnlocked(entry.id, safeIndex), isAccessible: true,                         requiredTier: 'free'  as const, unlockAction: () => markPgWriteUnlocked(entry.id, safeIndex) },
                 { mode: 'PROJECTOR', label: 'Projector Mode', emoji: '📽️', cost: 20,
                   isUnlocked: isProjectorUnlocked(entry.id, safeIndex), isAccessible: true,                         requiredTier: 'free'  as const, unlockAction: () => markProjectorUnlocked(entry.id, safeIndex) },
@@ -23806,7 +23856,7 @@ export const StudentDashboard: React.FC<Props> = ({
                     if (!_isReadDone) {
                       const _remSec = Math.max(0, _reqSec - _combSec);
                       showAlert(
-                        `🔒 Free users ke liye pehle reading complete karna zaroori hai!\nReading Mode ya Writing Mode me ${formatDuration(_remSec)} aur padhein, uske baad hi MCQ unlock hoga.`,
+                        `🔒 Free users ke liye pehle reading complete karna zaroori hai!\nReading Mode ya Premium Notes me ${formatDuration(_remSec)} aur padhein, uske baad hi MCQ unlock hoga.`,
                         'INFO',
                         'MCQ Locked'
                       );
@@ -23846,7 +23896,7 @@ export const StudentDashboard: React.FC<Props> = ({
                       Reading Mode
                     </button>
                     <button data-tab-active={String(_isWriteActive)} onClick={() => handleWriteModeGate(() => { setLucentActiveTab('NOTES'); setLucentNotesViewMode('html'); _save('NOTES', 'html'); }, _pgInfo, entry.id, safeIndex)} style={_tabStyle} className={_tabCls(_isWriteActive, 'bg-teal-600', 'text-white')}>
-                      Writing Mode
+                      Premium Notes
                     </button>
                     {_hasMcqTb && (
                       <button data-tab-active={String(lucentActiveTab === 'MCQS')} onClick={() => _switchMcq('MCQS')} style={_tabStyle} className={_tabCls(lucentActiveTab === 'MCQS', 'bg-purple-600', 'text-white')}>
@@ -23867,7 +23917,7 @@ export const StudentDashboard: React.FC<Props> = ({
                               const _isReadDone = isRoutinePageRead(entry.id, safeIndex) || _combSec >= _reqSec;
                               if (!_isReadDone) {
                                 const _remSec = Math.max(0, _reqSec - _combSec);
-                                showAlert(`🔒 Free users ke liye pehle reading complete karna zaroori hai!\nReading Mode ya Writing Mode me ${formatDuration(_remSec)} aur padhein, uske baad hi Projector unlock hoga.`, 'INFO', 'Projector Locked');
+                                showAlert(`🔒 Free users ke liye pehle reading complete karna zaroori hai!\nReading Mode ya Premium Notes me ${formatDuration(_remSec)} aur padhein, uske baad hi Projector unlock hoga.`, 'INFO', 'Projector Locked');
                                 return;
                               }
                             }
@@ -25320,7 +25370,17 @@ RULES:
             dailyChallenges={activeChallenges20}
             onStartDailyChallenge={(challenge) => {
               if (!_isPaidUser) {
-                alert('🔒 Daily Challenge feature Basic aur Ultra members ke liye hai. Plan upgrade karein!');
+                openUpgradeModal(
+                  'Daily Challenge 2.0',
+                  'BASIC_OR_ULTRA',
+                  'Daily Challenge feature sirf Basic aur Ultra members ke liye uplabdh hai. Apne batchmates ke sath compete karein aur rewards jeetein!',
+                  [
+                    'Daily 100 MCQs timed test with real exam timer',
+                    'Live statewide leaderboards & rank certificates',
+                    'Exclusive coin and diamond bonus rewards',
+                    'Detailed step-by-step solutions & answer analysis'
+                  ]
+                );
                 return;
               }
               if (onStartWeeklyTest) {
@@ -25345,7 +25405,17 @@ RULES:
             }}
             onOpenMessenger={() => {
               if (!_isPaidUser) {
-                alert('🔒 Nsta Messenger feature Basic aur Ultra members ke liye hai. Plan upgrade karein!');
+                openUpgradeModal(
+                  'Nsta Messenger',
+                  'BASIC_OR_ULTRA',
+                  'Nsta Messenger feature sirf Basic aur Ultra members ke liye uplabdh hai. Direct teachers aur batch group study chat se judein!',
+                  [
+                    'Direct doubt solving with verified teachers',
+                    'Live batch discussion & peer study rooms',
+                    'Instant homework notifications & notes sharing',
+                    'Priority messaging response time'
+                  ]
+                );
                 return;
               }
               setShowWhatsAppChatModal(true);
@@ -26539,7 +26609,7 @@ RULES:
           if (mode === 'FLASHCARD' && _isUltraUser) { action(); return; }
           const modeConfig = {
             READING: { label: 'Reading Mode', isUnlocked: isPgReadUnlocked(_overlayUnlockId, _overlayUnlockPage), mark: () => markPgReadUnlocked(_overlayUnlockId, _overlayUnlockPage) },
-            WRITING: { label: 'Writing Mode', isUnlocked: isPgWriteUnlocked(_overlayUnlockId, _overlayUnlockPage), mark: () => markPgWriteUnlocked(_overlayUnlockId, _overlayUnlockPage) },
+            WRITING: { label: 'Premium Notes', isUnlocked: isPgWriteUnlocked(_overlayUnlockId, _overlayUnlockPage), mark: () => markPgWriteUnlocked(_overlayUnlockId, _overlayUnlockPage) },
             MCQ: { label: 'MCQ Practice', isUnlocked: isMcqPageUnlocked(_overlayUnlockId, _overlayUnlockPage), mark: () => markMcqPageUnlocked(_overlayUnlockId, _overlayUnlockPage) },
             QA: { label: 'Q&A Mode', isUnlocked: isQaPageUnlocked(_overlayUnlockId, _overlayUnlockPage), mark: () => markQaPageUnlocked(_overlayUnlockId, _overlayUnlockPage) },
             FLASHCARD: { label: 'Flashcard', isUnlocked: isFcPageUnlocked(_overlayUnlockId, _overlayUnlockPage), mark: () => markFcPageUnlocked(_overlayUnlockId, _overlayUnlockPage) },
@@ -26565,7 +26635,7 @@ RULES:
            pageLabel: flashcardMcqs.title || 'Lesson',
            availableModes: [
              { mode: 'READING', label: 'Reading Mode', emoji: '📖', cost: 20, isUnlocked: isPgReadUnlocked(_overlayUnlockId, _overlayUnlockPage), isAccessible: true, requiredTier: 'free' as const, unlockAction: () => markPgReadUnlocked(_overlayUnlockId, _overlayUnlockPage) },
-             { mode: 'WRITING', label: 'Writing Mode', emoji: '✍️', cost: 20, isUnlocked: isPgWriteUnlocked(_overlayUnlockId, _overlayUnlockPage), isAccessible: true, requiredTier: 'free' as const, unlockAction: () => markPgWriteUnlocked(_overlayUnlockId, _overlayUnlockPage) },
+             { mode: 'WRITING', label: 'Premium Notes', emoji: '✨', cost: 20, isUnlocked: isPgWriteUnlocked(_overlayUnlockId, _overlayUnlockPage), isAccessible: true, requiredTier: 'free' as const, unlockAction: () => markPgWriteUnlocked(_overlayUnlockId, _overlayUnlockPage) },
              { mode: 'PROJECTOR', label: 'Projector Mode', emoji: '📽️', cost: 20, isUnlocked: isProjectorUnlocked(_overlayUnlockId, _overlayUnlockPage), isAccessible: true, requiredTier: 'free' as const, unlockAction: () => markProjectorUnlocked(_overlayUnlockId, _overlayUnlockPage) },
              ...(fl.hasMcq ? [
                { mode: 'MCQ', label: 'MCQ Practice', emoji: '🧠', cost: 20, isUnlocked: isMcqPageUnlocked(_overlayUnlockId, _overlayUnlockPage), isAccessible: true, requiredTier: 'free' as const, unlockAction: () => markMcqPageUnlocked(_overlayUnlockId, _overlayUnlockPage) },
@@ -26576,7 +26646,7 @@ RULES:
              ...(fl.hasAudio ? [{ mode: 'AUDIO', label: 'Audio', emoji: '🎵', cost: 0, isUnlocked: true, isAccessible: _isUltraUser, requiredTier: 'ultra' as const, unlockAction: undefined }] : []),
            ],
          } : undefined;
-         const _tcls = (active: boolean, _activeBg: string) =>
+        const _tcls = (active: boolean, _activeBg: string) =>
            `flex items-center justify-center px-2 py-2 shrink-0 transition-all text-center font-bold text-[11px] leading-tight border-r border-white/10 last:border-r-0 relative` +
            ` ${active ? 'bg-[#17183a] text-white after:content-[\'\'] after:absolute after:bottom-0 after:left-1/2 after:-translate-x-1/2 after:h-[3px] after:w-[calc(100%-16px)] after:rounded-full after:bg-[#d8d2ff] after:shadow-[0_0_9px_2px_rgba(190,172,255,0.9)]' : 'bg-[#17183a] text-slate-300 hover:bg-[#24234b] active:bg-[#2d2a58]'}`;
         const _ts = { minWidth: 'calc(100vw / 3)' } as React.CSSProperties;
@@ -26614,7 +26684,7 @@ RULES:
                 }}>
                 Reading Mode
               </button>
-              {/* Writing Mode — coin gate for competition */}
+              {/* Premium Notes — coin gate for competition */}
               <button style={_ts} className={_tcls(false, 'bg-teal-600')}
                 onClick={() => {
                    stopSpeech();
@@ -26630,7 +26700,7 @@ RULES:
                      });
                    }
                 }}>
-                Writing Mode
+                Premium Notes
               </button>
               {fl.hasMcq && (
                 <button style={_ts} className={_tcls(false, 'bg-purple-600')}
@@ -28006,7 +28076,8 @@ RULES:
       {!activeExternalApp &&
         !hwActiveHwId &&
         contentViewStep === "PLAYER" &&
-        !lucentNoteViewer && (
+        !lucentNoteViewer &&
+        !mathViewerEntry && (
         <DraggableNstaLogoFab
           isActive={isLandscapeUiHidden}
           onToggle={() => {
@@ -28788,7 +28859,7 @@ RULES:
               currentPageTitle={pedroPageMeta.title}
               currentPageIcon={pedroPageMeta.icon}
               customRobotName={settings?.pedroConfig?.robotName}
-              hidden={false}
+              hidden={isPedroHidden || !!mathViewerEntry || (!!lucentNoteViewer && lucentImmersive)}
               guidePowerEnabled={settings?.pedroConfig?.guidePowerEnabled !== false && settings?.pedroConfig?.enabled !== false}
               userName={user?.name || (user as any)?.displayName || 'Student'}
               user={user}
@@ -31214,7 +31285,18 @@ Explanation: Yahan explanation...`}</p>
         onClose={() => setShowNstaQuickWheel(false)}
         onOpenMessenger={() => {
           if (!_isPaidUser) {
-            alert('🔒 Nsta Messenger feature Basic aur Ultra members ke liye hai. Plan upgrade karein!');
+            setShowNstaQuickWheel(false);
+            openUpgradeModal(
+              'Nsta Messenger',
+              'BASIC_OR_ULTRA',
+              'Nsta Messenger feature sirf Basic aur Ultra members ke liye uplabdh hai. Direct teachers aur batch group study chat se judein!',
+              [
+                'Direct doubt solving with verified teachers',
+                'Live batch discussion & peer study rooms',
+                'Instant homework notifications & notes sharing',
+                'Priority messaging response time'
+              ]
+            );
             return;
           }
           setShowNstaQuickWheel(false);
@@ -31448,7 +31530,25 @@ Explanation: Yahan explanation...`}</p>
           onComplete={handleCompleteHomeAssembly}
         />
       )}
+
+      {/* ── UNIFIED PREMIUM UPGRADE MODAL ── */}
+      {premiumUpgradeModal && (
+        <PremiumUpgradeModal
+          isOpen={premiumUpgradeModal.isOpen}
+          onClose={() => setPremiumUpgradeModal(null)}
+          featureName={premiumUpgradeModal.featureName}
+          requiredTier={premiumUpgradeModal.requiredTier}
+          description={premiumUpgradeModal.description}
+          perks={premiumUpgradeModal.perks}
+          onUpgrade={() => {
+            setPremiumUpgradeModal(null);
+            onTabChange('STORE');
+          }}
+        />
+      )}
     </div>
   </ThemeProvider>
   );
 };
+
+export default StudentDashboard;

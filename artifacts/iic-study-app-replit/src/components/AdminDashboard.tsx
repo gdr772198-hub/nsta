@@ -7576,6 +7576,9 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
           <AdminMathManager
               onBack={() => setActiveTab('DASHBOARD')}
               currentUser={currentUser}
+              settings={localSettings}
+              onUpdateSettings={setLocalSettings}
+              onSaveSettings={handleSaveSettings}
           />
       )}
 

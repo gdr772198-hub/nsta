@@ -102,24 +102,52 @@ if (typeof window !== 'undefined') {
 const analytics: any = null;
 export { analytics };
 
-let app;
+let app: any;
 let db: any;
 
 try {
   setLogLevel('silent');
 } catch {}
 
-if (!getApps().length) {
-  app = initializeApp(firebaseConfig);
-  db = initializeFirestore(app, {
-    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
-  });
-} else {
-  app = getApp();
-  db = getFirestore(app);
+try {
+  if (!getApps().length) {
+    app = initializeApp(firebaseConfig);
+    try {
+      db = initializeFirestore(app, {
+        localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+      });
+    } catch (cacheErr) {
+      console.warn('[Firebase] initializeFirestore with persistentLocalCache failed, falling back to default Firestore:', cacheErr);
+      try {
+        db = getFirestore(app);
+      } catch (fallbackErr) {
+        console.error('[Firebase] getFirestore fallback failed:', fallbackErr);
+      }
+    }
+  } else {
+    app = getApp();
+    try {
+      db = getFirestore(app);
+    } catch (e) {
+      console.error('[Firebase] getFirestore on existing app failed:', e);
+    }
+  }
+} catch (appErr) {
+  console.error('[Firebase] initializeApp failed:', appErr);
 }
-const rtdb = getDatabase(app);
-const auth = getAuth(app);
+
+let rtdb: any;
+let auth: any;
+try {
+  rtdb = getDatabase(app);
+} catch (e) {
+  console.error('[Firebase] getDatabase failed:', e);
+}
+try {
+  auth = getAuth(app);
+} catch (e) {
+  console.error('[Firebase] getAuth failed:', e);
+}
 
 // --- EXPORTED HELPERS ---
 

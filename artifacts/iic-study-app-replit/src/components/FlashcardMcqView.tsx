@@ -1336,11 +1336,21 @@ export const FlashcardMcqView: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Draggable NSTA Logo Floating Button for Flashcard Mode */}
+      {/* App Bottom Navigation Bar (Visible in flashcard mode, hidden in focus mode) */}
+      {!fcFocused && bottomNav && (
+        <div className="shrink-0 w-full z-20">
+          {bottomNav}
+        </div>
+      )}
+
+      {/* Draggable NSTA Logo Floating Button for Flashcard Mode — toggles both top bar & bottom navigation */}
       {!isProjectorMode && (
         <DraggableNstaLogoFab
           isActive={fcFocused}
-          onToggle={() => setFcFocused(f => !f)}
+          onToggle={() => {
+            try { window.dispatchEvent(new CustomEvent('nst-restore-pedro')); } catch (_) {}
+            setFcFocused(f => !f);
+          }}
           appLogo={settings?.appLogo}
           appName={settings?.appShortName || settings?.appName || 'NSTA'}
           title={fcFocused ? 'बॉटम व टॉप बार दिखाएं • Screen pe move kar sakte hain' : 'बॉटम व टॉप बार छुपाएं • Screen pe move kar sakte hain'}
@@ -2244,7 +2254,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
                         {/* Explanation */}
                         {rq.explanation && (
                           <div style={{ margin:'0 12px 12px', background:'#fefce8', border:'1.5px solid #fef08a', borderRadius:10, padding:'9px 12px', fontSize:12, color:'#713f12', lineHeight:1.5 }}>
-                            ������ <strong>Explanation:</strong>{' '}
+                            💡 <strong>Explanation:</strong>{' '}
                             <span dangerouslySetInnerHTML={{ __html: formatExplanationHtml(rq.explanation) }} />
                           </div>
                         )}

@@ -812,12 +812,10 @@ export const UpdatesPage: React.FC<Props> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    if (!isPaidUser) {
-                      alert('🔒 Daily Challenge feature Basic aur Ultra members ke liye hai. Plan upgrade karein!');
-                      return;
-                    }
                     if (activeDaily && onStartDailyChallenge) {
                       onStartDailyChallenge(activeDaily);
+                    } else if (!isPaidUser && onOpenStore) {
+                      onOpenStore();
                     }
                   }}
                   className="w-full py-2.5 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-98"

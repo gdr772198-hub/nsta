@@ -8,8 +8,6 @@ import {
   ChevronRight,
   ZoomIn,
   ZoomOut,
-  Maximize2,
-  Minimize2,
   RotateCw,
   ScrollText,
   Layers,
@@ -20,10 +18,13 @@ import {
   Sparkles,
   HelpCircle,
   Share2,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { renderMathInHtml } from '../utils/mathUtils';
 import { saveTestResult, saveUserHistory } from '../firebase';
 import { LessonContent, MCQItem, User, MathImagePage } from '../types';
+import { DraggableNstaLogoFab } from './DraggableNstaLogoFab';
 
 export type MathMode = 'BOOK' | 'PREMIUM_NOTES' | 'SOLUTION' | 'MCQ';
 
@@ -32,6 +33,10 @@ interface Props {
   chapterTitle: string;
   subjectName?: string;
   user: User;
+  appLogo?: string;
+  appName?: string;
+  isImmersive?: boolean;
+  onToggleImmersive?: () => void;
   onBack: () => void;
   onUpdateUser?: (u: User) => void;
   onSessionCreditsEarned?: (credits: number) => void;
@@ -42,6 +47,10 @@ export const MathLessonViewer: React.FC<Props> = ({
   chapterTitle,
   subjectName = 'Mathematics',
   user,
+  appLogo,
+  appName = 'NSTA',
+  isImmersive: propIsImmersive,
+  onToggleImmersive: propOnToggleImmersive,
   onBack,
   onUpdateUser,
   onSessionCreditsEarned,
@@ -52,7 +61,7 @@ export const MathLessonViewer: React.FC<Props> = ({
   const solutionPages: MathImagePage[] = content.mathSolutionPages || [];
   const mcqs: MCQItem[] = content.mcqData || [];
 
-  // Build dynamic modes list — only include modes that have content!
+  // Dynamic modes list — only include modes that have content!
   const availableModes = React.useMemo(() => {
     const list: { id: MathMode; label: string; icon: any; count: number; badgeColor: string }[] = [];
     if (bookPages.length > 0) {
@@ -110,10 +119,37 @@ export const MathLessonViewer: React.FC<Props> = ({
   const [viewType, setViewType] = useState<'SCROLL' | 'FLIP'>('SCROLL');
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [zoomLevel, setZoomLevel] = useState(1);
-  const [isLandscape, setIsLandscape] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  // Page Rotation state (0, 90, 180, 270 degrees) for rotating scans/pages upright
+  const [pageRotation, setPageRotation] = useState<number>(0);
+
+  // Unified Immersive State (Controls BOTH top bar AND bottom nav)
+  const [internalImmersive, setInternalImmersive] = useState(false);
+  const isImmersive = propIsImmersive !== undefined ? propIsImmersive : internalImmersive;
+  const toggleImmersive = () => {
+    if (propOnToggleImmersive) {
+      propOnToggleImmersive();
+    } else {
+      setInternalImmersive(prev => !prev);
+    }
+  };
+
+  // Helper to format clean page title (e.g. cleans up ugly "Page 1328601" into "Page 1")
+  const getCleanPageTitle = (rawTitle: string | undefined, idx: number) => {
+    if (!rawTitle) return `Page ${idx + 1}`;
+    const trimmed = rawTitle.trim();
+    if (/^page[\s_-]*\d{4,}$/i.test(trimmed) || /^\d{4,}$/.test(trimmed)) {
+      return `Page ${idx + 1}`;
+    }
+    return trimmed;
+  };
+
+  // Panning & Touch Gestures for Zoom
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+  const initialPinchDistRef = useRef<number | null>(null);
+  const initialZoomRef = useRef(1);
+  const lastTapRef = useRef<number>(0);
 
   // Current active pages based on activeMode
   const currentPages: MathImagePage[] = React.useMemo(() => {
@@ -123,10 +159,22 @@ export const MathLessonViewer: React.FC<Props> = ({
     return [];
   }, [activeMode, bookPages, premiumNotesPages, solutionPages]);
 
-  // Reset page index on mode change
+  // Reset pan and zoom on page or mode change
+  useEffect(() => {
+    if (zoomLevel <= 1) {
+      setPan({ x: 0, y: 0 });
+    }
+  }, [zoomLevel, currentPageIndex, activeMode]);
+
   useEffect(() => {
     setCurrentPageIndex(0);
+    setZoomLevel(1);
+    setPan({ x: 0, y: 0 });
+    setPageRotation(0);
   }, [activeMode]);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Track active page during continuous scrolling
   useEffect(() => {
@@ -150,24 +198,122 @@ export const MathLessonViewer: React.FC<Props> = ({
   }, [viewType, currentPages.length]);
 
   // Zoom controls
-  const handleZoomIn = () => setZoomLevel(prev => Math.min(prev + 0.25, 2.5));
-  const handleZoomOut = () => setZoomLevel(prev => Math.max(prev - 0.25, 0.75));
-  const handleZoomReset = () => setZoomLevel(1);
+  const handleZoomIn = () => setZoomLevel(prev => Math.min(Number((prev + 0.25).toFixed(2)), 3.0));
+  const handleZoomOut = () => setZoomLevel(prev => Math.max(Number((prev - 0.25).toFixed(2)), 0.75));
+  const handleZoomReset = () => {
+    setZoomLevel(1);
+    setPan({ x: 0, y: 0 });
+  };
 
-  // Fullscreen toggle
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      containerRef.current?.requestFullscreen?.().catch(() => {});
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen?.().catch(() => {});
-      setIsFullscreen(false);
+  // Check if physical screen is in landscape mode
+  const [isWindowLandscape, setIsWindowLandscape] = useState(() => {
+    return typeof window !== 'undefined' ? window.innerWidth > window.innerHeight : false;
+  });
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsWindowLandscape(window.innerWidth > window.innerHeight);
+    };
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
+  }, []);
+
+  // Touch and Mouse handlers for interactive Zoom & Pan
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      initialPinchDistRef.current = dist;
+      initialZoomRef.current = zoomLevel;
+    } else if (e.touches.length === 1) {
+      const now = Date.now();
+      if (now - lastTapRef.current < 300) {
+        // Double-tap to toggle zoom
+        if (zoomLevel > 1.1) {
+          handleZoomReset();
+        } else {
+          setZoomLevel(1.8);
+        }
+        lastTapRef.current = 0;
+        return;
+      }
+      lastTapRef.current = now;
+
+      if (zoomLevel > 1) {
+        isDraggingRef.current = true;
+        dragStartRef.current = {
+          x: e.touches[0].clientX,
+          y: e.touches[0].clientY,
+          panX: pan.x,
+          panY: pan.y,
+        };
+      }
     }
   };
 
-  // Orientation toggle
-  const toggleOrientation = () => {
-    setIsLandscape(prev => !prev);
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 2 && initialPinchDistRef.current) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      const factor = dist / initialPinchDistRef.current;
+      const newZoom = Math.min(Math.max(Number((initialZoomRef.current * factor).toFixed(2)), 0.75), 3.0);
+      setZoomLevel(newZoom);
+    } else if (e.touches.length === 1 && isDraggingRef.current && zoomLevel > 1) {
+      const dx = e.touches[0].clientX - dragStartRef.current.x;
+      const dy = e.touches[0].clientY - dragStartRef.current.y;
+      setPan({
+        x: dragStartRef.current.panX + dx,
+        y: dragStartRef.current.panY + dy,
+      });
+    }
+  };
+
+  const handleTouchEnd = () => {
+    initialPinchDistRef.current = null;
+    isDraggingRef.current = false;
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (zoomLevel > 1) {
+      isDraggingRef.current = true;
+      dragStartRef.current = {
+        x: e.clientX,
+        y: e.clientY,
+        panX: pan.x,
+        panY: pan.y,
+      };
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDraggingRef.current || zoomLevel <= 1) return;
+    const dx = e.clientX - dragStartRef.current.x;
+    const dy = e.clientY - dragStartRef.current.y;
+    setPan({
+      x: dragStartRef.current.panX + dx,
+      y: dragStartRef.current.panY + dy,
+    });
+  };
+
+  const handleMouseUp = () => {
+    isDraggingRef.current = false;
+  };
+
+  // Container is always naturally positioned so headers stay top, controls stay upright,
+  // and outer navigation integrates perfectly without letterboxing or black gaps.
+  const containerStyle: React.CSSProperties = {
+    position: 'relative',
+    width: '100%',
+    height: '100%',
+    overflow: 'hidden',
   };
 
   // ===================== MCQ QUIZ STATE =====================
@@ -259,18 +405,17 @@ export const MathLessonViewer: React.FC<Props> = ({
   return (
     <div
       ref={containerRef}
-      className={`relative w-full h-full min-h-[90vh] flex flex-col bg-slate-950 text-slate-100 select-none overflow-hidden ${
-        isLandscape ? 'orientation-landscape' : ''
-      }`}
-      style={{
-        transform: isLandscape ? 'rotate(90deg)' : 'none',
-        transformOrigin: isLandscape ? 'center center' : undefined,
-      }}
+      className="flex flex-col bg-slate-950 text-slate-100 select-none overflow-hidden"
+      style={containerStyle}
     >
-      {/* ── TOP BAR: BACK & HEADER & CONTROLS ── */}
-      <div className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 px-3 py-2.5 flex items-center justify-between gap-2 shadow-md">
-        {/* Left: Back Button & Chapter Title */}
-        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+      {/* ── TOP BAR: BACK & LESSON TITLE & READING MODES & CONTROLS ── */}
+      <div
+        className={`sticky top-0 z-30 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 px-2.5 sm:px-3 py-2 flex items-center justify-between gap-2 shadow-md transition-all duration-200 ${
+          isImmersive ? '-translate-y-full opacity-0 pointer-events-none h-0 py-0 border-none overflow-hidden' : 'translate-y-0 opacity-100'
+        }`}
+      >
+        {/* Left: Back Button + Lesson Name (where Mathematics was) + Flip & Scroll Mode Buttons (where lesson name was) */}
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           <button
             onClick={onBack}
             className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center shrink-0 active:scale-95 transition cursor-pointer border border-slate-700/50"
@@ -278,76 +423,116 @@ export const MathLessonViewer: React.FC<Props> = ({
           >
             <ArrowLeft size={17} />
           </button>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">
-                {subjectName}
-              </span>
-              <h1 className="text-xs sm:text-sm font-black text-white truncate max-w-[220px] sm:max-w-md">
-                {chapterTitle}
-              </h1>
+
+          {/* Lesson Title in place of Mathematics */}
+          <h1
+            className="text-xs sm:text-sm font-black text-white truncate max-w-[130px] xs:max-w-[170px] sm:max-w-[220px] md:max-w-xs shrink-0"
+            title={chapterTitle}
+          >
+            {chapterTitle}
+          </h1>
+
+          {/* Flip Mode & Scroll Mode buttons in place of lesson title */}
+          {activeMode !== 'MCQ' && currentPages.length > 1 && (
+            <div className="flex items-center bg-slate-800/90 rounded-xl p-0.5 border border-slate-700/60 shrink-0 ml-0.5">
+              <button
+                onClick={() => setViewType('SCROLL')}
+                className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] sm:text-[11px] font-bold transition-all cursor-pointer ${
+                  viewType === 'SCROLL'
+                    ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-xs'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="Continuous Scroll Mode: Ek single roll me saare pages niche scroll honge"
+              >
+                <ScrollText size={12} />
+                <span className="hidden xs:inline">Scroll Mode</span>
+                <span className="xs:hidden">Scroll</span>
+              </button>
+              <button
+                onClick={() => setViewType('FLIP')}
+                className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] sm:text-[11px] font-bold transition-all cursor-pointer ${
+                  viewType === 'FLIP'
+                    ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-xs'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="Flip Mode: Next / Previous buttons se ek-ek page badlein"
+              >
+                <Layers size={12} />
+                <span className="hidden xs:inline">Flip Mode</span>
+                <span className="xs:hidden">Flip</span>
+              </button>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Right: Quick Action Controls */}
         <div className="flex items-center gap-1.5 shrink-0">
-          {/* Zoom In/Out (Available for Picture Modes) */}
+          {/* Zoom In/Out (Available for Picture Modes) - Visible on mobile & desktop */}
           {activeMode !== 'MCQ' && (
-            <div className="hidden sm:flex items-center bg-slate-800/80 rounded-xl p-0.5 border border-slate-700/60">
+            <div className="flex items-center bg-slate-800/80 rounded-xl p-0.5 border border-slate-700/60 shrink-0">
               <button
                 onClick={handleZoomOut}
                 disabled={zoomLevel <= 0.75}
-                className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-700/60 disabled:opacity-30 active:scale-90 transition"
+                className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-700/60 disabled:opacity-30 active:scale-90 transition cursor-pointer"
                 title="Zoom Out"
               >
-                <ZoomOut size={14} />
+                <ZoomOut size={13} />
               </button>
               <button
                 onClick={handleZoomReset}
-                className="px-2 h-7 text-[10px] font-mono font-bold text-slate-300 hover:text-white"
-                title="Reset Zoom"
+                className="px-1.5 sm:px-2 h-6 sm:h-7 text-[10px] font-mono font-bold text-slate-300 hover:text-white cursor-pointer"
+                title="Reset Zoom (100%)"
               >
                 {Math.round(zoomLevel * 100)}%
               </button>
               <button
                 onClick={handleZoomIn}
-                disabled={zoomLevel >= 2.5}
-                className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-700/60 disabled:opacity-30 active:scale-90 transition"
+                disabled={zoomLevel >= 3.0}
+                className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-700/60 disabled:opacity-30 active:scale-90 transition cursor-pointer"
                 title="Zoom In"
               >
-                <ZoomIn size={14} />
+                <ZoomIn size={13} />
               </button>
             </div>
           )}
 
-          {/* Rotate Screen */}
+          {/* Rotate Page (0°, 90°, 180°, 270°) - Keeps header upright & accessible */}
+          {activeMode !== 'MCQ' && (
+            <button
+              onClick={() => setPageRotation(r => (r + 90) % 360)}
+              className={`w-8 h-8 rounded-xl flex items-center justify-center transition active:scale-95 border cursor-pointer ${
+                pageRotation !== 0
+                  ? 'bg-blue-600 text-white border-blue-400 shadow-md ring-2 ring-blue-400/40'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border-slate-700/60'
+              }`}
+              title={pageRotation !== 0 ? `Page Rotated (${pageRotation}°). Tap to rotate to ${(pageRotation + 90) % 360}°` : "Rotate Page (0° -> 90° -> 180° -> 270°)"}
+            >
+              <RotateCw size={14} className={pageRotation !== 0 ? 'text-white' : ''} />
+            </button>
+          )}
+
+          {/* Focus Mode Toggle Button (Toggles BOTH Top Bar and Bottom Nav) */}
           <button
-            onClick={toggleOrientation}
+            onClick={toggleImmersive}
             className={`w-8 h-8 rounded-xl flex items-center justify-center transition active:scale-95 border cursor-pointer ${
-              isLandscape
-                ? 'bg-purple-600 text-white border-purple-500 shadow-md'
+              isImmersive
+                ? 'bg-amber-500/20 border-amber-400 text-amber-300 shadow-md ring-2 ring-amber-400/40'
                 : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border-slate-700/60'
             }`}
-            title="Rotate Screen (Portrait / Landscape)"
+            title={isImmersive ? "बॉटम व टॉप बार दिखाएं" : "बॉटम व टॉप बार छुपाएं (Full Focus)"}
           >
-            <RotateCw size={15} />
-          </button>
-
-          {/* Fullscreen */}
-          <button
-            onClick={toggleFullscreen}
-            className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center border border-slate-700/60 active:scale-95 transition cursor-pointer"
-            title="Fullscreen Toggle"
-          >
-            {isFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            {isImmersive ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
           </button>
         </div>
       </div>
 
-      {/* ── MODE SELECTOR BAR (ONLY VISIBLE MODES) ── */}
-      {availableModes.length > 0 && (
-        <div className="bg-slate-900/90 border-b border-slate-800/80 px-2.5 py-1.5 flex items-center justify-between gap-2 overflow-x-auto scrollbar-none">
+      {/* ── MODE SELECTOR BAR (ONLY SHOWN IF MULTIPLE CONTENT MODES EXIST) ── */}
+      {availableModes.length > 1 && (
+        <div
+          className={`bg-slate-900/90 border-b border-slate-800/80 px-2.5 py-1.5 flex items-center justify-start gap-2 overflow-x-auto scrollbar-none transition-all duration-200 ${
+            isImmersive ? '-translate-y-full opacity-0 pointer-events-none h-0 py-0 overflow-hidden' : ''
+          }`}
+        >
           {/* Tabs row: Book -> Premium Notes -> Solution -> MCQ */}
           <div className="flex items-center gap-1.5 shrink-0">
             {availableModes.map(mode => {
@@ -379,36 +564,6 @@ export const MathLessonViewer: React.FC<Props> = ({
               );
             })}
           </div>
-
-          {/* Reading Mode Switcher (Continuous Scroll vs Flip Mode) for Image modes */}
-          {activeMode !== 'MCQ' && currentPages.length > 1 && (
-            <div className="flex items-center bg-slate-800/90 rounded-xl p-1 border border-slate-700/60 shrink-0 ml-auto">
-              <button
-                onClick={() => setViewType('SCROLL')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10.5px] font-bold transition-all cursor-pointer ${
-                  viewType === 'SCROLL'
-                    ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-xs'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-                title="Continuous Scroll Mode: Ek single roll me saare pages niche scroll honge"
-              >
-                <ScrollText size={12} />
-                <span>Scroll Mode</span>
-              </button>
-              <button
-                onClick={() => setViewType('FLIP')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10.5px] font-bold transition-all cursor-pointer ${
-                  viewType === 'FLIP'
-                    ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-xs'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-                title="Flip Mode: Next / Previous buttons se ek-ek page badlein"
-              >
-                <Layers size={12} />
-                <span>Flip Mode</span>
-              </button>
-            </div>
-          )}
         </div>
       )}
 
@@ -429,16 +584,42 @@ export const MathLessonViewer: React.FC<Props> = ({
 
         {/* ── PICTURE MODES (BOOK, PREMIUM NOTES, SOLUTION) ── */}
         {activeMode !== 'MCQ' && currentPages.length > 0 && (
-          <>
+          <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
+            {/* Quick floating reset zoom / rotation pill if zoomed or rotated */}
+            {(zoomLevel !== 1 || pageRotation !== 0) && (
+              <button
+                onClick={() => {
+                  handleZoomReset();
+                  setPageRotation(0);
+                }}
+                className="absolute top-2 left-1/2 -translate-x-1/2 z-30 bg-slate-900/90 hover:bg-slate-800 text-amber-300 border border-amber-500/40 rounded-full px-3 py-1 text-[11px] font-bold shadow-lg flex items-center gap-1.5 backdrop-blur-md active:scale-95 transition cursor-pointer"
+              >
+                <span>🔍 {Math.round(zoomLevel * 100)}%</span>
+                {pageRotation !== 0 && (
+                  <>
+                    <span className="text-slate-400">•</span>
+                    <span>🔄 {pageRotation}°</span>
+                  </>
+                )}
+                <span className="text-slate-400">•</span>
+                <span className="text-xs text-white">Reset</span>
+              </button>
+            )}
+
             {/* OPTION B: CONTINUOUS SCROLL MODE (SINGLE VERTICAL ROLL) */}
             {viewType === 'SCROLL' ? (
               <div
                 ref={scrollContainerRef}
-                className="flex-1 overflow-y-auto overflow-x-hidden p-2 sm:p-4 space-y-4 pb-20 scroll-smooth"
+                className="flex-1 overflow-y-auto overflow-x-auto p-2 sm:p-4 space-y-4 pb-24 scroll-smooth"
               >
                 <div
-                  className="max-w-4xl mx-auto flex flex-col items-center transition-transform duration-150 origin-top"
-                  style={{ transform: `scale(${zoomLevel})` }}
+                  className="mx-auto flex flex-col items-center transition-transform duration-150 origin-top"
+                  style={{
+                    transform: `scale(${zoomLevel})`,
+                    transformOrigin: 'top center',
+                    width: zoomLevel > 1 ? `${Math.round(zoomLevel * 100)}%` : '100%',
+                    maxWidth: zoomLevel > 1 ? 'none' : '56rem',
+                  }}
                 >
                   {currentPages.map((page, idx) => (
                     <div
@@ -453,7 +634,7 @@ export const MathLessonViewer: React.FC<Props> = ({
                             {idx + 1}
                           </span>
                           <span className="text-xs font-bold text-slate-300">
-                            {page.title || `Page ${idx + 1}`}
+                            {getCleanPageTitle(page.title, idx)}
                           </span>
                         </div>
                         <span className="text-[10px] font-mono text-slate-400">
@@ -462,12 +643,16 @@ export const MathLessonViewer: React.FC<Props> = ({
                       </div>
 
                       {/* Image Content */}
-                      <div className="relative bg-black flex items-center justify-center min-h-[300px] overflow-hidden">
+                      <div className="relative bg-black flex items-center justify-center min-h-[300px] overflow-hidden p-1">
                         <img
                           src={page.imageUrl}
-                          alt={page.title || `Page ${idx + 1}`}
+                          alt={getCleanPageTitle(page.title, idx)}
                           loading="lazy"
-                          className="w-full h-auto object-contain max-h-[85vh] select-none pointer-events-auto"
+                          className="w-full h-auto object-contain max-h-[85vh] select-none pointer-events-auto transition-transform duration-200"
+                          style={pageRotation !== 0 ? {
+                            transform: `rotate(${pageRotation}deg)`,
+                            transformOrigin: 'center center',
+                          } : undefined}
                         />
                       </div>
 
@@ -484,15 +669,27 @@ export const MathLessonViewer: React.FC<Props> = ({
               /* OPTION A: FLIP MODE (PAGE-BY-PAGE NEXT / PREV) */
               <div className="flex-1 relative flex flex-col items-center justify-center p-2 sm:p-4 overflow-hidden">
                 <div
-                  className="w-full max-w-3xl flex-1 flex flex-col items-center justify-center overflow-hidden transition-transform duration-150"
-                  style={{ transform: `scale(${zoomLevel})` }}
+                  className={`w-full max-w-3xl flex-1 flex flex-col items-center justify-center overflow-hidden transition-transform duration-100 ${
+                    zoomLevel > 1 ? 'cursor-grab active:cursor-grabbing touch-none' : ''
+                  }`}
+                  style={{
+                    transform: `scale(${zoomLevel}) rotate(${pageRotation}deg) translate(${pan.x / zoomLevel}px, ${pan.y / zoomLevel}px)`,
+                    transformOrigin: 'center center',
+                  }}
+                  onTouchStart={handleTouchStart}
+                  onTouchMove={handleTouchMove}
+                  onTouchEnd={handleTouchEnd}
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={handleMouseUp}
                 >
                   {currentPages[currentPageIndex] && (
                     <div className="w-full h-full flex flex-col bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
                       {/* Top Page Header */}
-                      <div className="bg-slate-800/90 px-4 py-2.5 flex items-center justify-between border-b border-slate-700/60">
+                      <div className="bg-slate-800/90 px-4 py-2 flex items-center justify-between border-b border-slate-700/60">
                         <span className="text-xs font-bold text-slate-200">
-                          {currentPages[currentPageIndex].title || `Page ${currentPageIndex + 1}`}
+                          {getCleanPageTitle(currentPages[currentPageIndex].title, currentPageIndex)}
                         </span>
                         <span className="text-xs font-mono font-black px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
                           Page {currentPageIndex + 1} of {currentPages.length}
@@ -500,11 +697,12 @@ export const MathLessonViewer: React.FC<Props> = ({
                       </div>
 
                       {/* Single Page Image */}
-                      <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden">
+                      <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden min-h-0">
                         <img
                           src={currentPages[currentPageIndex].imageUrl}
-                          alt={`Page ${currentPageIndex + 1}`}
-                          className="w-full h-full object-contain max-h-[75vh]"
+                          alt={getCleanPageTitle(currentPages[currentPageIndex].title, currentPageIndex)}
+                          className="w-full h-full object-contain pointer-events-none select-none max-h-[75vh] sm:max-h-[82vh]"
+                          draggable={false}
                         />
                       </div>
                     </div>
@@ -512,7 +710,11 @@ export const MathLessonViewer: React.FC<Props> = ({
                 </div>
 
                 {/* Flip Mode Navigation Controls */}
-                <div className="w-full max-w-md mx-auto mt-3 flex items-center justify-between gap-3 bg-slate-900/90 border border-slate-800 rounded-2xl px-4 py-2 shadow-lg">
+                <div
+                  className={`w-full max-w-md mx-auto mt-3 flex items-center justify-between gap-3 bg-slate-900/90 border border-slate-800 rounded-2xl px-4 py-2 shadow-lg transition-all duration-200 ${
+                    isImmersive ? 'translate-y-full opacity-0 pointer-events-none' : 'translate-y-0 opacity-100'
+                  }`}
+                >
                   <button
                     onClick={() => setCurrentPageIndex(p => Math.max(p - 1, 0))}
                     disabled={currentPageIndex === 0}
@@ -539,7 +741,11 @@ export const MathLessonViewer: React.FC<Props> = ({
             )}
 
             {/* Bottom Floating Page Status Bar */}
-            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 z-20 bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-full px-4 py-1.5 flex items-center gap-3 shadow-xl">
+            <div
+              className={`absolute bottom-2 left-1/2 -translate-x-1/2 z-20 bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-full px-4 py-1.5 flex items-center gap-3 shadow-xl transition-all duration-200 ${
+                isImmersive ? 'translate-y-full opacity-0 pointer-events-none' : 'translate-y-0 opacity-100'
+              }`}
+            >
               <span className="text-[11px] font-mono font-black text-slate-300">
                 📄 Page {currentPageIndex + 1} of {currentPages.length}
               </span>
@@ -548,7 +754,7 @@ export const MathLessonViewer: React.FC<Props> = ({
                 {activeMode === 'BOOK' ? '📖 Book' : activeMode === 'PREMIUM_NOTES' ? '📑 Notes' : '💡 Solution'}
               </span>
             </div>
-          </>
+          </div>
         )}
 
         {/* ── MODE 4: MCQ PRACTICE (LIVE INTERACTIVE QUIZ) ── */}
@@ -745,6 +951,22 @@ export const MathLessonViewer: React.FC<Props> = ({
           </div>
         )}
       </div>
+
+      {/* Draggable Floating NSTA Logo FAB — only rendered if parent does not provide one */}
+      {!propOnToggleImmersive && (
+        <DraggableNstaLogoFab
+          isActive={isImmersive}
+          onToggle={toggleImmersive}
+          appLogo={appLogo || '/branding/nsta-logo.svg'}
+          appName={appName || 'NSTA'}
+          title={isImmersive ? 'बॉटम व टॉप बार दिखाएं • Screen pe move kar sakte hain' : 'बॉटम व टॉप बार छुपाएं • Screen pe move kar sakte hain'}
+          defaultPosition={{
+            bottom: isImmersive ? 20 : 92,
+            right: 16,
+          }}
+          zIndex={99999}
+        />
+      )}
     </div>
   );
 };

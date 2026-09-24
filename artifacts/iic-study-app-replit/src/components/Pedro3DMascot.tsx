@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PedroEngine } from '../utils/engines/pedroEngine';
@@ -44,6 +44,7 @@ export const Pedro3DMascotComponent: React.FC<Pedro3DMascotProps> = ({
   className = '',
   onClick
 }) => {
+  const [hasWebGLError, setHasWebGLError] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const animFrameIdRef = useRef<number | null>(null);
   const pedroRef = useRef<THREE.Group | null>(null);
@@ -184,45 +185,71 @@ export const Pedro3DMascotComponent: React.FC<Pedro3DMascotProps> = ({
     const container = containerRef.current;
     if (!container) return;
 
-    const width = size;
-    const height = size;
+    // Check WebGL availability
+    const checkWebGLSupport = (): boolean => {
+      if (typeof window === 'undefined') return false;
+      try {
+        const canvas = document.createElement('canvas');
+        return !!(window.WebGLRenderingContext && (canvas.getContext('webgl') || canvas.getContext('experimental-webgl')));
+      } catch {
+        return false;
+      }
+    };
 
-    // ── 1. THREE.JS SCENE SETUP ──
-    const scene = new THREE.Scene();
-
-    const camera = new THREE.PerspectiveCamera(48, width / height, 0.1, 50);
-    if (headOnly) {
-      camera.position.set(0, 1.20, 2.15); // Closer camera distance for a larger, prominent head ("mund bara dikhao")
-    } else {
-      camera.position.set(0, 0.62, 4.45);
+    if (!checkWebGLSupport()) {
+      setHasWebGLError(true);
+      return;
     }
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    let renderer: THREE.WebGLRenderer | null = null;
+    let controls: OrbitControls | null = null;
+    let domEl: HTMLElement | null = null;
+    let observer: IntersectionObserver | null = null;
+    let handleVisibilityChange: (() => void) | null = null;
+    let handleStartDrag: (() => void) | null = null;
+    let handleEndDrag: (() => void) | null = null;
 
-    container.innerHTML = '';
-    container.appendChild(renderer.domElement);
+    try {
+      const width = size;
+      const height = size;
 
-    // ── 2. ORBIT CONTROLS (360° HORIZONTAL ROTATION ONLY) ──
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controlsRef.current = controls;
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
-    controls.enableZoom = false;
-    controls.enablePan = false;
-    // Lock vertical polar angle strictly to eye-level (cannot look from top of head or bottom of feet)
-    controls.minPolarAngle = Math.PI / 2;
-    controls.maxPolarAngle = Math.PI / 2;
-    controls.autoRotate = autoSpin360 || !isDragging;
-    controls.autoRotateSpeed = autoSpin360 ? 3.5 : 0.85;
-    controls.target.set(0, headOnly ? 1.20 : 0.56, 0);
+      // ── 1. THREE.JS SCENE SETUP ──
+      const scene = new THREE.Scene();
 
-    // ── 3. LIGHTING ──
-    const ambient = new THREE.AmbientLight(0xffffff, 1.3);
-    scene.add(ambient);
+      const camera = new THREE.PerspectiveCamera(48, width / height, 0.1, 50);
+      if (headOnly) {
+        camera.position.set(0, 1.20, 2.15); // Closer camera distance for a larger, prominent head ("mund bara dikhao")
+      } else {
+        camera.position.set(0, 0.62, 4.45);
+      }
+
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+      renderer.setSize(width, height);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+      container.innerHTML = '';
+      container.appendChild(renderer.domElement);
+      domEl = renderer.domElement;
+
+      // ── 2. ORBIT CONTROLS (360° HORIZONTAL ROTATION ONLY) ──
+      controls = new OrbitControls(camera, renderer.domElement);
+      controlsRef.current = controls;
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.08;
+      controls.enableZoom = false;
+      controls.enablePan = false;
+      // Lock vertical polar angle strictly to eye-level (cannot look from top of head or bottom of feet)
+      controls.minPolarAngle = Math.PI / 2;
+      controls.maxPolarAngle = Math.PI / 2;
+      controls.autoRotate = autoSpin360 || !isDragging;
+      controls.autoRotateSpeed = autoSpin360 ? 3.5 : 0.85;
+      controls.target.set(0, headOnly ? 1.20 : 0.56, 0);
+
+      // ── 3. LIGHTING ──
+      const ambient = new THREE.AmbientLight(0xffffff, 1.3);
+      scene.add(ambient);
 
     const dirLight = new THREE.DirectionalLight(0xffffff, 1.4);
     dirLight.position.set(3, 4, 2);
@@ -825,7 +852,7 @@ export const Pedro3DMascotComponent: React.FC<Pedro3DMascotProps> = ({
       }, 2000);
     };
 
-    const domEl = renderer.domElement;
+    domEl = renderer.domElement;
     domEl.addEventListener('pointerdown', handleStartDrag);
     domEl.addEventListener('pointerup', handleEndDrag);
     domEl.addEventListener('touchstart', handleStartDrag);
@@ -1599,26 +1626,79 @@ export const Pedro3DMascotComponent: React.FC<Pedro3DMascotProps> = ({
 
     // ── 6. CLEANUP ──
     return () => {
-      if (animFrameIdRef.current) {
-        cancelAnimationFrame(animFrameIdRef.current);
-      }
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-      }
-      if (observer) {
-        observer.disconnect();
-      }
-      domEl.removeEventListener('pointerdown', handleStartDrag);
-      domEl.removeEventListener('pointerup', handleEndDrag);
-      domEl.removeEventListener('touchstart', handleStartDrag);
-      domEl.removeEventListener('touchend', handleEndDrag);
-      controls.dispose();
-      renderer.dispose();
-      if (container.contains(domEl)) {
-        container.removeChild(domEl);
+      try {
+        if (animFrameIdRef.current) {
+          cancelAnimationFrame(animFrameIdRef.current);
+        }
+        if (typeof document !== 'undefined' && handleVisibilityChange) {
+          document.removeEventListener('visibilitychange', handleVisibilityChange);
+        }
+        if (observer) {
+          observer.disconnect();
+        }
+        if (domEl) {
+          if (handleStartDrag) {
+            domEl.removeEventListener('pointerdown', handleStartDrag);
+            domEl.removeEventListener('touchstart', handleStartDrag);
+          }
+          if (handleEndDrag) {
+            domEl.removeEventListener('pointerup', handleEndDrag);
+            domEl.removeEventListener('touchend', handleEndDrag);
+          }
+        }
+        if (controls) {
+          try { controls.dispose(); } catch {}
+        }
+        if (renderer) {
+          try { renderer.dispose(); } catch {}
+        }
+        if (domEl && container && container.contains(domEl)) {
+          container.removeChild(domEl);
+        }
+      } catch (cleanErr) {
+        console.warn('[Pedro3DMascot] Cleanup warning:', cleanErr);
       }
     };
+    } catch (err) {
+      console.warn('[Pedro3DMascot] WebGL initialization failed, switching to 2D fallback:', err);
+      setHasWebGLError(true);
+    }
   }, [size]);
+
+  if (hasWebGLError) {
+    return (
+      <div
+        style={{
+          width: `${size}px`,
+          height: `${size}px`,
+        }}
+        className={`relative select-none flex items-center justify-center ${className}`}
+        onClick={onClick}
+        title="Pedro Mascot"
+      >
+        <div className="w-full h-full rounded-2xl bg-gradient-to-br from-indigo-500/20 via-purple-500/20 to-pink-500/20 flex flex-col items-center justify-center p-1 border border-indigo-500/30 shadow-sm relative overflow-hidden group">
+          {/* Animated 2D Mascot */}
+          <div className="relative flex flex-col items-center">
+            {/* Antenna */}
+            <div className="w-0.5 h-2 bg-indigo-400 relative flex items-center justify-center">
+              <div className="absolute -top-1 w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+              <div className="absolute -top-1 w-2 h-2 rounded-full bg-amber-400 shadow-sm shadow-amber-400" />
+            </div>
+            {/* Robot Head */}
+            <div className="w-7 h-6 rounded-lg bg-gradient-to-b from-indigo-600 to-slate-900 flex items-center justify-center gap-1 border border-indigo-400/40 shadow-inner px-1">
+              <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_6px_#22d3ee] animate-pulse" />
+              <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_6px_#22d3ee] animate-pulse" />
+            </div>
+            {/* Robot Smile */}
+            <div className="w-3.5 h-0.5 rounded-full bg-cyan-300 mt-0.5" />
+          </div>
+          {isSpeaking && (
+            <span className="absolute -bottom-1 text-[8px] font-black text-amber-500 animate-bounce">💬</span>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
