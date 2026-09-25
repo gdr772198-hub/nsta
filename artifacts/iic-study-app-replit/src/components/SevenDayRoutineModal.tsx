@@ -22,6 +22,22 @@ export const SevenDayRoutineModal: React.FC<SevenDayRoutineModalProps> = ({
   const theme = useAppTheme();
   const [selectedDayOffset, setSelectedDayOffset] = useState<number>(0);
 
+  React.useEffect(() => {
+    if (isOpen) {
+      document.body.classList.add('nsta-modal-open');
+      window.dispatchEvent(new CustomEvent('nsta-modal-visibility-change', { detail: { open: true } }));
+      return () => {
+        setTimeout(() => {
+          const remaining = document.querySelectorAll('[role="dialog"], [data-modal="true"], .iic-modal-overlay');
+          if (remaining.length === 0) {
+            document.body.classList.remove('nsta-modal-open');
+            window.dispatchEvent(new CustomEvent('nsta-modal-visibility-change', { detail: { open: false } }));
+          }
+        }, 10);
+      };
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const dayNames = ['Aaj (Day 1)', 'Kal (Day 2)', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7'];
@@ -72,14 +88,20 @@ export const SevenDayRoutineModal: React.FC<SevenDayRoutineModalProps> = ({
   const activeDay = scheduleByDay[selectedDayOffset] || scheduleByDay[0];
 
   return (
-    <div className="fixed inset-0 z-[700] flex items-center justify-center p-3 sm:p-5 bg-slate-950/70 backdrop-blur-sm animate-fadeIn">
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-5 bg-slate-950/75 backdrop-blur-sm animate-fadeIn iic-modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      data-modal="true"
+      onClick={onClose}
+    >
       <div
-        className="w-full max-w-lg bg-white rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden border"
+        className="w-full max-w-lg bg-white rounded-3xl shadow-2xl flex flex-col max-h-[88dvh] sm:max-h-[85vh] overflow-hidden border"
         style={{ borderColor: `${theme.primary}30` }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-5 py-4 border-b flex items-center justify-between" style={{ borderColor: `${theme.primary}15` }}>
+        <div className="px-5 py-4 border-b flex items-center justify-between shrink-0" style={{ borderColor: `${theme.primary}15` }}>
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-2xl flex items-center justify-center text-lg" style={{ background: `${theme.primary}15`, color: theme.primary }}>
               📅
@@ -107,7 +129,7 @@ export const SevenDayRoutineModal: React.FC<SevenDayRoutineModalProps> = ({
         </div>
 
         {/* Rule Banner */}
-        <div className="mx-4 mt-3 p-3 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-start gap-2.5 text-amber-900">
+        <div className="mx-4 mt-3 p-3 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-start gap-2.5 text-amber-900 shrink-0">
           <AlertCircle size={18} className="text-amber-600 shrink-0 mt-0.5" />
           <div className="text-[11px] leading-tight font-medium">
             <span className="font-black text-amber-800">📌 Daily 1 Full Chapter Target:</span> Chahe 5 page hon ya 20 page, roz ka target 1 full chapter hai. 
@@ -116,7 +138,7 @@ export const SevenDayRoutineModal: React.FC<SevenDayRoutineModalProps> = ({
         </div>
 
         {/* 7-Day Tabs */}
-        <div className="px-4 pt-3 flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
+        <div className="px-4 pt-3 flex gap-1.5 overflow-x-auto no-scrollbar pb-1 shrink-0">
           {scheduleByDay.map((d, idx) => {
             const isSelected = selectedDayOffset === idx;
             return (
@@ -137,7 +159,7 @@ export const SevenDayRoutineModal: React.FC<SevenDayRoutineModalProps> = ({
         </div>
 
         {/* Selected Day Content */}
-        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2.5">
+        <div className="flex-1 overflow-y-auto px-4 py-3 pb-6 space-y-2.5">
           <div className="flex items-center justify-between px-1">
             <p className="text-xs font-black text-slate-700">{activeDay.dayLabel} Ka Target</p>
             <span className="text-[10px] font-bold text-slate-400">
@@ -193,13 +215,13 @@ export const SevenDayRoutineModal: React.FC<SevenDayRoutineModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t bg-slate-50 flex items-center justify-between">
+        <div className="p-4 pb-6 sm:pb-4 border-t bg-slate-50 shrink-0 flex items-center justify-between gap-3">
           <p className="text-[11px] text-slate-500 font-medium">
             Daily sequential target: 1 Ch / Subject
           </p>
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-xl text-xs font-black text-white active:scale-95 transition"
+            className="px-5 py-2.5 rounded-xl text-xs sm:text-sm font-black text-white active:scale-95 transition shadow-sm shrink-0"
             style={{ background: theme.btnGrad || theme.primary }}
           >
             Samajh Gaya (OK)

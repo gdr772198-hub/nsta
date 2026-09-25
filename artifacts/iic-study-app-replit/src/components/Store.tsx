@@ -1579,18 +1579,20 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                 <button
                   id="store-diamonds-pill"
                   onClick={() => setTierType('DIAMONDS')}
-                  className="flex items-center gap-1 px-2 rounded-xl active:scale-95 transition-all cursor-pointer h-7"
+                  className="flex items-center gap-1 px-2.5 rounded-xl active:scale-95 transition-all cursor-pointer h-7"
                   style={{
-                    background: 'rgba(56,189,248,0.12)',
-                    border: '1px solid rgba(56,189,248,0.3)',
+                    background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.05) 100%)',
+                    border: '1px solid rgba(255, 255, 255, 0.22)',
+                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.20), inset 0 1px 1px rgba(255, 255, 255, 0.25)',
+                    backdropFilter: 'blur(8px)',
                   }}
                   title="Diamonds Store"
                 >
                   <span className="text-xs leading-none">💎</span>
-                  <span className="font-black text-xs leading-none text-sky-400">
+                  <span className="font-black text-xs leading-none text-white">
                     {(user.diamonds ?? 0).toLocaleString('en-IN')}
                   </span>
-                  <span className="w-3.5 h-3.5 rounded-full bg-sky-400 text-slate-950 flex items-center justify-center font-black text-[9px] ml-0.5">
+                  <span className="w-3.5 h-3.5 rounded-full bg-white/20 text-white flex items-center justify-center font-black text-[9px] ml-0.5 border border-white/30">
                     +
                   </span>
                 </button>
@@ -1600,18 +1602,20 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                 <button
                   id="store-credits-pill"
                   onClick={() => setTierType('CREDITS')}
-                  className="flex items-center gap-1 px-2 rounded-xl active:scale-95 transition-all cursor-pointer h-7"
+                  className="flex items-center gap-1 px-2.5 rounded-xl active:scale-95 transition-all cursor-pointer h-7"
                   style={{
-                    background: 'rgba(251,191,36,0.12)',
-                    border: '1px solid rgba(251,191,36,0.3)',
+                    background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.05) 100%)',
+                    border: '1px solid rgba(255, 255, 255, 0.22)',
+                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.20), inset 0 1px 1px rgba(255, 255, 255, 0.25)',
+                    backdropFilter: 'blur(8px)',
                   }}
                   title="Credits Store"
                 >
                   <span className="text-xs leading-none">🪙</span>
-                  <span className="font-black text-xs leading-none text-amber-400">
+                  <span className="font-black text-xs leading-none text-white">
                     {userCredits.toLocaleString('en-IN')}
                   </span>
-                  <span className="w-3.5 h-3.5 rounded-full bg-amber-400 text-slate-950 flex items-center justify-center font-black text-[9px] ml-0.5">
+                  <span className="w-3.5 h-3.5 rounded-full bg-white/20 text-white flex items-center justify-center font-black text-[9px] ml-0.5 border border-white/30">
                     +
                   </span>
                 </button>

@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace=artifacts/iic-study-app-replit",
+    "start": "npm run dev --workspace=artifacts/iic-study-app-replit",
     "build": "NODE_OPTIONS='--max-old-space-size=2048' npm run build --workspace=artifacts/iic-study-app-replit",
     "typecheck:libs": "tsc --build --force",
     "typecheck": "npm run typecheck:libs && npm run typecheck --workspaces --if-present",

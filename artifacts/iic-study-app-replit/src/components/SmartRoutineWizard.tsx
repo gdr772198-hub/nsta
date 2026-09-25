@@ -48,6 +48,22 @@ export const SmartRoutineWizard: React.FC<SmartRoutineWizardProps> = ({
 }) => {
   const theme = useAppTheme();
 
+  React.useEffect(() => {
+    if (isOpen) {
+      document.body.classList.add('nsta-modal-open');
+      window.dispatchEvent(new CustomEvent('nsta-modal-visibility-change', { detail: { open: true } }));
+      return () => {
+        setTimeout(() => {
+          const remaining = document.querySelectorAll('[role="dialog"], [data-modal="true"], .iic-modal-overlay');
+          if (remaining.length === 0) {
+            document.body.classList.remove('nsta-modal-open');
+            window.dispatchEvent(new CustomEvent('nsta-modal-visibility-change', { detail: { open: false } }));
+          }
+        }, 10);
+      };
+    }
+  }, [isOpen]);
+
   // Step 1: Goal & Class/Book
   const [mode, setMode] = useState<'SCHOOL' | 'COMPETITION'>(routineData.routineMode || 'SCHOOL');
   const [board, setBoard] = useState<string>(routineData.selectedBoard || 'BSEB');
@@ -311,7 +327,12 @@ export const SmartRoutineWizard: React.FC<SmartRoutineWizardProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[700] flex items-center justify-center p-3 sm:p-5 bg-slate-950/70 backdrop-blur-sm animate-fadeIn">
+    <div
+      role="dialog"
+      aria-modal="true"
+      data-modal="true"
+      className="fixed inset-0 z-[10000] flex items-center justify-center p-3 sm:p-5 bg-slate-950/70 backdrop-blur-sm animate-fadeIn iic-modal-overlay"
+    >
       <div
         className="w-full max-w-xl bg-white rounded-3xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden border"
         style={{ borderColor: `${theme.primary}30` }}

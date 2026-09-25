@@ -393,3 +393,377 @@ export const getLevelTopBarEffects = (lvl: LevelInfo): Array<{id:string;enabled:
     default: return [];
   }
 };
+
+// ── Multi-Tier Sub-System (Roman I-V, Greek Alpha/Beta/Gamma, Metal Leagues) ────
+export type RomanSubStep = 'I' | 'II' | 'III' | 'IV' | 'V';
+export type GreekTier = 'Alpha' | 'Beta' | 'Gamma';
+export type MetalLeague = 'Bronze' | 'Silver' | 'Gold' | 'Platinum' | 'Diamond';
+
+export const ROMAN_STEPS: RomanSubStep[] = ['I', 'II', 'III', 'IV', 'V'];
+
+export interface LevelSubTier {
+  level: number;
+  stageType: 'BASE' | 'GREEK' | 'METAL';
+  roman: RomanSubStep;
+  romanIndex: number;
+  greek?: GreekTier;
+  greekSymbol?: string;
+  metal?: MetalLeague;
+  metalEmoji?: string;
+  badgeText: string;
+  shortBadgeText: string;
+  fullTitle: string;
+  color: string;
+  bgColor: string;
+  borderColor: string;
+  glowColor: string;
+  stepProgressPct: number;
+  nextStepTitle: string;
+}
+
+const METAL_LEAGUES: Array<{
+  name: MetalLeague;
+  emoji: string;
+  color: string;
+  bgColor: string;
+  borderColor: string;
+  glowColor: string;
+}> = [
+  { name: 'Bronze',   emoji: '🥉', color: '#f59e0b', bgColor: 'rgba(180, 83, 9, 0.25)',   borderColor: 'rgba(245, 158, 11, 0.45)', glowColor: 'rgba(245, 158, 11, 0.6)' },
+  { name: 'Silver',   emoji: '🥈', color: '#e2e8f0', bgColor: 'rgba(148, 163, 184, 0.25)', borderColor: 'rgba(203, 213, 225, 0.45)', glowColor: 'rgba(226, 232, 240, 0.6)' },
+  { name: 'Gold',     emoji: '🥇', color: '#fbbf24', bgColor: 'rgba(217, 119, 6, 0.25)',   borderColor: 'rgba(251, 191, 36, 0.5)',  glowColor: 'rgba(251, 191, 36, 0.7)' },
+  { name: 'Platinum', emoji: '💠', color: '#38bdf8', bgColor: 'rgba(14, 165, 233, 0.25)',  borderColor: 'rgba(56, 189, 248, 0.5)',  glowColor: 'rgba(56, 189, 248, 0.7)' },
+  { name: 'Diamond',  emoji: '💎', color: '#c084fc', bgColor: 'rgba(168, 85, 247, 0.25)',  borderColor: 'rgba(192, 132, 252, 0.5)', glowColor: 'rgba(192, 132, 252, 0.8)' },
+];
+
+/**
+ * Computes exact Sub-Tier (Roman I-V, Greek Alpha/Beta/Gamma, Metal League)
+ * based on level (1-15) and progress within level (0-100%).
+ */
+export const getLevelSubTier = (level: number, progressPct: number): LevelSubTier => {
+  const lvl = Math.min(MAX_LEVEL, Math.max(1, level));
+  const safeProgress = Math.min(100, Math.max(0, progressPct));
+
+  // ── Range 1: Level 1 se 5 (Foundational Ranks: Roman I se V) ──
+  if (lvl <= 5) {
+    const romanIndex = Math.min(4, Math.floor(safeProgress / 20));
+    const roman = ROMAN_STEPS[romanIndex];
+    const stepProgress = Math.min(100, Math.round(((safeProgress % 20) / 20) * 100));
+    const nextRoman = romanIndex < 4 ? ROMAN_STEPS[romanIndex + 1] : null;
+    const nextTitle = nextRoman ? `Rank ${nextRoman}` : `Level ${lvl + 1} · Rank I`;
+    const lvlInfo = LEVEL_INFO[lvl - 1];
+
+    return {
+      level: lvl,
+      stageType: 'BASE',
+      roman,
+      romanIndex,
+      badgeText: `Rank ${roman}`,
+      shortBadgeText: roman,
+      fullTitle: `Level ${lvl} · Rank ${roman}`,
+      color: lvlInfo.color,
+      bgColor: 'rgba(255, 255, 255, 0.08)',
+      borderColor: `${lvlInfo.color}60`,
+      glowColor: lvlInfo.glowColor,
+      stepProgressPct: safeProgress >= 100 ? 100 : stepProgress,
+      nextStepTitle: nextTitle,
+    };
+  }
+
+  // ── Range 2: Level 6 se 10 (Greek Divisions: Alpha 25%, Beta 35%, Gamma 40%) ──
+  if (lvl <= 10) {
+    let greek: GreekTier = 'Alpha';
+    let greekSymbol = 'α';
+    let greekProgressPct = 0;
+    let greekColor = '#38bdf8';
+    let greekBg = 'rgba(56, 189, 248, 0.18)';
+    let greekBorder = 'rgba(56, 189, 248, 0.45)';
+    let greekGlow = 'rgba(56, 189, 248, 0.65)';
+    let nextGreek: GreekTier | null = 'Beta';
+
+    if (safeProgress < 25) {
+      greek = 'Alpha';
+      greekSymbol = 'α';
+      greekProgressPct = (safeProgress / 25) * 100;
+      greekColor = '#38bdf8';
+      greekBg = 'rgba(56, 189, 248, 0.18)';
+      greekBorder = 'rgba(56, 189, 248, 0.45)';
+      greekGlow = 'rgba(56, 189, 248, 0.65)';
+      nextGreek = 'Beta';
+    } else if (safeProgress < 60) {
+      greek = 'Beta';
+      greekSymbol = 'β';
+      greekProgressPct = ((safeProgress - 25) / 35) * 100;
+      greekColor = '#a855f7';
+      greekBg = 'rgba(168, 85, 247, 0.18)';
+      greekBorder = 'rgba(168, 85, 247, 0.45)';
+      greekGlow = 'rgba(168, 85, 247, 0.65)';
+      nextGreek = 'Gamma';
+    } else {
+      greek = 'Gamma';
+      greekSymbol = 'γ';
+      greekProgressPct = ((safeProgress - 60) / 40) * 100;
+      greekColor = '#f59e0b';
+      greekBg = 'rgba(245, 158, 11, 0.18)';
+      greekBorder = 'rgba(245, 158, 11, 0.45)';
+      greekGlow = 'rgba(245, 158, 11, 0.7)';
+      nextGreek = null;
+    }
+
+    const romanIndex = Math.min(4, Math.floor(greekProgressPct / 20));
+    const roman = ROMAN_STEPS[romanIndex];
+    const stepProgress = Math.min(100, Math.round(((greekProgressPct % 20) / 20) * 100));
+
+    let nextTitle = '';
+    if (romanIndex < 4) {
+      nextTitle = `${greek} ${ROMAN_STEPS[romanIndex + 1]}`;
+    } else if (nextGreek) {
+      nextTitle = `${nextGreek} I`;
+    } else {
+      nextTitle = `Level ${lvl + 1} · Alpha I`;
+    }
+
+    return {
+      level: lvl,
+      stageType: 'GREEK',
+      roman,
+      romanIndex,
+      greek,
+      greekSymbol,
+      badgeText: `${greek} ${roman}`,
+      shortBadgeText: `${greekSymbol}-${roman}`,
+      fullTitle: `Level ${lvl} · ${greek} ${roman}`,
+      color: greekColor,
+      bgColor: greekBg,
+      borderColor: greekBorder,
+      glowColor: greekGlow,
+      stepProgressPct: safeProgress >= 100 ? 100 : stepProgress,
+      nextStepTitle: nextTitle,
+    };
+  }
+
+  // ── Range 3: Level 11 se 15 (Metal Leagues: Bronze, Silver, Gold, Platinum, Diamond) ──
+  // 5 Metals across 0–100% (each 20%). Inside each metal: Alpha (25%), Beta (35%), Gamma (40%) with Roman I–V
+  const metalIndex = Math.min(4, Math.floor(safeProgress / 20));
+  const metalObj = METAL_LEAGUES[metalIndex];
+  const metalProgress = Math.min(100, Math.max(0, ((safeProgress - metalIndex * 20) / 20) * 100));
+
+  let greek: GreekTier = 'Alpha';
+  let greekSymbol = 'α';
+  let greekProgressPct = 0;
+  let nextGreek: GreekTier | null = 'Beta';
+
+  if (metalProgress < 25) {
+    greek = 'Alpha';
+    greekSymbol = 'α';
+    greekProgressPct = (metalProgress / 25) * 100;
+    nextGreek = 'Beta';
+  } else if (metalProgress < 60) {
+    greek = 'Beta';
+    greekSymbol = 'β';
+    greekProgressPct = ((metalProgress - 25) / 35) * 100;
+    nextGreek = 'Gamma';
+  } else {
+    greek = 'Gamma';
+    greekSymbol = 'γ';
+    greekProgressPct = ((metalProgress - 60) / 40) * 100;
+    nextGreek = null;
+  }
+
+  const romanIndex = Math.min(4, Math.floor(greekProgressPct / 20));
+  const roman = ROMAN_STEPS[romanIndex];
+  const stepProgress = Math.min(100, Math.round(((greekProgressPct % 20) / 20) * 100));
+
+  let nextTitle = '';
+  if (romanIndex < 4) {
+    nextTitle = `${metalObj.name} ${greek} ${ROMAN_STEPS[romanIndex + 1]}`;
+  } else if (nextGreek) {
+    nextTitle = `${metalObj.name} ${nextGreek} I`;
+  } else if (metalIndex < 4) {
+    nextTitle = `${METAL_LEAGUES[metalIndex + 1].name} Alpha I`;
+  } else if (lvl < MAX_LEVEL) {
+    nextTitle = `Level ${lvl + 1} · Bronze Alpha I`;
+  } else {
+    nextTitle = 'Max Tier Champion 👑';
+  }
+
+  return {
+    level: lvl,
+    stageType: 'METAL',
+    roman,
+    romanIndex,
+    greek,
+    greekSymbol,
+    metal: metalObj.name,
+    metalEmoji: metalObj.emoji,
+    badgeText: `${metalObj.emoji} ${metalObj.name} ${greekSymbol}-${roman}`,
+    shortBadgeText: `${metalObj.emoji} ${greekSymbol}-${roman}`,
+    fullTitle: `Level ${lvl} · ${metalObj.name} ${greek} ${roman}`,
+    color: metalObj.color,
+    bgColor: metalObj.bgColor,
+    borderColor: metalObj.borderColor,
+    glowColor: metalObj.glowColor,
+    stepProgressPct: safeProgress >= 100 ? 100 : stepProgress,
+    nextStepTitle: nextTitle,
+  };
+};
+
+/**
+ * Returns LevelSubTier directly given a user's total score.
+ */
+export const getSubTierInfoFromScore = (
+  score: number,
+  settings?: { levelScoreOverride?: Record<string, number> } | null
+): LevelSubTier => {
+  const lvlInfo = getLevelInfo(score, settings);
+  const progressPct = getLevelProgress(score);
+  return getLevelSubTier(lvlInfo.level, progressPct);
+};
+
+/**
+ * Returns all sub-tier blocks that constitute a given level.
+ * Used to render visual progression trees in Level Roadmaps.
+ */
+export const getAllSubTiersForLevel = (level: number) => {
+  const lvl = Math.min(MAX_LEVEL, Math.max(1, level));
+
+  if (lvl <= 5) {
+    return ROMAN_STEPS.map((r, i) => ({
+      id: `base-${r}`,
+      title: `Rank ${r}`,
+      short: r,
+      roman: r,
+      minPct: i * 20,
+      maxPct: (i + 1) * 20,
+      color: LEVEL_INFO[lvl - 1].color,
+    }));
+  }
+
+  if (lvl <= 10) {
+    const greekDefs: Array<{ greek: GreekTier; symbol: string; min: number; max: number; color: string }> = [
+      { greek: 'Alpha', symbol: 'α', min: 0,  max: 25,  color: '#38bdf8' },
+      { greek: 'Beta',  symbol: 'β', min: 25, max: 60,  color: '#a855f7' },
+      { greek: 'Gamma', symbol: 'γ', min: 60, max: 100, color: '#f59e0b' },
+    ];
+
+    const list: any[] = [];
+    greekDefs.forEach(g => {
+      const span = g.max - g.min;
+      ROMAN_STEPS.forEach((r, ri) => {
+        const stepMin = g.min + (span * (ri * 20)) / 100;
+        const stepMax = g.min + (span * ((ri + 1) * 20)) / 100;
+        list.push({
+          id: `${g.greek}-${r}`,
+          title: `${g.greek} ${r}`,
+          short: `${g.symbol}-${r}`,
+          roman: r,
+          greek: g.greek,
+          greekSymbol: g.symbol,
+          minPct: Math.round(stepMin),
+          maxPct: Math.round(stepMax),
+          color: g.color,
+        });
+      });
+    });
+    return list;
+  }
+
+  // Level 11 se 15
+  const list: any[] = [];
+  METAL_LEAGUES.forEach((m, mi) => {
+    const metalMin = mi * 20;
+    const metalSpan = 20;
+    const greekDefs: Array<{ greek: GreekTier; symbol: string; minRatio: number; maxRatio: number }> = [
+      { greek: 'Alpha', symbol: 'α', minRatio: 0,   maxRatio: 0.25 },
+      { greek: 'Beta',  symbol: 'β', minRatio: 0.25, maxRatio: 0.60 },
+      { greek: 'Gamma', symbol: 'γ', minRatio: 0.60, maxRatio: 1.00 },
+    ];
+
+    greekDefs.forEach(g => {
+      const gSpan = g.maxRatio - g.minRatio;
+      ROMAN_STEPS.forEach((r, ri) => {
+        const stepMinRatio = g.minRatio + (gSpan * (ri * 20)) / 100;
+        const stepMaxRatio = g.minRatio + (gSpan * ((ri + 1) * 20)) / 100;
+        const stepMin = metalMin + metalSpan * stepMinRatio;
+        const stepMax = metalMin + metalSpan * stepMaxRatio;
+        list.push({
+          id: `${m.name}-${g.greek}-${r}`,
+          title: `${m.emoji} ${m.name} ${g.greek} ${r}`,
+          short: `${m.emoji} ${g.symbol}-${r}`,
+          roman: r,
+          greek: g.greek,
+          greekSymbol: g.symbol,
+          metal: m.name,
+          metalEmoji: m.emoji,
+          minPct: Math.round(stepMin),
+          maxPct: Math.round(stepMax),
+          color: m.color,
+        });
+      });
+    });
+  });
+  return list;
+};
+
+/** Reward in coins (credits) awarded every time a student unlocks or advances to a new sub-tier / rank */
+export const SUB_TIER_COIN_REWARD = 50;
+
+/**
+ * Returns all unlocked sub-tier IDs earned for a given total score.
+ * Initial state (Level 1, Rank I at 0 XP) is excluded from earned rewards so the first 50-coin reward is earned upon reaching Rank II (20% progress = 200 XP).
+ */
+export const getUnlockedSubTierKeys = (
+  score: number,
+  settings?: { levelScoreOverride?: Record<string, number> } | null
+): string[] => {
+  const currentLvlInfo = getLevelInfo(score, settings);
+  const currentProgress = getLevelProgress(score);
+
+  const unlocked: string[] = [];
+
+  // Completed levels prior to current level: all sub-tiers unlocked
+  for (let l = 1; l < currentLvlInfo.level; l++) {
+    const list = getAllSubTiersForLevel(l);
+    list.forEach(item => {
+      const key = `L${l}_${item.id}`;
+      if (key !== 'L1_base-I') {
+        unlocked.push(key);
+      }
+    });
+  }
+
+  // Current level sub-tiers up to current progress
+  const currentList = getAllSubTiersForLevel(currentLvlInfo.level);
+  currentList.forEach(item => {
+    if (currentProgress >= item.minPct) {
+      const key = `L${currentLvlInfo.level}_${item.id}`;
+      if (key !== 'L1_base-I') {
+        unlocked.push(key);
+      }
+    }
+  });
+
+  return unlocked;
+};
+
+/**
+ * Calculates unclaimed sub-tier rewards for a given score and list of already claimed keys.
+ */
+export const getSubTierRewardSummary = (
+  score: number,
+  claimedKeys: string[] = []
+): {
+  unlockedKeys: string[];
+  unclaimedKeys: string[];
+  unclaimedCoins: number;
+} => {
+  const unlockedKeys = getUnlockedSubTierKeys(score);
+  const claimedSet = new Set(claimedKeys);
+  const unclaimedKeys = unlockedKeys.filter(k => !claimedSet.has(k));
+  return {
+    unlockedKeys,
+    unclaimedKeys,
+    unclaimedCoins: unclaimedKeys.length * SUB_TIER_COIN_REWARD,
+  };
+};
+

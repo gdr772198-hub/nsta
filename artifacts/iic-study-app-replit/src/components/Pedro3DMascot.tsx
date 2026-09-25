@@ -23,6 +23,8 @@ interface Pedro3DMascotProps {
   level?: number;
   colorScheme?: PedroColorScheme;
   className?: string;
+  allowTilt?: boolean;
+  allowZoom?: boolean;
   onClick?: () => void;
 }
 
@@ -42,6 +44,8 @@ export const Pedro3DMascotComponent: React.FC<Pedro3DMascotProps> = ({
   level = 1,
   colorScheme = 'classic',
   className = '',
+  allowTilt = false,
+  allowZoom = false,
   onClick
 }) => {
   const [hasWebGLError, setHasWebGLError] = useState(false);
@@ -101,7 +105,13 @@ export const Pedro3DMascotComponent: React.FC<Pedro3DMascotProps> = ({
   useEffect(() => { isWinkingRef.current = isWinking; }, [isWinking]);
   useEffect(() => { isNarajRef.current = isNaraj; }, [isNaraj]);
   useEffect(() => { poseRef.current = pose; }, [pose]);
-  useEffect(() => { autoSpin360Ref.current = autoSpin360; }, [autoSpin360]);
+  useEffect(() => {
+    autoSpin360Ref.current = autoSpin360;
+    if (controlsRef.current) {
+      controlsRef.current.autoRotate = autoSpin360 || !isDraggingRef.current;
+      controlsRef.current.autoRotateSpeed = autoSpin360 ? 2.8 : 0.85;
+    }
+  }, [autoSpin360]);
   useEffect(() => { levelRef.current = level; }, [level]);
 
   // Listen to Pedro penalty & naraj events across the app
@@ -233,18 +243,26 @@ export const Pedro3DMascotComponent: React.FC<Pedro3DMascotProps> = ({
       container.appendChild(renderer.domElement);
       domEl = renderer.domElement;
 
-      // ── 2. ORBIT CONTROLS (360° HORIZONTAL ROTATION ONLY) ──
+      // ── 2. ORBIT CONTROLS (360° ROTATION) ──
       controls = new OrbitControls(camera, renderer.domElement);
       controlsRef.current = controls;
       controls.enableDamping = true;
       controls.dampingFactor = 0.08;
-      controls.enableZoom = false;
+      controls.enableZoom = allowZoom;
+      if (allowZoom) {
+        controls.minDistance = 2.0;
+        controls.maxDistance = 6.0;
+      }
       controls.enablePan = false;
-      // Lock vertical polar angle strictly to eye-level (cannot look from top of head or bottom of feet)
-      controls.minPolarAngle = Math.PI / 2;
-      controls.maxPolarAngle = Math.PI / 2;
+      if (allowTilt) {
+        controls.minPolarAngle = Math.PI / 3.2;
+        controls.maxPolarAngle = Math.PI / 1.7;
+      } else {
+        controls.minPolarAngle = Math.PI / 2;
+        controls.maxPolarAngle = Math.PI / 2;
+      }
       controls.autoRotate = autoSpin360 || !isDragging;
-      controls.autoRotateSpeed = autoSpin360 ? 3.5 : 0.85;
+      controls.autoRotateSpeed = autoSpin360 ? 2.8 : 0.85;
       controls.target.set(0, headOnly ? 1.20 : 0.56, 0);
 
       // ── 3. LIGHTING ──

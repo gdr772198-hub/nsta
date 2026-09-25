@@ -76,6 +76,8 @@ export const DraggableNstaLogoFab: React.FC<DraggableNstaLogoFabProps> = ({
   const [imgError, setImgError] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const isMovedRef = useRef(false);
+  const isLongPressRef = useRef(false);
+  const longPressTimerRef = useRef<any>(null);
   const startRef = useRef({ px: 0, py: 0, bx: 0, by: 0 });
   const posRef = useRef<{ x: number; y: number } | null>(pos);
 
@@ -158,7 +160,27 @@ export const DraggableNstaLogoFab: React.FC<DraggableNstaLogoFabProps> = ({
     const curY = posRef.current ? posRef.current.y : rect.top;
 
     isMovedRef.current = false;
+    isLongPressRef.current = false;
     startRef.current = { px: e.clientX, py: e.clientY, bx: curX, by: curY };
+
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+    }
+
+    // Long press: holding button down summons Pedro
+    longPressTimerRef.current = setTimeout(() => {
+      if (!isMovedRef.current) {
+        isLongPressRef.current = true;
+        try { hapticLight(); } catch (_) {}
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('nst_pedro_hidden');
+          localStorage.removeItem('nst_pedro_sleeping');
+          window.dispatchEvent(new CustomEvent('nst-restore-pedro', { detail: { wakeUp: true } }));
+          window.dispatchEvent(new CustomEvent('nst-show-pedro'));
+          window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: false, isSleeping: false } }));
+        }
+      }
+    }, 550);
 
     if (!posRef.current) {
       const maxY = getMaxY(isActive, size);
@@ -180,6 +202,10 @@ export const DraggableNstaLogoFab: React.FC<DraggableNstaLogoFabProps> = ({
     // Movement threshold (5px) to distinguish drag from accidental tap
     if (Math.hypot(dx, dy) > 5) {
       isMovedRef.current = true;
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
     }
 
     const maxY = getMaxY(isActive, size);
@@ -193,6 +219,11 @@ export const DraggableNstaLogoFab: React.FC<DraggableNstaLogoFabProps> = ({
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+
     if (!isDragging) return;
     setIsDragging(false);
     try {
@@ -206,12 +237,15 @@ export const DraggableNstaLogoFab: React.FC<DraggableNstaLogoFabProps> = ({
       } catch {}
     }
 
-    // If user tapped without moving, trigger the toggle action & restore Pedro if hidden
+    // If user long-pressed to summon Pedro, do not trigger toggle
+    if (isLongPressRef.current) {
+      isLongPressRef.current = false;
+      return;
+    }
+
+    // If user tapped without moving, trigger only toggle action
     if (!isMovedRef.current) {
       hapticLight();
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('nst-restore-pedro'));
-      }
       onToggle();
     }
   };
@@ -220,14 +254,43 @@ export const DraggableNstaLogoFab: React.FC<DraggableNstaLogoFabProps> = ({
     ? appLogo
     : '/branding/nsta-logo.svg';
 
+  const [isModalActive, setIsModalActive] = useState(false);
+
+  useEffect(() => {
+    const checkModal = () => {
+      const active =
+        document.body.classList.contains('nsta-modal-open') ||
+        Boolean(document.querySelector('[role="dialog"], [data-modal="true"], .iic-modal-overlay'));
+      setIsModalActive(active);
+    };
+    checkModal();
+    window.addEventListener('nsta-modal-visibility-change', checkModal);
+    const observer = new MutationObserver(checkModal);
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'data-modal', 'role'],
+    });
+    return () => {
+      window.removeEventListener('nsta-modal-visibility-change', checkModal);
+      observer.disconnect();
+    };
+  }, []);
+
   const defaultTitle = isActive
     ? 'नेविगेशन बार व टॉप बार दिखाएं • Drag to move anywhere'
     : 'नेविगेशन बार व टॉप बार छुपाएं • Drag to move anywhere';
+
+  if (isModalActive) {
+    return null;
+  }
 
   const fabElement = (
     <button
       ref={btnRef}
       type="button"
+      data-nsta-fab="true"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}

@@ -37,16 +37,18 @@ console.error = (...args: any[]) => {
     text.includes("backend didn't respond within") ||
     text.includes('pending promise was never set') ||
     (text.includes('@firebase/auth') && text.includes('internal assertion failed')) ||
-    (text.includes('@firebase/firestore') && (text.includes('offline') || text.includes('10 seconds')))
+    (text.includes('@firebase/firestore') && (text.includes('offline') || text.includes('10 seconds'))) ||
+    text.includes('failed to reload') ||
+    (text.includes('[vite]') && (text.includes('reload') || text.includes('hmr') || text.includes('connecting')))
   ) {
-    console.warn('[IIC Offline Mode Notice]', ...args);
+    console.warn('[IIC Notice]', ...args);
     return;
   }
   _origConsoleError.apply(console, args);
 };
 
 const isBenignError = (reason: any): boolean => {
-  if (!reason) return false;
+  if (!reason) return true;
   const code = reason.code || reason.name || '';
   const msg = (reason.message || String(reason)).toLowerCase();
   return (
@@ -58,6 +60,9 @@ const isBenignError = (reason: any): boolean => {
     code === 'NetworkError' ||
     code === 'QuotaExceededError' ||
     code === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+    msg.includes('script error') ||
+    msg === 'script error.' ||
+    msg === 'script error' ||
     msg.includes('network') ||
     msg.includes('offline') ||
     msg.includes('failed to fetch') ||
@@ -81,11 +86,17 @@ window.addEventListener('unhandledrejection', (event) => {
 });
 
 window.addEventListener('error', (event) => {
+  if (!event.error && (event.message === 'Script error.' || event.message === 'Script error')) {
+    event.preventDefault();
+    if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+    return;
+  }
   if (isBenignError(event.error || event.message)) {
     console.warn('[suppressed error]:', event.error || event.message);
     event.preventDefault();
+    if (event.stopImmediatePropagation) event.stopImmediatePropagation();
   }
-});
+}, true);
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

@@ -2467,7 +2467,7 @@ const App: React.FC = () => {
             cost = 0;
         }
 
-        if (_fsGrantFree) cost = 0;
+        if (_fsGrantFree && state.user.studyMode !== 'CREDIT') cost = 0;
         const isWithoutCreditMode1 = (state.user.studyMode || 'WITHOUT_CREDIT') === 'WITHOUT_CREDIT';
         if (isWithoutCreditMode1) cost = 0;
 
@@ -2764,8 +2764,8 @@ const App: React.FC = () => {
         }
     }
 
-    const isUserWithoutCreditOrVip3 = (state.user.studyMode || 'WITHOUT_CREDIT') !== 'CREDIT' || Boolean(state.user.isPremium || state.user.subscriptionLevel === 'BASIC' || state.user.subscriptionLevel === 'ULTRA' || state.user.subscriptionTier === 'BASIC' || state.user.subscriptionTier === 'ULTRA');
-    if (isUserWithoutCreditOrVip3) {
+    const isUserWithoutCredit3 = (state.user.studyMode || 'WITHOUT_CREDIT') !== 'CREDIT';
+    if (isUserWithoutCredit3 && Boolean(state.user.isPremium || state.user.subscriptionLevel === 'BASIC' || state.user.subscriptionLevel === 'ULTRA' || state.user.subscriptionTier === 'BASIC' || state.user.subscriptionTier === 'ULTRA')) {
         hasAccess = true;
     }
 

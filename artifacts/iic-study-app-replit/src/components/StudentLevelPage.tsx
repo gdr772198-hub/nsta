@@ -6,6 +6,10 @@ import {
   getLevelProgress,
   getMaxReadingSeconds,
   getLevelDailyLimitsWithOverride,
+  getLevelSubTier,
+  getAllSubTiersForLevel,
+  ROMAN_STEPS,
+  SUB_TIER_COIN_REWARD,
 } from '../utils/levelSystem';
 import { loadRoutineData } from '../utils/routineStorage';
 
@@ -68,6 +72,7 @@ export const StudentLevelPage: React.FC<StudentLevelPageProps> = ({
   const userLvl = getLevelInfo(totalScore, settings);
   const nextUserLvl = LEVEL_INFO[userLvl.level] ?? null;
   const progressPct = getLevelProgress(totalScore);
+  const userSubTier = getLevelSubTier(userLvl.level, progressPct);
 
   const scrollToCurrentLevel = React.useCallback(() => {
     const card = document.getElementById(`level-card-${userLvl.level}`);
@@ -255,6 +260,20 @@ export const StudentLevelPage: React.FC<StudentLevelPageProps> = ({
                   }}
                 >
                   {userLvl.emoji} Level {userLvl.level} · {userLvl.label}
+                </span>
+
+                {/* Multi-Tier Sub-Rank Badge */}
+                <span
+                  className="text-[10px] font-black px-2.5 py-0.5 rounded-full shadow-sm flex items-center gap-1"
+                  style={{
+                    background: userSubTier.bgColor,
+                    color: userSubTier.color,
+                    border: `1px solid ${userSubTier.borderColor}`,
+                  }}
+                  title={`${userSubTier.fullTitle} — Next: ${userSubTier.nextStepTitle}`}
+                >
+                  <span>{userSubTier.metalEmoji || (userSubTier.stageType === 'GREEK' ? '🏛️' : '🌱')}</span>
+                  <span>{userSubTier.badgeText}</span>
                 </span>
 
                 <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
@@ -504,6 +523,92 @@ export const StudentLevelPage: React.FC<StudentLevelPageProps> = ({
                   {totalScore.toLocaleString('en-IN')} pts
                 </span>
               </p>
+            </div>
+          </div>
+
+          {/* Sub-Tier Pill in Header */}
+          <div
+            className="flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-black shadow-md border"
+            style={{
+              background: userSubTier.bgColor,
+              color: userSubTier.color,
+              borderColor: userSubTier.borderColor,
+              boxShadow: `0 0 12px ${userSubTier.glowColor}`,
+            }}
+          >
+            <span>{userSubTier.metalEmoji || (userSubTier.stageType === 'GREEK' ? '🏛️' : '🎖️')}</span>
+            <span>{userSubTier.badgeText}</span>
+          </div>
+        </div>
+
+        {/* ── Sub-Tier Active Status & Progression Box ── */}
+        <div
+          className="mt-3 rounded-2xl p-3 border transition-all"
+          style={{
+            background: 'linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.01) 100%)',
+            borderColor: `${userSubTier.borderColor}`,
+          }}
+        >
+          <div className="flex items-center justify-between text-[10px] font-black mb-1.5">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs">{userSubTier.metalEmoji || (userSubTier.stageType === 'GREEK' ? '🏛️' : '🎖️')}</span>
+              <span className="text-white font-bold">{userSubTier.fullTitle}</span>
+            </div>
+            <span
+              className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full"
+              style={{ background: userSubTier.bgColor, color: userSubTier.color }}
+            >
+              {userSubTier.stageType === 'BASE' ? 'Base Roman I-V' : userSubTier.stageType === 'GREEK' ? 'Greek Division' : 'Metal League'}
+            </span>
+          </div>
+
+          {/* Sub-Step Progress inside current tier */}
+          <div className="flex items-center justify-between text-[9px] text-slate-300 font-bold mb-1">
+            <span>Current Step Progress</span>
+            <span className="font-mono text-white font-black">{userSubTier.stepProgressPct}%</span>
+          </div>
+          <div className="h-1.5 rounded-full overflow-hidden bg-white/10 mb-2">
+            <div
+              className="h-full rounded-full transition-all duration-500"
+              style={{
+                width: `${userSubTier.stepProgressPct}%`,
+                background: `linear-gradient(90deg, ${userSubTier.color}80, ${userSubTier.color})`,
+                boxShadow: `0 0 8px ${userSubTier.glowColor}`,
+              }}
+            />
+          </div>
+
+          <div className="flex items-center justify-between text-[9px] pt-1 border-t border-white/5 text-slate-400">
+            <span>Agla Goal:</span>
+            <span className="text-amber-300 font-bold flex items-center gap-1">
+              <span>🎯</span>
+              <span>{userSubTier.nextStepTitle}</span>
+              <span className="ml-1 text-[8px] bg-amber-400/20 text-amber-200 border border-amber-400/30 px-1 py-0.2 rounded font-black">
+                +{SUB_TIER_COIN_REWARD} 🪙
+              </span>
+            </span>
+          </div>
+
+          {/* 50 Coins Per Sub-Rank Promotion Banner */}
+          <div className="mt-2.5 bg-gradient-to-r from-amber-500/15 via-yellow-500/10 to-amber-500/15 border border-amber-400/35 rounded-xl p-2.5 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">🪙</span>
+              <div>
+                <p className="text-[10px] font-black text-amber-300 flex items-center gap-1">
+                  <span>Sub-Rank Unlock Bonus:</span>
+                  <span className="bg-amber-400 text-slate-950 font-black px-1.5 py-0.2 rounded text-[9px]">
+                    +{SUB_TIER_COIN_REWARD} Coins Har Rank Par!
+                  </span>
+                </p>
+                <p className="text-[8.5px] text-amber-100/75 mt-0.5">
+                  Har sub-tier (I, II, III, IV, V / α, β, γ / Metal) unlock hone par aapke wallet me turant +50 Coins credit hote hain!
+                </p>
+              </div>
+            </div>
+            <div className="text-right shrink-0">
+              <span className="text-[11px] font-black text-amber-300 tracking-tight">
+                +{SUB_TIER_COIN_REWARD} CR
+              </span>
             </div>
           </div>
         </div>
@@ -976,6 +1081,161 @@ export const StudentLevelPage: React.FC<StudentLevelPageProps> = ({
                         </p>
                       </div>
                     </div>
+                  </div>
+
+                  {/* ── Sub-Tier & League Progression Pathway for this Level ── */}
+                  <div className="mt-2 bg-[#0c1220] rounded-xl p-3 border border-white/10">
+                    <div className="flex items-center justify-between pb-2 mb-2 border-b border-white/5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs">
+                          {lvl.level <= 5 ? '🌱' : lvl.level <= 10 ? '🏛️' : '👑'}
+                        </span>
+                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-300">
+                          {lvl.level <= 5
+                            ? 'Sub-Ranks: Roman I – V (Har stage 20% score)'
+                            : lvl.level <= 10
+                            ? 'Greek Divisions: Alpha (25%) · Beta (35%) · Gamma (40%) [I–V]'
+                            : 'Metal Grand Leagues: 5 Leagues (20% each) · Har ek me α, β, γ [I–V]'}
+                        </p>
+                      </div>
+                      {isUserLevel && (
+                        <span
+                          className="text-[9px] font-black px-2 py-0.5 rounded-full shadow-sm"
+                          style={{
+                            background: userSubTier.bgColor,
+                            color: userSubTier.color,
+                            border: `1px solid ${userSubTier.borderColor}`,
+                          }}
+                        >
+                          Aap Yahan Hain: {userSubTier.badgeText}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Level 1 se 5: 5 Roman Chips */}
+                    {lvl.level <= 5 && (
+                      <div className="grid grid-cols-5 gap-1.5 text-center">
+                        {ROMAN_STEPS.map((r, ri) => {
+                          const isCurrentStep = isUserLevel && userSubTier.roman === r;
+                          const isPassedStep = isUnlocked && (!isUserLevel || userSubTier.romanIndex > ri);
+                          return (
+                            <div
+                              key={r}
+                              className={`rounded-lg py-1 px-1 text-center transition-all ${
+                                isCurrentStep
+                                  ? 'ring-2 font-black shadow-lg scale-105'
+                                  : isPassedStep
+                                  ? 'bg-white/5 text-slate-300'
+                                  : 'bg-white/[0.02] text-slate-500'
+                              }`}
+                              style={{
+                                background: isCurrentStep ? userSubTier.bgColor : undefined,
+                                borderColor: isCurrentStep ? userSubTier.color : 'rgba(255,255,255,0.06)',
+                                border: '1px solid',
+                                ringColor: isCurrentStep ? userSubTier.color : undefined,
+                              }}
+                            >
+                              <div className="text-[10px] font-black" style={{ color: isCurrentStep ? userSubTier.color : undefined }}>
+                                Rank {r}
+                              </div>
+                              <div className="text-[8px] opacity-75 font-mono">
+                                {ri * 20}%-{(ri + 1) * 20}%
+                              </div>
+                              <div className="text-[7.5px] font-bold text-amber-300 mt-0.5">
+                                +50 🪙
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Level 6 se 10: 3 Greek Divisions (Alpha 25%, Beta 35%, Gamma 40%) */}
+                    {lvl.level >= 6 && lvl.level <= 10 && (
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        {[
+                          { name: 'Alpha', sym: 'α', pct: '0% – 25%', color: '#38bdf8' },
+                          { name: 'Beta',  sym: 'β', pct: '25% – 60%', color: '#a855f7' },
+                          { name: 'Gamma', sym: 'γ', pct: '60% – 100%', color: '#f59e0b' },
+                        ].map((g) => {
+                          const isCurrentGreek = isUserLevel && userSubTier.greek === g.name;
+                          return (
+                            <div
+                              key={g.name}
+                              className={`rounded-xl p-2 border transition-all ${
+                                isCurrentGreek
+                                  ? 'shadow-lg ring-1'
+                                  : 'bg-white/[0.03] border-white/10'
+                              }`}
+                              style={{
+                                background: isCurrentGreek ? `${g.color}18` : undefined,
+                                borderColor: isCurrentGreek ? g.color : undefined,
+                                ringColor: isCurrentGreek ? g.color : undefined,
+                              }}
+                            >
+                              <div className="flex items-center justify-between text-[10px] font-black mb-1">
+                                <span style={{ color: g.color }}>{g.sym} {g.name}</span>
+                                <span className="text-[8px] font-mono text-amber-300 font-bold">+50 🪙/rank</span>
+                              </div>
+                              <div className="flex items-center justify-between gap-1 text-[8px] font-mono">
+                                {ROMAN_STEPS.map((r) => {
+                                  const isStep = isCurrentGreek && userSubTier.roman === r;
+                                  return (
+                                    <span
+                                      key={r}
+                                      className={`px-1 py-0.5 rounded ${
+                                        isStep ? 'bg-white font-black text-black shadow' : 'bg-black/30 text-slate-400'
+                                      }`}
+                                    >
+                                      {r}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Level 11 se 15: 5 Metal Leagues */}
+                    {lvl.level >= 11 && (
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+                        {[
+                          { name: 'Bronze',   emoji: '🥉', pct: '0–20%', color: '#f59e0b' },
+                          { name: 'Silver',   emoji: '🥈', pct: '20–40%', color: '#cbd5e1' },
+                          { name: 'Gold',     emoji: '🥇', pct: '40–60%', color: '#fbbf24' },
+                          { name: 'Platinum', emoji: '💠', pct: '60–80%', color: '#38bdf8' },
+                          { name: 'Diamond',  emoji: '💎', pct: '80–100%', color: '#c084fc' },
+                        ].map((m) => {
+                          const isCurrentMetal = isUserLevel && userSubTier.metal === m.name;
+                          return (
+                            <div
+                              key={m.name}
+                              className={`rounded-xl p-2 border transition-all ${
+                                isCurrentMetal ? 'shadow-lg ring-1 scale-102' : 'bg-white/[0.03] border-white/10'
+                              }`}
+                              style={{
+                                background: isCurrentMetal ? `${m.color}20` : undefined,
+                                borderColor: isCurrentMetal ? m.color : undefined,
+                                ringColor: isCurrentMetal ? m.color : undefined,
+                              }}
+                            >
+                              <div className="flex items-center gap-1 text-[10px] font-black">
+                                <span>{m.emoji}</span>
+                                <span style={{ color: m.color }}>{m.name}</span>
+                              </div>
+                              <div className="text-[8px] font-mono text-slate-400 mt-0.5">
+                                {m.pct}
+                              </div>
+                              <div className="text-[7.5px] text-amber-300 mt-1 font-mono font-bold">
+                                +50 🪙 per rank
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
                   {/* Events Access Pills */}

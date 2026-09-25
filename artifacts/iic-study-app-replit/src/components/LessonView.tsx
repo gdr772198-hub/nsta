@@ -1160,7 +1160,8 @@ export const LessonView: React.FC<Props> = ({
           };
 
           const MODE_COIN_COST = 20;
-          const isWithoutCreditOrVip = (user?.studyMode || 'WITHOUT_CREDIT') !== 'CREDIT' || Boolean(user?.isPremium || user?.subscriptionLevel === 'BASIC' || user?.subscriptionLevel === 'ULTRA' || user?.subscriptionTier === 'BASIC' || user?.subscriptionTier === 'ULTRA' || isPremiumUser || user?.role === 'ADMIN' || user?.role === 'SUB_ADMIN');
+          const isUserWithoutCredit = (user?.studyMode || 'WITHOUT_CREDIT') !== 'CREDIT';
+          const isWithoutCreditOrVip = isUserWithoutCredit && Boolean(user?.isPremium || user?.subscriptionLevel === 'BASIC' || user?.subscriptionLevel === 'ULTRA' || user?.subscriptionTier === 'BASIC' || user?.subscriptionTier === 'ULTRA' || isPremiumUser || user?.role === 'ADMIN' || user?.role === 'SUB_ADMIN');
 
           const applyModeSwitch = (targetMode: 'readable' | 'styled') => {
               const currentDesktop = isDesktopModeOn();

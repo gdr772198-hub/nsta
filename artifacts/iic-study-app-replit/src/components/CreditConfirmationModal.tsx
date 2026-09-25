@@ -33,6 +33,7 @@ export const CreditConfirmationModal: React.FC<Props> = ({
             const raw = localStorage.getItem('nst_current_user');
             if (raw) {
                 const u = JSON.parse(raw);
+                if (u?.studyMode === 'CREDIT') return false;
                 if (u?.studyMode && u.studyMode !== 'CREDIT') return true;
                 if (u?.isPremium) return true;
                 if (u?.subscriptionLevel === 'BASIC' || u?.subscriptionLevel === 'ULTRA' || u?.subscriptionLevel === 'PRO' || u?.subscriptionLevel === 'MAX') return true;
@@ -44,7 +45,19 @@ export const CreditConfirmationModal: React.FC<Props> = ({
     React.useEffect(() => {
         if (isWithoutCredit) {
             onConfirm(false);
+            return;
         }
+        document.body.classList.add('nsta-modal-open');
+        window.dispatchEvent(new CustomEvent('nsta-modal-visibility-change', { detail: { open: true } }));
+        return () => {
+            setTimeout(() => {
+                const remaining = document.querySelectorAll('[role="dialog"], [data-modal="true"], .iic-modal-overlay');
+                if (remaining.length === 0) {
+                    document.body.classList.remove('nsta-modal-open');
+                    window.dispatchEvent(new CustomEvent('nsta-modal-visibility-change', { detail: { open: false } }));
+                }
+            }, 10);
+        };
     }, [isWithoutCredit, onConfirm]);
 
     if (isWithoutCredit) return null;
@@ -55,7 +68,7 @@ export const CreditConfirmationModal: React.FC<Props> = ({
 
     return (
         <div
-            className="fixed inset-0 z-[100000] flex items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200"
+            className="fixed inset-0 z-[100000] flex items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200 iic-modal-overlay"
             style={{
                 paddingTop: 'max(1rem, env(safe-area-inset-top))',
                 paddingRight: 'max(1rem, env(safe-area-inset-right))',
@@ -64,6 +77,7 @@ export const CreditConfirmationModal: React.FC<Props> = ({
             }}
             role="dialog"
             aria-modal="true"
+            data-modal="true"
             aria-label={title}
         >
             <div

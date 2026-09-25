@@ -8,6 +8,7 @@ export interface NstaQuickWheelModalProps {
   onOpenMessenger: () => void;
   onQuickAccess: (action: 'VIDEO' | 'PROGRESS' | 'STARRED' | 'READING' | 'FLASHCARDS' | 'OFFLINE' | 'ACTIVITY' | 'CREDITS' | 'MISTAKES' | 'LEADERBOARD') => void;
   onOpenPedro?: () => void;
+  onOpenPedro360?: () => void;
   onGoHome?: () => void;
   mistakeCount?: number;
   appName?: string;
@@ -26,7 +27,7 @@ interface WheelToolItem {
   borderGlow: string;
   badge?: string;
   isPremium?: boolean;
-  type: 'MESSENGER' | 'QUICK' | 'PEDRO';
+  type: 'MESSENGER' | 'QUICK' | 'PEDRO' | 'PEDRO_360';
   action?: 'VIDEO' | 'PROGRESS' | 'STARRED' | 'READING' | 'FLASHCARDS' | 'OFFLINE' | 'ACTIVITY' | 'CREDITS' | 'MISTAKES' | 'LEADERBOARD';
 }
 
@@ -36,6 +37,7 @@ export const NstaQuickWheelModal: React.FC<NstaQuickWheelModalProps> = ({
   onOpenMessenger,
   onQuickAccess,
   onOpenPedro,
+  onOpenPedro360,
   onGoHome,
   mistakeCount = 0,
   appName = 'NSTA',
@@ -150,6 +152,17 @@ export const NstaQuickWheelModal: React.FC<NstaQuickWheelModalProps> = ({
       type: 'QUICK',
       action: 'MISTAKES',
     },
+    {
+      id: 'PEDRO_360',
+      title: 'Pedro 360° Studio',
+      fullName: 'Pedro 360°',
+      shortLabel: 'Pedro 360°',
+      emoji: '🤖',
+      badge: '360°',
+      bgGrad: 'linear-gradient(135deg, #6366f1, #06b6d4)',
+      borderGlow: '#06b6d4',
+      type: 'PEDRO_360',
+    },
   ];
 
   const totalTools = tools.length;
@@ -158,7 +171,11 @@ export const NstaQuickWheelModal: React.FC<NstaQuickWheelModalProps> = ({
   const handleLaunch = useCallback((tool: WheelToolItem) => {
     hapticStrong();
     onClose();
-    if (tool.type === 'MESSENGER') {
+    if (tool.type === 'PEDRO_360') {
+      if (onOpenPedro360) {
+        onOpenPedro360();
+      }
+    } else if (tool.type === 'MESSENGER') {
       onOpenMessenger();
     } else if (tool.type === 'PEDRO') {
       if (typeof window !== 'undefined') {
@@ -173,7 +190,7 @@ export const NstaQuickWheelModal: React.FC<NstaQuickWheelModalProps> = ({
     } else if (tool.action) {
       onQuickAccess(tool.action);
     }
-  }, [onClose, onOpenMessenger, onQuickAccess, onOpenPedro]);
+  }, [onClose, onOpenMessenger, onQuickAccess, onOpenPedro, onOpenPedro360]);
 
   // Pointer drag to rotate wheel
   const handlePointerDown = (e: React.PointerEvent) => {

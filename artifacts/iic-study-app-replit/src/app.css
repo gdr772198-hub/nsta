@@ -3358,6 +3358,32 @@ model-viewer {
 body[data-iic-notes-focus] [data-iic-bottom-nav] { display: none !important; }
 body[data-iic-notes-focus] [data-iic-float-logo] { display: none !important; }
 
+/* ── Popup / Modal Active — automatically hides bottom nav and floating buttons ── */
+body[data-modal-open="true"] [data-iic-bottom-nav],
+body[data-modal-open="true"] [data-iic-float-logo],
+body[data-modal-open="true"] .iic-bottom-nav,
+body[data-modal-open="true"] #nsta-floating-trigger,
+body.iic-modal-open [data-iic-bottom-nav],
+body.iic-modal-open [data-iic-float-logo],
+body.iic-modal-open .iic-bottom-nav,
+body.iic-modal-open #nsta-floating-trigger,
+body:has([role="dialog"]) [data-iic-bottom-nav],
+body:has([role="dialog"]) [data-iic-float-logo],
+body:has([role="dialog"]) .iic-bottom-nav,
+body:has([role="dialog"]) #nsta-floating-trigger,
+body:has([data-modal="true"]) [data-iic-bottom-nav],
+body:has([data-modal="true"]) [data-iic-float-logo],
+body:has([data-modal="true"]) .iic-bottom-nav,
+body:has([data-modal="true"]) #nsta-floating-trigger,
+body:has(.iic-modal-overlay) [data-iic-bottom-nav],
+body:has(.iic-modal-overlay) [data-iic-float-logo],
+body:has(.iic-modal-overlay) .iic-bottom-nav,
+body:has(.iic-modal-overlay) #nsta-floating-trigger {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
 /* ── Tier-based Notes Content (Class 6-12 only) ── */
 /* data-tier="basic"  → Basic + Ultra users dekh sakte hain */
 /* data-tier="ultra"  → Sirf Ultra users dekh sakte hain     */

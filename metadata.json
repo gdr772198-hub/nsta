@@ -1,6 +1,6 @@
 {
-  "name": "Remix Remix Remix Remix Remix Remix NstA",
-  "description": "Imported from GitHub: gdr772198-hub/nsta",
+  "name": "NSTA - National Study & Tracking App",
+  "description": "Comprehensive learning platform with syllabus, notes, audio studio, MCQs, and student progress tracking.",
   "requestFramePermissions": [
     "camera",
     "microphone"

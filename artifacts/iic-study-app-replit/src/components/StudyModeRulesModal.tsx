@@ -7,6 +7,9 @@ export interface StudyModeRulesModalProps {
   currentMode: 'WITHOUT_CREDIT' | 'CREDIT';
   onSelectMode: (mode: 'WITHOUT_CREDIT' | 'CREDIT') => void;
   initialTab?: 'WITHOUT_CREDIT' | 'CREDIT';
+  isSubscriptionActive?: boolean;
+  activeSubName?: string;
+  subscriptionDaysRemaining?: number;
 }
 
 export const StudyModeRulesModal: React.FC<StudyModeRulesModalProps> = ({
@@ -15,12 +18,26 @@ export const StudyModeRulesModal: React.FC<StudyModeRulesModalProps> = ({
   currentMode,
   onSelectMode,
   initialTab,
+  isSubscriptionActive = false,
+  activeSubName = 'VIP',
+  subscriptionDaysRemaining,
 }) => {
   const [activeTab, setActiveTab] = useState<'WITHOUT_CREDIT' | 'CREDIT'>('WITHOUT_CREDIT');
 
   useEffect(() => {
     if (isOpen) {
       setActiveTab(initialTab || currentMode || 'WITHOUT_CREDIT');
+      document.body.classList.add('nsta-modal-open');
+      window.dispatchEvent(new CustomEvent('nsta-modal-visibility-change', { detail: { open: true } }));
+      return () => {
+        setTimeout(() => {
+          const remaining = document.querySelectorAll('[role="dialog"], [data-modal="true"], .iic-modal-overlay');
+          if (remaining.length === 0) {
+            document.body.classList.remove('nsta-modal-open');
+            window.dispatchEvent(new CustomEvent('nsta-modal-visibility-change', { detail: { open: false } }));
+          }
+        }, 10);
+      };
     }
   }, [isOpen, initialTab, currentMode]);
 
@@ -30,7 +47,10 @@ export const StudyModeRulesModal: React.FC<StudyModeRulesModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-[120] flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-sm animate-in fade-in"
+      role="dialog"
+      aria-modal="true"
+      data-modal="true"
+      className="fixed inset-0 z-[10000] flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-sm animate-in fade-in iic-modal-overlay"
       onClick={onClose}
     >
       <div
@@ -328,38 +348,56 @@ export const StudyModeRulesModal: React.FC<StudyModeRulesModalProps> = ({
         </div>
 
         {/* Footer Actions */}
-        <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2.5 shrink-0 bg-slate-50/50 dark:bg-slate-900/50">
-          {isCurrentActive ? (
-            <button
-              type="button"
-              disabled
-              className="flex-1 py-3 px-4 rounded-xl font-bold text-xs sm:text-sm bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border border-slate-200 dark:border-slate-700 text-center cursor-default flex items-center justify-center gap-1.5"
-            >
-              <Check size={16} />
-              <span>Yeh Mode Active Hai</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => onSelectMode(activeTab)}
-              className={`flex-1 py-3 px-4 rounded-xl font-bold text-xs sm:text-sm text-white shadow-md active:scale-[0.98] transition-all text-center cursor-pointer ${
-                activeTab === 'WITHOUT_CREDIT'
-                  ? 'bg-emerald-600 hover:bg-emerald-700'
-                  : 'bg-blue-600 hover:bg-blue-700'
-              }`}
-            >
-              {activeTab === 'WITHOUT_CREDIT'
-                ? 'Switch to Without Credit Mode'
-                : 'Switch to Credit Economy Mode'}
-            </button>
+        <div className="p-4 sm:p-5 pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-col gap-2.5 shrink-0 bg-slate-50/50 dark:bg-slate-900/50">
+          {!isCurrentActive && isSubscriptionActive && (
+            <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-2 text-left">
+              <span className="text-amber-500 text-sm mt-0.5 shrink-0">🔒</span>
+              <p className="text-[11px] text-amber-700 dark:text-amber-300 leading-relaxed font-medium">
+                <strong>Mode Switch Locked:</strong> Aapka <strong>{activeSubName}</strong> subscription active hai. Jab tak subscription on hai, mode switch nahi kiya ja sakta taaki VIP users VIP+ ke benefits ka anuchit laabh na le sakein. Validity poori hone ke baad hi switch kar sakte hain.
+              </p>
+            </div>
           )}
-          <button
-            type="button"
-            onClick={onClose}
-            className="py-3 px-5 rounded-xl font-bold text-xs sm:text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 active:scale-[0.98] transition-all cursor-pointer"
-          >
-            Band Karein
-          </button>
+          <div className="flex items-center gap-2.5">
+            {isCurrentActive ? (
+              <button
+                type="button"
+                disabled
+                className="flex-1 py-3 px-4 rounded-xl font-bold text-xs sm:text-sm bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border border-slate-200 dark:border-slate-700 text-center cursor-default flex items-center justify-center gap-1.5"
+              >
+                <Check size={16} />
+                <span>Yeh Mode Active Hai</span>
+              </button>
+            ) : isSubscriptionActive ? (
+              <button
+                type="button"
+                disabled
+                className="flex-1 py-3 px-4 rounded-xl font-bold text-xs sm:text-sm bg-slate-200/80 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border border-slate-300 dark:border-slate-700 text-center cursor-not-allowed flex items-center justify-center gap-1.5 opacity-80"
+              >
+                <span>🔒 Locked (Subscription Active)</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onSelectMode(activeTab)}
+                className={`flex-1 py-3 px-4 rounded-xl font-bold text-xs sm:text-sm text-white shadow-md active:scale-[0.98] transition-all text-center cursor-pointer ${
+                  activeTab === 'WITHOUT_CREDIT'
+                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : 'bg-blue-600 hover:bg-blue-700'
+                }`}
+              >
+                {activeTab === 'WITHOUT_CREDIT'
+                  ? 'Switch to Without Credit Mode'
+                  : 'Switch to Credit Economy Mode'}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="py-3 px-5 rounded-xl font-bold text-xs sm:text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 active:scale-[0.98] transition-all cursor-pointer"
+            >
+              Band Karein
+            </button>
+          </div>
         </div>
       </div>
     </div>

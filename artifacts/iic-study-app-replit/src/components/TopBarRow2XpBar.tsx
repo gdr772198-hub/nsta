@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, SystemSettings } from '../types';
-import { getLevelInfo, getNextLevelInfo, getLevelProgress } from '../utils/levelSystem';
+import { getLevelInfo, getNextLevelInfo, getLevelProgress, getLevelSubTier } from '../utils/levelSystem';
 import { Zap } from 'lucide-react';
 
 export function formatXpDisplay(num: number): string {
@@ -115,6 +115,7 @@ export const TopBarRow2XpBar: React.FC<TopBarRow2XpBarProps> = ({
   const clampedPct = Math.min(100, Math.max(0, displayedPct));
   const levelColor = currentLevelInfo.color || '#38bdf8';
   const levelGlow = currentLevelInfo.glowColor || 'rgba(56,189,248,0.75)';
+  const currentSubTier = getLevelSubTier(currentLevelInfo.level, clampedPct);
 
   return (
     <div className={`flex items-center gap-1.5 flex-1 min-w-0 mx-1 transition-all duration-500 ease-out ${
@@ -171,7 +172,7 @@ export const TopBarRow2XpBar: React.FC<TopBarRow2XpBarProps> = ({
         id="topbar-row2-xp-track-container"
         onClick={onOpenScorePanel}
         className="relative flex-1 min-w-[50px] cursor-pointer py-1 group"
-        title={`Level ${currentLevelInfo.level} (${currentLevelInfo.label}): ${Math.round(clampedPct)}%`}
+        title={`${currentSubTier.fullTitle} (${Math.round(clampedPct)}%) — Next: ${currentSubTier.nextStepTitle} (+50 Coins! 🪙)`}
       >
         {/* Track bar - sleek and thin as requested */}
         <div className={`relative w-full rounded-full overflow-hidden bg-white/20 border border-white/25 transition-all duration-500 ${
@@ -223,13 +224,13 @@ export const TopBarRow2XpBar: React.FC<TopBarRow2XpBarProps> = ({
         </div>
       </div>
 
-      {/* LEVEL DISPLAY BUTTON (e.g. Lv 1) OR LEVEL UP ANIMATION BADGE */}
+      {/* LEVEL DISPLAY BUTTON (e.g. Lv 1) WITH SUB-TIER BADGE */}
       {levelUpAnim ? (
         /* Animated level-up celebration badge */
         <button
           id="topbar-row2-total-xp-btn"
           onClick={onOpenScorePanel}
-          className="inline-flex items-center gap-1 px-1 py-0.5 select-none active:scale-95 cursor-pointer"
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 select-none active:scale-95 cursor-pointer rounded-lg bg-amber-500/20 border border-amber-400/50"
           style={{
             animation: 'row2GainPop 0.35s ease-out forwards',
           }}
@@ -237,29 +238,42 @@ export const TopBarRow2XpBar: React.FC<TopBarRow2XpBarProps> = ({
         >
           <Zap size={10} className="text-yellow-300 fill-yellow-300 animate-pulse" />
           <span className="font-black text-[11px] text-amber-300 whitespace-nowrap">Lv {levelUpAnim}</span>
-           {isExpanded && (
-             <span className="text-[10px] font-bold text-amber-200/90 whitespace-nowrap tabular-nums">
-               {formatXpDisplay(currentTotalScore)}{nextLevelInfo ? `/${formatXpDisplay(nextLevelInfo.minScore)}` : ''}
-             </span>
-           )}
+          <span className="text-[9px] font-black px-1 rounded bg-amber-400/30 text-amber-200">
+            {currentSubTier.shortBadgeText}
+          </span>
+          {isExpanded && (
+            <span className="text-[10px] font-bold text-amber-200/90 whitespace-nowrap tabular-nums">
+              {formatXpDisplay(currentTotalScore)}{nextLevelInfo ? `/${formatXpDisplay(nextLevelInfo.minScore)}` : ''}
+            </span>
+          )}
         </button>
       ) : (
-         /* Show the level while the top-bar buttons are present; reveal XP
-            after the Store/Credits/Diamonds control moves to Row 1. */
         <button
           id="topbar-row2-total-xp-btn"
           onClick={onOpenScorePanel}
           className="inline-flex items-center gap-1 px-1 py-0.5 active:scale-95 transition-all shrink-0 cursor-pointer group select-none"
-          title={`Level ${currentLevelInfo.level} (${currentLevelInfo.label}) — ${currentTotalScore} XP — Tap karke details dekhein`}
+          title={`${currentSubTier.fullTitle} (${currentTotalScore} XP) — Sub-Tier: ${currentSubTier.badgeText} — Next: ${currentSubTier.nextStepTitle}`}
         >
           <span className="font-black text-[11px] tabular-nums text-sky-200 group-hover:text-sky-100 whitespace-nowrap tracking-wide">
             Lv {currentLevelInfo.level}
           </span>
-           {isExpanded && (
-             <span className="text-[10px] font-bold text-sky-300/80 group-hover:text-sky-100 whitespace-nowrap tabular-nums">
-               {formatXpDisplay(currentTotalScore)}{nextLevelInfo ? `/${formatXpDisplay(nextLevelInfo.minScore)}` : ''}
-             </span>
-           )}
+          {/* Sub-Tier Pill Badge (Roman I-V / Greek / Metal) */}
+          <span
+            className="text-[9px] font-black px-1.5 py-0.2 rounded-md whitespace-nowrap tracking-tight transition-transform group-hover:scale-105"
+            style={{
+              background: currentSubTier.bgColor,
+              color: currentSubTier.color,
+              border: `1px solid ${currentSubTier.borderColor}`,
+              boxShadow: `0 0 6px ${currentSubTier.glowColor}`,
+            }}
+          >
+            {currentSubTier.shortBadgeText}
+          </span>
+          {isExpanded && (
+            <span className="text-[10px] font-bold text-sky-300/80 group-hover:text-sky-100 whitespace-nowrap tabular-nums ml-0.5">
+              {formatXpDisplay(currentTotalScore)}{nextLevelInfo ? `/${formatXpDisplay(nextLevelInfo.minScore)}` : ''}
+            </span>
+          )}
         </button>
       )}
     </div>
