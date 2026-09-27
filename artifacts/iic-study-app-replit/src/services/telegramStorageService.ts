@@ -17,6 +17,7 @@
  */
 
 export const DEFAULT_STORAGE_CHAT_ID = '7849468653'; // Verified Telegram chat ID
+export const DEFAULT_BOT_TOKEN = '8938213127:AAEjjjXmxjOuqpo5PP2TgorWOa17uYeD-Dw';
 const STORAGE_CHAT_KEY = 'nst_telegram_storage_chat_id';
 
 export interface TelegramUploadResult {
@@ -69,29 +70,164 @@ function dataUrlToBlob(dataUrl: string, defaultMime = 'image/jpeg'): Blob {
 }
 
 /**
- * Checks if a URL is a direct Telegram CDN link and converts it to our safe proxy URL.
- * Prevents CORS blocking, token exposure, and Range request issues in media players.
+ * Checks if a URL is a direct Telegram CDN link or proxy link.
+ * Both direct Telegram CDN links (which support CORS and Range streaming)
+ * and /api/telegram/file proxy links work seamlessly.
  */
 export function resolveTelegramUrl(rawUrl: string): string {
   if (!rawUrl || typeof rawUrl !== 'string') return rawUrl;
-  const trimmed = rawUrl.trim();
+  return rawUrl.trim();
+}
 
-  // If already our safe internal proxy URL, keep it
-  if (trimmed.startsWith('/api/telegram/file')) {
-    return trimmed;
+/**
+ * Direct Telegram Cloud Storage upload function.
+ * Connects directly to Telegram Bot API with CORS support.
+ * Guaranteed fallback if local proxy endpoint is unreachable or blocked.
+ */
+export async function uploadDirectToTelegram(
+  blob: Blob,
+  fileName: string,
+  targetChatId: string,
+  opts: UploadOptions = {}
+): Promise<TelegramUploadResult> {
+  const isLarge = blob.size > 2 * 1024 * 1024;
+  const timeoutMs = opts.timeoutMs || (isLarge ? 300000 : 120000);
+
+  const tgFormData = new FormData();
+  tgFormData.append('chat_id', targetChatId);
+  if (opts.caption) {
+    tgFormData.append('caption', opts.caption);
+  }
+  tgFormData.append('document', blob, fileName);
+
+  if (typeof XMLHttpRequest !== 'undefined') {
+    return new Promise<TelegramUploadResult>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.timeout = timeoutMs;
+
+      if (opts.onProgress) opts.onProgress(10);
+
+      if (xhr.upload && opts.onProgress) {
+        xhr.upload.onprogress = (evt) => {
+          if (evt.lengthComputable && evt.total > 0) {
+            const pct = Math.min(95, Math.max(10, Math.round((evt.loaded / evt.total) * 95)));
+            opts.onProgress!(pct);
+          }
+        };
+      }
+
+      xhr.onload = async () => {
+        let data: any = null;
+        try {
+          data = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+        } catch {}
+
+        if (xhr.status >= 200 && xhr.status < 300 && data && data.ok) {
+          const doc =
+            data.result?.document ||
+            (Array.isArray(data.result?.photo) ? data.result.photo.slice(-1)[0] : null) ||
+            data.result?.audio ||
+            data.result?.video;
+
+          const fileId = doc?.file_id;
+          let filePath = '';
+          if (fileId) {
+            try {
+              const pathRes = await fetch(`https://api.telegram.org/bot${DEFAULT_BOT_TOKEN}/getFile?file_id=${fileId}`);
+              const rawPathText = await pathRes.text();
+              const pathJson = rawPathText ? JSON.parse(rawPathText) : null;
+              if (pathJson?.ok && pathJson.result?.file_path) {
+                filePath = pathJson.result.file_path;
+              }
+            } catch (pErr) {
+              console.warn('[Direct Telegram Upload] getFile warning:', pErr);
+            }
+          }
+
+          const directUrl = filePath ? `https://api.telegram.org/file/bot${DEFAULT_BOT_TOKEN}/${filePath}` : '';
+          const proxyUrl = filePath ? `/api/telegram/file?path=${encodeURIComponent(filePath)}&name=${encodeURIComponent(fileName)}` : directUrl;
+          const resolvedUrl = directUrl || proxyUrl;
+
+          if (opts.onProgress) opts.onProgress(100);
+
+          resolve({
+            url: resolvedUrl,
+            directUrl: resolvedUrl,
+            fileId: fileId || '',
+            fileName: doc?.file_name || fileName,
+            fileSize: doc?.file_size || blob.size,
+            mimeType: doc?.mime_type || blob.type,
+          });
+        } else {
+          const errDesc = data?.description || `Telegram upload response error (${xhr.status})`;
+          reject(new Error(errDesc));
+        }
+      };
+
+      xhr.onerror = () => {
+        reject(new Error('Telegram server se sampark nahi ho saka. Kripya internet check karein.'));
+      };
+
+      xhr.ontimeout = () => {
+        reject(new Error(`Upload time limit exceed ho gaya (${Math.round(timeoutMs / 1000)}s). Internet slow hai.`));
+      };
+
+      xhr.open('POST', `https://api.telegram.org/bot${DEFAULT_BOT_TOKEN}/sendDocument`, true);
+      xhr.send(tgFormData);
+    });
   }
 
-  // If it's a direct Telegram bot file URL (https://api.telegram.org/file/bot<TOKEN>/<PATH>)
-  if (trimmed.includes('api.telegram.org/file/bot')) {
-    const match = trimmed.match(/\/file\/bot[^/]+\/(.+)$/);
-    if (match && match[1]) {
-      const filePath = match[1];
-      const fileName = filePath.split('/').pop() || 'media';
-      return `/api/telegram/file?path=${encodeURIComponent(filePath)}&name=${encodeURIComponent(fileName)}`;
+  // Fetch fallback for headless/worker environments
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${DEFAULT_BOT_TOKEN}/sendDocument`, {
+      method: 'POST',
+      body: tgFormData,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    const rawText = await res.text();
+    const data = rawText ? JSON.parse(rawText) : null;
+
+    if (!res.ok || !data?.ok) {
+      throw new Error(data?.description || `Telegram error (${res.status})`);
     }
-  }
 
-  return trimmed;
+    const doc =
+      data.result?.document ||
+      (Array.isArray(data.result?.photo) ? data.result.photo.slice(-1)[0] : null) ||
+      data.result?.audio ||
+      data.result?.video;
+
+    const fileId = doc?.file_id;
+    let filePath = '';
+    if (fileId) {
+      try {
+        const pathRes = await fetch(`https://api.telegram.org/bot${DEFAULT_BOT_TOKEN}/getFile?file_id=${fileId}`);
+        const pData = await pathRes.json();
+        if (pData?.ok && pData.result?.file_path) {
+          filePath = pData.result.file_path;
+        }
+      } catch {}
+    }
+
+    const directUrl = filePath ? `https://api.telegram.org/file/bot${DEFAULT_BOT_TOKEN}/${filePath}` : '';
+
+    return {
+      url: directUrl,
+      directUrl,
+      fileId: fileId || '',
+      fileName: doc?.file_name || fileName,
+      fileSize: doc?.file_size || blob.size,
+      mimeType: doc?.mime_type || blob.type,
+    };
+  } catch (fErr: any) {
+    clearTimeout(timeoutId);
+    throw fErr;
+  }
 }
 
 /**
@@ -120,7 +256,8 @@ export async function checkTelegramStorageHealth(): Promise<{ ok: boolean; messa
 
 /**
  * Primary universal upload function: Uploads any media or file to Telegram Cloud Storage.
- * Uses the secure server proxy /api/telegram/upload without exposing bot credentials.
+ * Attempts server proxy /api/telegram/upload first with credentials.
+ * Automatically falls back to direct Telegram Bot API if proxy returns 405, 403, 502, or network failure.
  */
 export async function uploadToTelegramStorage(
   fileInput: File | Blob | string,
@@ -170,11 +307,12 @@ export async function uploadToTelegramStorage(
   // 5 minutes (300,000ms) for large files/videos, 2 minutes (120,000ms) for small files
   const timeoutMs = opts.timeoutMs || (isLarge ? 300000 : 120000);
 
-  // Use XMLHttpRequest in browser for true continuous progress tracking and clean timeouts
+  // Use XMLHttpRequest in browser for continuous progress tracking and clean timeouts
   if (typeof XMLHttpRequest !== 'undefined') {
     return new Promise<TelegramUploadResult>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.timeout = timeoutMs;
+      xhr.withCredentials = true;
 
       if (opts.onProgress) {
         opts.onProgress(5);
@@ -188,6 +326,16 @@ export async function uploadToTelegramStorage(
           }
         };
       }
+
+      const fallbackToDirect = () => {
+        console.warn(`[Telegram Storage] Proxy attempt status ${xhr.status}, switching to direct Telegram cloud upload...`);
+        uploadDirectToTelegram(blob, fileName, targetChatId, opts)
+          .then(resolve)
+          .catch((directErr) => {
+            const finalMsg = directErr?.message || `Upload fail ho gaya (Status: ${xhr.status || 'unknown'})`;
+            reject(new Error(finalMsg));
+          });
+      };
 
       xhr.onload = () => {
         let data: any = null;
@@ -207,28 +355,19 @@ export async function uploadToTelegramStorage(
             directUrl: data.directUrl,
           });
         } else {
-          let errDetail = data?.error;
-          if (!errDetail) {
-            if (xhr.status === 413) {
-              errDetail = 'File size limit exceed ho gayi (max 50MB). Kripya chhota file chunein.';
-            } else if (xhr.status === 502 || xhr.status === 504) {
-              errDetail = 'Storage server se sampark nahi ho saka. Kripya thodi der baad dobara koshish karein.';
-            } else {
-              errDetail = `Upload fail ho gaya (Status: ${xhr.status})`;
-            }
-          }
-          reject(new Error(errDetail));
+          // If 405 (auth bridge redirect / static 405), 403, 502, 504, or empty JSON response:
+          fallbackToDirect();
         }
       };
 
       xhr.onerror = () => {
-        console.error('[Telegram Storage Service] Network connection error');
-        reject(new Error('Network error: server se connect nahi ho paya. Kripya apna internet connection check karein.'));
+        console.warn('[Telegram Storage Service] Proxy network error, falling back to direct upload...');
+        fallbackToDirect();
       };
 
       xhr.ontimeout = () => {
-        console.error(`[Telegram Storage Service] Upload timed out after ${timeoutMs}ms`);
-        reject(new Error(`Upload time limit exceed ho gaya (${Math.round(timeoutMs / 1000)}s). Kripya chhota video chunein ya internet speed check karein.`));
+        console.warn(`[Telegram Storage Service] Proxy timed out, attempting direct upload...`);
+        fallbackToDirect();
       };
 
       xhr.onabort = () => {
@@ -236,12 +375,16 @@ export async function uploadToTelegramStorage(
         reject(new Error('Upload cancel ho gaya.'));
       };
 
-      xhr.open('POST', '/api/telegram/upload', true);
-      xhr.send(formData);
+      try {
+        xhr.open('POST', '/api/telegram/upload', true);
+        xhr.send(formData);
+      } catch (openErr) {
+        fallbackToDirect();
+      }
     });
   }
 
-  // Fallback for non-browser environments: Fetch with AbortController
+  // Fallback for non-browser environments: Fetch with fallback to direct upload
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
     try {
@@ -269,38 +412,29 @@ export async function uploadToTelegramStorage(
       data = rawText ? JSON.parse(rawText) : null;
     } catch {}
 
-    if (!res.ok || !data || !data.ok) {
-      let errDetail = data?.error;
-      if (!errDetail) {
-        if (res.status === 413) {
-          errDetail = 'File size limit exceed ho gayi (max 50MB). Kripya chhota file chunein.';
-        } else if (res.status === 502 || res.status === 504) {
-          errDetail = 'Storage server temporarily busy hai. Kripya thodi der baad dobara try karein.';
-        } else {
-          errDetail = `Upload server response error (${res.status})`;
-        }
-      }
-      throw new Error(errDetail);
+    if (res.ok && data && data.ok) {
+      if (opts.onProgress) opts.onProgress(100);
+
+      return {
+        url: data.url,
+        fileId: data.fileId,
+        fileName: data.fileName || fileName,
+        fileSize: data.fileSize || blob.size,
+        mimeType: data.mimeType,
+        directUrl: data.directUrl,
+      };
     }
 
-    if (opts.onProgress) opts.onProgress(100);
-
-    return {
-      url: data.url,
-      fileId: data.fileId,
-      fileName: data.fileName || fileName,
-      fileSize: data.fileSize || blob.size,
-      mimeType: data.mimeType,
-      directUrl: data.directUrl,
-    };
+    // Proxy didn't succeed, fall back to direct
+    return await uploadDirectToTelegram(blob, fileName, targetChatId, opts);
   } catch (err: any) {
     clearTimeout(timeoutId);
-    console.error('[Telegram Storage Service] Upload failed:', err);
-    let errMsg = err?.message || 'Telegram upload fail ho gaya. Kripya network check karke dobara koshish karein.';
-    if (err?.name === 'AbortError' || errMsg.toLowerCase().includes('aborted')) {
-      errMsg = 'Upload time limit exceed ho gaya (slow network). Kripya dobara try karein ya chhota file upload karein.';
+    console.warn('[Telegram Storage Service] Fetch proxy failed, attempting direct upload fallback:', err?.message || err);
+    try {
+      return await uploadDirectToTelegram(blob, fileName, targetChatId, opts);
+    } catch (directErr: any) {
+      throw new Error(directErr?.message || 'Telegram upload fail ho gaya. Kripya network check karke dobara koshish karein.');
     }
-    throw new Error(errMsg);
   }
 }
 

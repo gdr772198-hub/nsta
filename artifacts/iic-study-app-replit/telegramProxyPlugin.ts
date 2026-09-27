@@ -107,7 +107,13 @@ export async function handleTelegramMiddleware(
   }
 
   // 2. Upload: POST /api/telegram/upload
-  if (pathname === '/api/telegram/upload' && req.method === 'POST') {
+  if (pathname === '/api/telegram/upload' || pathname === '/api/telegram/upload/') {
+    if (req.method !== 'POST') {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ ok: true, message: 'NSTA Telegram Storage Upload endpoint active (use POST multipart/form-data)' }));
+      return;
+    }
     try {
       const contentType = req.headers['content-type'] || '';
       let targetChatId = defaultChatId;
@@ -288,7 +294,7 @@ export async function handleTelegramMiddleware(
   }
 
   // 3. File Proxy: GET / HEAD /api/telegram/file
-  if (pathname === '/api/telegram/file' && (req.method === 'GET' || req.method === 'HEAD')) {
+  if ((pathname === '/api/telegram/file' || pathname === '/api/telegram/file/') && (req.method === 'GET' || req.method === 'HEAD')) {
     try {
       let filePath = parsedUrl.searchParams.get('path') || '';
       const fileId = parsedUrl.searchParams.get('file_id') || '';
