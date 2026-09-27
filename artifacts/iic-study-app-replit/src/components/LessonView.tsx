@@ -8,6 +8,9 @@ import { ArrowLeft, Clock, AlertTriangle, ExternalLink, CheckCircle, XCircle, Tr
 import { CustomConfirm, CustomAlert } from './CustomDialogs';
 import { CreditConfirmationModal } from './CreditConfirmationModal';
 import { CustomPlayer } from './CustomPlayer';
+import { ModernVideoPlayer } from './ModernVideoPlayer';
+import { ModernAudioPlayer } from './ModernAudioPlayer';
+import { ModernPdfViewer } from './ModernPdfViewer';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { decodeHtml } from '../utils/htmlDecoder';
@@ -949,8 +952,10 @@ export const LessonView: React.FC<Props> = ({
 
   // FLOATING IMMERSIVE BUTTON — always rendered via portal into document.body
   // so it escapes any fixed/overflow parent stacking context.
+  // Note: Disabled when viewing MCQ content as per user requirement.
+  const isMcqContent = (content.type === 'MCQ_ANALYSIS' || content.type === 'MCQ_SIMPLE' || content.type === 'MCQ_RESULT') || (Boolean(content.mcqData) && (content.mcqData?.length || 0) > 0 && content.type?.includes('MCQ'));
   const fabBottom = isImmersive ? 16 : 80;
-  const floatingBtn = createPortal(
+  const floatingBtn = isMcqContent ? null : createPortal(
     <>
       {/* Backdrop — close menu on outside tap (not in schoolMode) */}
       {fabOpen && !schoolMode && (
@@ -1593,81 +1598,51 @@ export const LessonView: React.FC<Props> = ({
 
       if (isGoogleDriveAudio) {
           return (
-              <div
-                className="fixed inset-0 z-50 bg-black flex flex-col"
-                onClick={() => setIsImmersive(v => !v)}
-              >
-                  {/* ── Floating gradient header (overlays video, no layout impact) ── */}
-                  <header
-                    className="absolute top-0 left-0 right-0 z-30 transition-all duration-300"
-                    style={{
-                      background: 'linear-gradient(to bottom, rgba(0,0,0,0.90) 0%, rgba(0,0,0,0.45) 65%, transparent 100%)',
-                      opacity: isImmersive ? 0 : 1,
-                      pointerEvents: isImmersive ? 'none' : 'auto',
-                      paddingBottom: 32,
-                    }}
-                    onClick={e => e.stopPropagation()}
-                  >
-                    <div className="flex items-center gap-2 px-3 pt-3 pb-1">
-                      <button
-                        onClick={handleBack}
-                        className="p-2 rounded-full active:scale-90 transition-transform"
-                        style={{ background: 'rgba(255,255,255,0.12)' }}
-                      >
-                        <ArrowLeft size={18} color="#fff" />
-                      </button>
-                      <div className="flex-1 min-w-0 mx-1">
-                        <h2 className="font-bold text-white text-[13px] leading-snug truncate">{content.title}</h2>
-                        <p className="text-[9px] font-semibold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.38)' }}>Tap screen to hide controls</p>
-                      </div>
-                      {/* Live session score chip */}
-                      {mediaScoreState && (
-                        <div className="relative shrink-0" style={{ zIndex: 50 }}>
-                          <span
-                            onClick={() => { setVideoScoreTooltip(true); setTimeout(() => setVideoScoreTooltip(false), 2500); }}
-                            style={{ fontSize: '10px', fontWeight: 900, color: '#4ade80', background: 'rgba(34,197,94,0.18)', border: '1px solid rgba(34,197,94,0.35)', borderRadius: 99, padding: '2px 8px', letterSpacing: '0.02em', cursor: 'pointer', display: 'block' }}>
-                            📖 {mediaScoreState.totalSessionScore}
-                          </span>
-                          {videoScoreTooltip && (
-                            <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 6, background: 'linear-gradient(135deg,#eef2ff,#f5f3ff)', borderTop: '2px solid #6366f1', border: '1.5px solid rgba(99,102,241,0.2)', borderTopWidth: 2, borderTopColor: '#6366f1', borderRadius: 12, padding: '7px 12px', whiteSpace: 'nowrap', zIndex: 100, boxShadow: '0 4px 20px rgba(99,102,241,0.15), inset 0 -1px 0 #c7d2fe', animation: 'rshud-slide 0.18s ease', display: 'flex', alignItems: 'center', gap: 8, minWidth: 260 }}>
-                              <span style={{ fontSize: 14, flexShrink: 0 }}>🎬</span>
-                              <span style={{ fontSize: 10, fontWeight: 900, color: '#6366f1', textTransform: 'uppercase', letterSpacing: '0.06em', flexShrink: 0 }}>Video Score</span>
-                              <div style={{ width: 1, height: 14, background: '#e2e8f0', flexShrink: 0 }} />
-                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
-                                <span style={{ fontSize: 7, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Score</span>
-                                <span style={{ fontSize: 13, fontWeight: 900, color: '#6366f1', lineHeight: 1.2 }}>+{mediaScoreState.totalSessionScore}</span>
-                              </div>
-                              <div style={{ width: 1, height: 14, background: '#e2e8f0', flexShrink: 0 }} />
-                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
-                                <span style={{ fontSize: 7, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Progress</span>
-                                <span style={{ fontSize: 13, fontWeight: 900, color: '#16a34a', lineHeight: 1.2 }}>{Math.round(mediaScoreState.progressPercent ?? 0)}%</span>
-                              </div>
-                              <div style={{ width: 1, height: 14, background: '#e2e8f0', flexShrink: 0 }} />
-                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
-                                <span style={{ fontSize: 7, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Next</span>
-                                <span style={{ fontSize: 11, fontWeight: 900, color: mediaScoreState.isPaused ? '#ef4444' : '#f59e0b', lineHeight: 1.2 }}>
-                                  {mediaScoreState.isPaused ? 'Paused' : `+5 in ${mediaScoreState.nextRewardInSec ?? 30}s`}
-                                </span>
-                              </div>
-                              <div style={{ flex: 1 }} />
-                              <button onClick={() => setVideoScoreTooltip(false)} style={{ background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '50%', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: 11, fontWeight: 900, cursor: 'pointer', flexShrink: 0, padding: 0 }}>✕</button>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      <button
-                        onClick={handleBack}
-                        className="p-2 rounded-full active:scale-90 transition-transform"
-                        style={{ background: 'rgba(255,255,255,0.12)' }}
-                      >
-                        <X size={18} color="#fff" />
-                      </button>
-                    </div>
-                  </header>
+              <div className="fixed inset-0 z-50 bg-slate-950 flex flex-col p-4 items-center justify-center">
+                  <div className="w-full max-w-xl">
+                      <ModernAudioPlayer
+                          audioUrl={contentValue}
+                          title={content.title}
+                          subtitle={chapter?.name || subject?.name}
+                          mediaId={`lesson_aud_${content?.id || content?.title}`}
+                          appLogo={settings?.appLogo}
+                          appName={settings?.appShortName || 'NSTA'}
+                          user={user}
+                          isAdmin={isAdmin}
+                          onBack={handleBack}
+                      />
+                  </div>
+                  {floatingBtn}
+              </div>
+          );
+      }
 
-                  {/* ── Video fills FULL screen (no aspect-ratio, no padding) ── */}
-                  <div className="flex-1 relative" onClick={e => e.stopPropagation()}>
-                    <CustomPlayer videoUrl={contentValue} onNext={onNext} nextTitle={nextTitle} badgePos={settings?.iicNstaBadgePos} badgeLabel={settings?.playerBadgeLabel} fsButtonLabel={settings?.playerFsButtonLabel} isAdmin={isAdmin} hideYtLogoBlocker={settings?.hideYtLogoBlocker} />
+      const isVideo = isUrl && (
+          content.type === 'VIDEO' ||
+          contentValue.includes('youtube.com') ||
+          contentValue.includes('youtu.be') ||
+          contentValue.endsWith('.mp4') ||
+          contentValue.includes('cloudinary.com')
+      );
+
+      if (isVideo) {
+          return (
+              <div className="fixed inset-0 z-50 bg-black flex flex-col">
+                  {/* ── Modern Video Player with Watermark, Quality Selector & In-App Offline Download ── */}
+                  <div className="flex-1 relative flex flex-col justify-center bg-black" onClick={e => e.stopPropagation()}>
+                    <ModernVideoPlayer
+                      videoUrl={contentValue}
+                      title={content.title}
+                      mediaId={`lesson_vid_${content?.id || content?.title}`}
+                      subject={chapter?.name || subject?.name}
+                      appLogo={settings?.appLogo}
+                      appName={settings?.appShortName || 'NSTA'}
+                      user={user}
+                      isAdmin={isAdmin}
+                      onBack={handleBack}
+                      onNext={onNext}
+                      nextTitle={nextTitle}
+                    />
                   </div>
 
                   {/* ── Media score HUD ── */}
@@ -3688,7 +3663,6 @@ export const LessonView: React.FC<Props> = ({
                     </div>
                 </div>
 
-               {floatingBtn}
                <DownloadOptionsModal
                    isOpen={downloadModalOpen}
                    onClose={() => setDownloadModalOpen(false)}

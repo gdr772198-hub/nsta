@@ -40,6 +40,7 @@ interface Props {
   onBack: () => void;
   onUpdateUser?: (u: User) => void;
   onSessionCreditsEarned?: (credits: number) => void;
+  onModeChange?: (mode: MathMode) => void;
 }
 
 export const MathLessonViewer: React.FC<Props> = ({
@@ -54,6 +55,7 @@ export const MathLessonViewer: React.FC<Props> = ({
   onBack,
   onUpdateUser,
   onSessionCreditsEarned,
+  onModeChange,
 }) => {
   // Extract pages safely
   const bookPages: MathImagePage[] = content.mathBookPages || [];
@@ -114,6 +116,10 @@ export const MathLessonViewer: React.FC<Props> = ({
       setActiveMode(availableModes[0].id);
     }
   }, [availableModes, activeMode]);
+
+  useEffect(() => {
+    onModeChange?.(activeMode);
+  }, [activeMode, onModeChange]);
 
   // Reading view type: 'SCROLL' (Continuous vertical roll) vs 'FLIP' (Page-by-page next/prev)
   const [viewType, setViewType] = useState<'SCROLL' | 'FLIP'>('SCROLL');
@@ -952,8 +958,8 @@ export const MathLessonViewer: React.FC<Props> = ({
         )}
       </div>
 
-      {/* Draggable Floating NSTA Logo FAB — only rendered if parent does not provide one */}
-      {!propOnToggleImmersive && (
+      {/* Draggable Floating NSTA Logo FAB — only rendered if parent does not provide one, and never in MCQ mode */}
+      {!propOnToggleImmersive && activeMode !== 'MCQ' && (
         <DraggableNstaLogoFab
           isActive={isImmersive}
           onToggle={toggleImmersive}

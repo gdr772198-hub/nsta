@@ -394,7 +394,7 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [selectedCuratedSet, setSelectedCuratedSet] = useState<string>('');
   const [lastXpOutcome, setLastXpOutcome] = useState<McqAnswerOutcome | null>(null);
   const [showXpBanner, setShowXpBanner] = useState<boolean>(false);
-  const [selectedTimerDuration, setSelectedTimerDuration] = useState<number>(20);
+  const [selectedTimerDuration, setSelectedTimerDuration] = useState<number>(30);
   const [revealSecondsLeft, setRevealSecondsLeft] = useState<number>(3);
   const [autoAdvanceEnabled, setAutoAdvanceEnabled] = useState<boolean>(true);
   const [showLiveAnswersSheet, setShowLiveAnswersSheet] = useState<boolean>(false);
@@ -2095,9 +2095,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
 
     try {
       const chosenType: StudyRoomMcqType = targetMcqType || chooserMcqType || targetRoom.mcqType || 'PROJECTOR_MODE';
-      const duration = selectedTimerDuration || (
-        chosenType === 'REVISION_HUB' ? 15 : (chosenType === 'PROJECTOR_MODE' ? 25 : 20)
-      );
+      const duration = selectedTimerDuration || 30;
       const displayTitle = `${lesson.lessonTitle} (${lesson.classLevel === 'COMPETITION' ? 'Competition' : `Class ${lesson.classLevel}`} • ${lesson.subject || 'MCQ'})`;
 
       // 2. IMMEDIATE local update: show live MCQ arena instantly!
@@ -2177,9 +2175,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
         return;
       }
 
-      const duration = selectedTimerDuration || (
-        currentRoom.mcqType === 'REVISION_HUB' ? 15 : (currentRoom.mcqType === 'PROJECTOR_MODE' ? 25 : 20)
-      );
+      const duration = selectedTimerDuration || 30;
 
       await startLiveMcqBattle(
         currentRoom.id,

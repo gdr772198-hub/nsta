@@ -43,13 +43,16 @@ import { logAdminAction } from '../utils/adminAudit';
 import { ALL_FEATURES } from '../utils/featureRegistry';
 import { HOME_SECTION_REGISTRY } from '../utils/homeSections';
 import { SPLASH_FONTS, getSplashFontById, ensureGoogleFontLoaded } from '../utils/splashFonts';
-import { getVipPlusDiamondsPerDay, getVipPlusBasePrice, getVipPlusOriginalPrice } from '../utils/vipPlusUtils';
+import { uploadToCloudinary, getOptimizedVideoUrl } from '../services/cloudinaryService';
+import { DirectUploadButton } from './DirectUploadButton';
+import { getVipPlusDiamondsPerDay, getVipPlusBasePrice, getVipPlusOriginalPrice, isVipPlusUser } from '../utils/vipPlusUtils';
 import { safeSaveUsersCache } from '../utils/safeUtils';
 import { NstaFeatureManager } from './admin/NstaFeatureManager';
 import { ReferralPrizesManager } from './admin/ReferralPrizesManager';
 import { PlanComparisonManager } from './admin/PlanComparisonManager';
 import { PedroAdminManager } from './admin/PedroAdminManager';
 import { AdminMathManager } from './AdminMathManager';
+import { AdminRoadmapManager } from './admin/AdminRoadmapManager';
 // @ts-ignore
 import JSZip from 'jszip';
 import { Document, Page, pdfjs } from 'react-pdf';
@@ -175,7 +178,8 @@ type AdminTab =
   | 'COACHING_CENTRES' // 🏫 Create/Assign/Subscription — Super Admin
   | 'COMPETITION_MCQ_MANAGER' // MCQ Practice Manager for Competition Books
   | 'MATH_MANAGER' // 📐 Math Master Manager (Book/Notes/Solution/MCQ)
-  | 'PEDRO_MANAGER'; // 🤖 Pedro AI Robot Guide Master
+  | 'PEDRO_MANAGER' // 🤖 Pedro AI Robot Guide Master
+  | 'ROADMAP_MANAGER'; // 🗺️ Cloudinary Video Teaser & Level Roadmap Manager
 
 interface ContentConfig {
     freeLink?: string;
@@ -1002,6 +1006,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
   const [showAddBookUI, setShowAddBookUI] = useState(false);
   const [newBookInput, setNewBookInput] = useState('');
   const [expandedLucentPage, setExpandedLucentPage] = useState<Record<string, boolean>>({});
+  const [isUploadingSplashVideo, setIsUploadingSplashVideo] = useState(false);
+  const [splashVideoUploadProgress, setSplashVideoUploadProgress] = useState(0);
 
   // Normalize common Hindi / shorthand MCQ paste formats so they parse with parseMCQText().
   // Handles: **प्रश्न:**, **प्रश्न 1: text?**, **सही उत्तर:** B) ..., **सही उत्तर: B) ...**,
@@ -1592,6 +1598,9 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
   const [giftCreditsExpiry, setGiftCreditsExpiry] = useState(30); // Days until gifted credits expire
   const [editSubscriptionTier, setEditSubscriptionTier] = useState<'FREE' | 'WEEKLY' | 'MONTHLY' | '3_MONTHLY' | 'YEARLY' | 'LIFETIME' | 'CUSTOM'>('FREE');
   const [editSubscriptionLevel, setEditSubscriptionLevel] = useState<'BASIC' | 'ULTRA'>('BASIC');
+  const [editVipPlusTier, setEditVipPlusTier] = useState<'NONE' | 'PRO_PLUS' | 'MAX_PLUS'>('NONE');
+  const [selectedVipPlusGrantTier, setSelectedVipPlusGrantTier] = useState<'PRO_PLUS' | 'MAX_PLUS'>('PRO_PLUS');
+  const [selectedVipPlusGrantDuration, setSelectedVipPlusGrantDuration] = useState<'WEEKLY' | 'MONTHLY' | '3_MONTHLY' | 'YEARLY' | 'LIFETIME'>('MONTHLY');
   const [editSubscriptionYears, setEditSubscriptionYears] = useState(0);
   const [editSubscriptionMonths, setEditSubscriptionMonths] = useState(0);
   const [editSubscriptionDays, setEditSubscriptionDays] = useState(0);
@@ -1672,11 +1681,26 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
       return start.toISOString();
   };
 
-  const updatePriceForSelection = (tier: typeof editSubscriptionTier, level: typeof editSubscriptionLevel) => {
+  const updatePriceForSelection = (
+      tier: typeof editSubscriptionTier,
+      level: typeof editSubscriptionLevel,
+      vipPlusOverride?: 'NONE' | 'PRO_PLUS' | 'MAX_PLUS'
+  ) => {
+      const activeVipPlus = vipPlusOverride !== undefined ? vipPlusOverride : editVipPlusTier;
       if (tier !== 'FREE' && tier !== 'CUSTOM' && editingUser) {
           const tierPrices = subPrices[tier as keyof typeof subPrices];
           if (tierPrices) {
               let basePrice = tierPrices[level];
+              if (activeVipPlus === 'PRO_PLUS' || activeVipPlus === 'MAX_PLUS') {
+                  const matchedPlan = (localSettings.subscriptionPlans || []).find(
+                      (p: any) => p.id?.toUpperCase() === tier || (tier === 'WEEKLY' && p.duration?.toLowerCase().includes('week')) || (tier === 'MONTHLY' && p.duration?.toLowerCase().includes('month') && !p.duration?.toLowerCase().includes('3')) || (tier === '3_MONTHLY' && (p.duration?.toLowerCase().includes('3') || p.duration?.toLowerCase().includes('quarter'))) || (tier === 'YEARLY' && p.duration?.toLowerCase().includes('year'))
+                  );
+                  if (matchedPlan) {
+                      basePrice = getVipPlusBasePrice(matchedPlan, activeVipPlus);
+                  } else {
+                      basePrice = Math.round(tierPrices[activeVipPlus === 'MAX_PLUS' ? 'ULTRA' : 'BASIC'] * 1.5);
+                  }
+              }
 
               // Apply Event Discount + Renewal Bonus Logic (Consistent with Store.tsx)
               const event = localSettings.specialDiscountEvent;
@@ -2925,7 +2949,12 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
       setEditUserScore(user.totalScore || 0);
       setEditUserPass(user.password);
       setEditSubscriptionTier(user.subscriptionTier || 'FREE');
-      setEditSubscriptionLevel(user.subscriptionLevel || 'BASIC');
+      const userVipPlus = user.vipPlusTier === 'PRO_PLUS' || user.vipPlusTier === 'MAX_PLUS' ? user.vipPlusTier : 'NONE';
+      setEditVipPlusTier(userVipPlus);
+      setEditSubscriptionLevel(userVipPlus === 'MAX_PLUS' ? 'ULTRA' : userVipPlus === 'PRO_PLUS' ? 'BASIC' : (user.subscriptionLevel || 'BASIC'));
+      if (userVipPlus !== 'NONE') {
+          setSelectedVipPlusGrantTier(userVipPlus);
+      }
       
       // Default customized values based on tier
       if (user.subscriptionTier === 'WEEKLY') setEditSubscriptionDays(7);
@@ -2943,6 +2972,9 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
           const tierPrices = subPrices[user.subscriptionTier as keyof typeof subPrices];
           const level = user.subscriptionLevel || 'BASIC';
           let basePrice = tierPrices ? tierPrices[level as keyof typeof tierPrices] : 0;
+          if (userVipPlus === 'PRO_PLUS' || userVipPlus === 'MAX_PLUS') {
+              basePrice = Math.round((tierPrices ? tierPrices[userVipPlus === 'MAX_PLUS' ? 'ULTRA' : 'BASIC'] : basePrice) * 1.5);
+          }
 
           // Apply Event Discount + Renewal Bonus Logic (Same as Store.tsx)
           const event = localSettings.specialDiscountEvent;
@@ -3092,13 +3124,30 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
 
       const isoEndDate = endDate ? endDate.toISOString() : (endDate === null ? undefined : undefined);
 
+      const isVipPlusGrant = editSubscriptionTier !== 'FREE' && (editVipPlusTier === 'PRO_PLUS' || editVipPlusTier === 'MAX_PLUS');
+      const finalSubLevel: 'BASIC' | 'ULTRA' = isVipPlusGrant
+          ? (editVipPlusTier === 'MAX_PLUS' ? 'ULTRA' : 'BASIC')
+          : editSubscriptionLevel;
+
+      const durationDays = endDate
+          ? Math.max(1, Math.round((endDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)))
+          : 30;
+
+      const matchedPlan = (localSettings.subscriptionPlans || []).find(
+          (p: any) => p.id?.toUpperCase() === editSubscriptionTier || (editSubscriptionTier === 'WEEKLY' && p.duration?.toLowerCase().includes('week')) || (editSubscriptionTier === 'MONTHLY' && p.duration?.toLowerCase().includes('month') && !p.duration?.toLowerCase().includes('3')) || (editSubscriptionTier === '3_MONTHLY' && (p.duration?.toLowerCase().includes('3') || p.duration?.toLowerCase().includes('quarter'))) || (editSubscriptionTier === 'YEARLY' && p.duration?.toLowerCase().includes('year'))
+      ) || { duration: editSubscriptionTier === 'WEEKLY' ? '7 days' : editSubscriptionTier === '3_MONTHLY' ? '3 months' : editSubscriptionTier === 'YEARLY' || editSubscriptionTier === 'LIFETIME' ? '365 days' : '30 days' };
+
+      const vipPlusDailyDia = isVipPlusGrant
+          ? getVipPlusDiamondsPerDay(matchedPlan, editVipPlusTier as 'PRO_PLUS' | 'MAX_PLUS')
+          : undefined;
+
       // RECORD HISTORY
       let newHistory = editingUser.subscriptionHistory || [];
       if (editSubscriptionTier !== 'FREE') {
           const historyEntry: SubscriptionHistoryEntry = {
               id: `hist-${Date.now()}`,
               tier: editSubscriptionTier,
-              level: editSubscriptionLevel,
+              level: finalSubLevel,
               startDate: now.toISOString(),
               endDate: isoEndDate || 'LIFETIME',
               durationHours: endDate ? Math.round((endDate.getTime() - now.getTime()) / (1000 * 60 * 60)) : 999999,
@@ -3112,6 +3161,21 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
           newHistory = [historyEntry, ...newHistory];
       }
 
+      const vipDiamondSub = isVipPlusGrant && vipPlusDailyDia
+          ? {
+              planId: `vipplus_${editVipPlusTier.toLowerCase()}_${Date.now()}`,
+              planName: `${editSubscriptionTier} (${editVipPlusTier === 'MAX_PLUS' ? 'MAX+' : 'PRO+'})`,
+              dailyDiamonds: vipPlusDailyDia,
+              totalDays: durationDays,
+              startDate: now.toISOString(),
+              endDate: isoEndDate || new Date(now.getTime() + durationDays * 86400000).toISOString(),
+              totalClaimedDays: 0,
+              totalDiamondsClaimed: 0,
+              pricePaid: mode === 'PAID' ? editSubscriptionPrice : 0,
+              status: 'ACTIVE' as const,
+          }
+          : editingUser.diamondSubscription;
+
       const updatedUser: User = { 
           ...editingUser, 
           credits: editUserCredits,
@@ -3119,7 +3183,10 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
           totalScore: editUserScore,
           password: editUserPass,
           subscriptionTier: editSubscriptionTier,
-          subscriptionLevel: editSubscriptionLevel,
+          subscriptionLevel: finalSubLevel,
+          vipPlusTier: isVipPlusGrant ? (editVipPlusTier as 'PRO_PLUS' | 'MAX_PLUS') : undefined,
+          dailyVipDiamonds: isVipPlusGrant ? vipPlusDailyDia : undefined,
+          diamondSubscription: vipDiamondSub,
           subscriptionEndDate: isoEndDate,
           subscriptionPrice: editSubscriptionPrice,
           grantedByAdmin: mode === 'FREE',
@@ -3144,7 +3211,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
       safeSaveUsersCache(updatedList);
 
       setEditingUser(null);
-      alert(`✅ ${editingUser.name} subscription updated! (${mode} Grant)`);
+      const planDesc = isVipPlusGrant ? `${editSubscriptionTier} ${editVipPlusTier === 'MAX_PLUS' ? 'MAX+ (VIP+)' : 'PRO+ (VIP+)'}` : `${editSubscriptionTier} ${finalSubLevel}`;
+      alert(`✅ ${editingUser.name} subscription updated to ${planDesc}! (${mode} Grant)`);
   };
 
   const sendDirectMessage = async () => {
@@ -4990,11 +5058,18 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                           {currentUser?.role === 'ADMIN' && (
                               <button
                                   onClick={() => setActiveTab('COACHING_CENTRES')}
-                                  className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-[10px] uppercase tracking-widest font-black text-white bg-gradient-to-b from-violet-600 to-violet-700 shadow-md shadow-violet-600/25 hover:from-violet-500 hover:to-violet-600 transition-all"
+                                  className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-[10px] uppercase tracking-widest font-black text-white bg-gradient-to-b from-violet-600 to-violet-700 shadow-md shadow-violet-600/25 hover:from-violet-500 hover:to-violet-600 transition-all cursor-pointer"
                               >
                                   <Building2 size={14} /> Coaching Super Admin
                               </button>
                           )}
+
+                          <button
+                              onClick={() => setActiveTab('ROADMAP_MANAGER')}
+                              className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-[10px] uppercase tracking-widest font-black text-slate-950 bg-gradient-to-b from-amber-400 to-yellow-500 shadow-md shadow-amber-500/25 hover:from-amber-300 hover:to-yellow-400 transition-all cursor-pointer"
+                          >
+                              <Trophy size={14} /> Roadmap Media &amp; HTML/CSS Studio
+                          </button>
                       </div>
                   </div>
               </div>
@@ -6295,17 +6370,22 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                   <Trash2 size={16} />
                                               </button>
                                           </div>
-                                          <input
-                                              type="text"
-                                              value={vid.url}
-                                              onChange={(e) => {
-                                                  const updated = [...premiumVideoPlaylist];
-                                                  updated[idx].url = e.target.value;
-                                                  setPremiumVideoPlaylist(updated);
-                                              }}
-                                              placeholder="Google Drive Link / YouTube URL"
-                                              className="w-full p-2 border border-slate-200 rounded text-xs font-mono text-blue-600 bg-white ml-8"
-                                          />
+                                          <div className="ml-8 space-y-1.5">
+
+                                              <DirectUploadButton
+                                                  kind="video"
+                                                  compact
+                                                  currentUrl={vid.url}
+                                                  onUploaded={(url, file) => {
+                                                      const updated = [...premiumVideoPlaylist];
+                                                      updated[idx].url = url;
+                                                      if (!updated[idx].title) {
+                                                          updated[idx].title = file.name.replace(/\.[^/.]+$/, '');
+                                                      }
+                                                      setPremiumVideoPlaylist(updated);
+                                                  }}
+                                              />
+                                          </div>
                                       </div>
                                   ))}
                               </div>
@@ -6448,16 +6528,19 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                   className="w-full p-2 border border-slate-200 rounded text-xs font-mono text-slate-600 bg-white ml-8 h-20"
                                               />
                                           ) : (
-                                              <input
-                                                  type="text"
-                                                  value={note.url}
-                                                  onChange={(e) => {
-                                                      const updated = universalNotes.map(n => n === note ? { ...n, url: e.target.value } : n);
-                                                      setUniversalNotes(updated);
-                                                  }}
-                                                  placeholder="PDF URL"
-                                                  className="w-full p-2 border border-slate-200 rounded text-xs font-mono text-blue-600 bg-white ml-8"
-                                              />
+                                              <div className="ml-8 space-y-1.5">
+
+                                                  <DirectUploadButton
+                                                      kind="pdf"
+                                                      compact
+                                                      currentUrl={note.url}
+                                                      onUploaded={(url, file) => {
+                                                          const autoTitle = note.title || file.name.replace(/\.[^/.]+$/, '');
+                                                          const updated = universalNotes.map(n => n === note ? { ...n, url, title: autoTitle, topic: autoTitle } : n);
+                                                          setUniversalNotes(updated);
+                                                      }}
+                                                  />
+                                              </div>
                                           )}
                                       </div>
                                   ))}
@@ -6522,11 +6605,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                       <button
                           onClick={() => {
                               // Manual Add (Legacy / Global)
-                              const title = prompt("Note Title");
-                              if(!title) return;
-                              const url = prompt("PDF URL");
-                              if(!url) return;
-                              setUniversalNotes([...universalNotes, { title, url, access: 'FREE' }]);
+                              const title = "Note " + (universalNotes.length + 1);
+                              setUniversalNotes([...universalNotes, { title, url: '', access: 'FREE' }]);
                           }}
                           className="flex-1 py-3 bg-white border border-blue-200 text-blue-600 font-bold rounded-xl hover:bg-blue-50 transition dashed"
                       >
@@ -7553,10 +7633,18 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                   <label className="text-[10px] font-bold text-slate-600 uppercase">Click URL (External Link)</label>
                                   <input type="url" value={localSettings.bannerConfig?.top?.clickUrl || ''} onChange={e => setLocalSettings({ ...localSettings, bannerConfig: { ...(localSettings.bannerConfig || {} as any), top: { ...(localSettings.bannerConfig?.top || {} as any), clickUrl: e.target.value } } })} className="w-full p-2 rounded-lg border border-red-200 text-sm text-slate-700" placeholder="https://..." />
                               </div>
-                              <div>
-                                  <label className="text-[10px] font-bold text-red-700 uppercase flex items-center gap-1">🔴 YouTube Live URL (App Player)</label>
-                                  <input type="url" value={localSettings.bannerConfig?.top?.liveVideoUrl || ''} onChange={e => setLocalSettings({ ...localSettings, bannerConfig: { ...(localSettings.bannerConfig || {} as any), top: { ...(localSettings.bannerConfig?.top || {} as any), liveVideoUrl: e.target.value } } })} className="w-full p-2 rounded-lg border border-red-300 text-sm text-slate-700" placeholder="https://youtube.com/live/..." />
-                                  <p className="text-[9px] text-red-400 mt-0.5">Set karne par banner tap karne se app ke video player mein live class khulegi.</p>
+                              <div className="space-y-1.5">
+                                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                                      <label className="text-[10px] font-bold text-red-700 uppercase flex items-center gap-1">🔴 Live / Video URL (App Player)</label>
+                                      <DirectUploadButton
+                                          kind="video"
+                                          compact
+                                          currentUrl={localSettings.bannerConfig?.top?.liveVideoUrl}
+                                          onUploaded={(url) => setLocalSettings({ ...localSettings, bannerConfig: { ...(localSettings.bannerConfig || {} as any), top: { ...(localSettings.bannerConfig?.top || {} as any), liveVideoUrl: url } } })}
+                                      />
+                                  </div>
+
+                                  <p className="text-[9px] text-red-400 mt-0.5">Set karne par banner tap karne se app ke video player mein video/live class khulegi.</p>
                               </div>
                           </div>
                       </div>
@@ -7594,10 +7682,18 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                   <label className="text-[10px] font-bold text-slate-600 uppercase">Click URL (External Link)</label>
                                   <input type="url" value={localSettings.bannerConfig?.bottom?.clickUrl || ''} onChange={e => setLocalSettings({ ...localSettings, bannerConfig: { ...(localSettings.bannerConfig || {} as any), bottom: { ...(localSettings.bannerConfig?.bottom || {} as any), clickUrl: e.target.value } } })} className="w-full p-2 rounded-lg border border-blue-200 text-sm text-slate-700" placeholder="https://..." />
                               </div>
-                              <div>
-                                  <label className="text-[10px] font-bold text-red-700 uppercase flex items-center gap-1">🔴 YouTube Live URL (App Player)</label>
-                                  <input type="url" value={localSettings.bannerConfig?.bottom?.liveVideoUrl || ''} onChange={e => setLocalSettings({ ...localSettings, bannerConfig: { ...(localSettings.bannerConfig || {} as any), bottom: { ...(localSettings.bannerConfig?.bottom || {} as any), liveVideoUrl: e.target.value } } })} className="w-full p-2 rounded-lg border border-red-300 text-sm text-slate-700" placeholder="https://youtube.com/live/..." />
-                                  <p className="text-[9px] text-red-400 mt-0.5">Set karne par banner tap karne se app ke video player mein live class khulegi.</p>
+                              <div className="space-y-1.5">
+                                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                                      <label className="text-[10px] font-bold text-red-700 uppercase flex items-center gap-1">🔴 Live / Video URL (App Player)</label>
+                                      <DirectUploadButton
+                                          kind="video"
+                                          compact
+                                          currentUrl={localSettings.bannerConfig?.bottom?.liveVideoUrl}
+                                          onUploaded={(url) => setLocalSettings({ ...localSettings, bannerConfig: { ...(localSettings.bannerConfig || {} as any), bottom: { ...(localSettings.bannerConfig?.bottom || {} as any), liveVideoUrl: url } } })}
+                                      />
+                                  </div>
+
+                                  <p className="text-[9px] text-red-400 mt-0.5">Set karne par banner tap karne se app ke video player mein video/live class khulegi.</p>
                               </div>
                           </div>
                           <p className="text-[10px] text-blue-400 mt-2">* Auto-Hide 0 = hamesha dikhega. Click URL set karne par banner tap karke link khulega.</p>
@@ -8317,6 +8413,165 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                               <p className="text-[10px] text-cyan-700 mt-2 leading-snug">
                                   💡 Tip: PNG transparent background ke saath best dikhta hai. Max 1 MB. Changes "Save Settings" press karne ke baad apply honge.
                               </p>
+                          </div>
+
+                          {/* ============================================ */}
+                          {/* SPLASH / LOADING SCREEN VIDEO (CLOUDINARY)   */}
+                          {/* ============================================ */}
+                          <div className="bg-gradient-to-br from-sky-50 to-indigo-50 border border-sky-200 rounded-xl p-3">
+                              <div className="flex items-center justify-between mb-2">
+                                  <label className="text-xs font-bold uppercase text-sky-800 flex items-center gap-1.5">
+                                      <Video size={14} className="text-sky-600" />
+                                      <span>🎬 Loading Screen Video (Cloudinary)</span>
+                                  </label>
+                                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${
+                                      localSettings.loadingScreenVideoEnabled !== false && localSettings.loadingScreenVideoUrl
+                                          ? 'text-emerald-800 bg-emerald-50 border-emerald-200'
+                                          : 'text-slate-500 bg-slate-100 border-slate-200'
+                                  }`}>
+                                      {localSettings.loadingScreenVideoEnabled !== false && localSettings.loadingScreenVideoUrl ? 'Video ON' : 'Video OFF'}
+                                  </span>
+                              </div>
+                              <p className="text-[10px] font-bold text-sky-700 mb-3">
+                                  App khulne par Loading Screen me video chalayein. Aap Gallery se direct video upload (Cloudinary) kar sakte hain ya video link paste kar sakte hain.
+                              </p>
+
+                              {/* ON/OFF TOGGLE + PREVIEW */}
+                              <div className="flex items-center justify-between bg-white rounded-xl p-3 border border-sky-100 mb-3">
+                                  <div>
+                                      <p className="font-bold text-slate-800 text-xs">Enable Loading Screen Video</p>
+                                      <p className="text-[10px] text-slate-500">ON rehne par loading screen me video chalega.</p>
+                                  </div>
+                                  <input
+                                      type="checkbox"
+                                      checked={localSettings.loadingScreenVideoEnabled !== false}
+                                      onChange={() => {
+                                          const next = !(localSettings.loadingScreenVideoEnabled !== false);
+                                          setLocalSettings({ ...localSettings, loadingScreenVideoEnabled: next });
+                                          try { localStorage.setItem('nst_loading_screen_video_enabled', String(next)); } catch {}
+                                      }}
+                                      className="w-6 h-6 accent-sky-600 cursor-pointer shrink-0"
+                                  />
+                              </div>
+
+                              {/* VIDEO PREVIEW */}
+                              {localSettings.loadingScreenVideoUrl && (
+                                  <div className="mb-3 rounded-xl overflow-hidden bg-black border border-sky-200 relative aspect-video max-h-48 mx-auto">
+                                      <video
+                                          src={getOptimizedVideoUrl(localSettings.loadingScreenVideoUrl)}
+                                          controls
+                                          muted
+                                          playsInline
+                                          className="w-full h-full object-contain"
+                                      />
+                                  </div>
+                              )}
+
+                              {/* UPLOAD PROGRESS */}
+                              {isUploadingSplashVideo && (
+                                  <div className="mb-3 bg-white p-2.5 rounded-xl border border-sky-200">
+                                      <div className="flex justify-between text-[10px] font-black text-sky-700 mb-1">
+                                          <span>☁️ Uploading Video to Cloudinary...</span>
+                                          <span>{splashVideoUploadProgress}%</span>
+                                      </div>
+                                      <div className="w-full h-2 bg-sky-100 rounded-full overflow-hidden">
+                                          <div
+                                              className="h-full bg-gradient-to-r from-sky-500 to-indigo-600 transition-all duration-300"
+                                              style={{ width: `${splashVideoUploadProgress}%` }}
+                                          />
+                                      </div>
+                                  </div>
+                              )}
+
+                              {/* DIRECT VIDEO UPLOAD + REMOVE */}
+                              <div className="grid grid-cols-2 gap-2 mb-2.5">
+                                  <label className={`cursor-pointer ${isUploadingSplashVideo ? 'opacity-60 pointer-events-none' : ''}`}>
+                                      <input
+                                          type="file"
+                                          accept="video/*"
+                                          className="hidden"
+                                          disabled={isUploadingSplashVideo}
+                                          onChange={async (e) => {
+                                              const file = e.target.files?.[0];
+                                              if (!file) return;
+                                              setIsUploadingSplashVideo(true);
+                                              setSplashVideoUploadProgress(1);
+                                              try {
+                                                  const res = await uploadToCloudinary(file, 'video', (pct) => {
+                                                      setSplashVideoUploadProgress(pct);
+                                                  });
+                                                  const videoUrl = res.secure_url || res.url;
+                                                  const updated = {
+                                                      ...localSettings,
+                                                      loadingScreenVideoEnabled: true,
+                                                      loadingScreenVideoUrl: videoUrl,
+                                                  };
+                                                  setLocalSettings(updated);
+                                                  try {
+                                                      localStorage.setItem('nst_loading_screen_video_url', videoUrl);
+                                                      localStorage.setItem('nst_loading_screen_video_enabled', 'true');
+                                                  } catch {}
+                                                  await saveSystemSettings(updated);
+                                                  if (onUpdateSettings) onUpdateSettings(updated);
+                                                  logActivity('LOADING_VIDEO_UPLOADED', `Loading screen video uploaded to Cloudinary`);
+                                                  alert('✅ Loading Screen Video Cloudinary par upload aur save ho gaya!');
+                                              } catch (err: any) {
+                                                  alert('❌ Video upload fail ho gaya: ' + (err?.message || 'Unknown error'));
+                                              } finally {
+                                                  setIsUploadingSplashVideo(false);
+                                                  setSplashVideoUploadProgress(0);
+                                                  e.target.value = '';
+                                              }
+                                          }}
+                                      />
+                                      <div className="text-center text-[11px] font-black px-3 py-2.5 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 text-white hover:opacity-95 active:scale-[0.98] transition-all">
+                                          {isUploadingSplashVideo ? `⏳ Uploading ${splashVideoUploadProgress}%` : '📱 Upload Video (Gallery)'}
+                                      </div>
+                                  </label>
+                                  <button
+                                      type="button"
+                                      onClick={async () => {
+                                          const updated = {
+                                              ...localSettings,
+                                              loadingScreenVideoEnabled: false,
+                                              loadingScreenVideoUrl: '',
+                                          };
+                                          setLocalSettings(updated);
+                                          try {
+                                              localStorage.removeItem('nst_loading_screen_video_url');
+                                              localStorage.setItem('nst_loading_screen_video_enabled', 'false');
+                                          } catch {}
+                                          await saveSystemSettings(updated);
+                                          if (onUpdateSettings) onUpdateSettings(updated);
+                                      }}
+                                      className="text-[11px] font-black px-3 py-2.5 rounded-xl bg-white text-rose-600 border-2 border-rose-200 hover:bg-rose-50 active:scale-[0.98] transition-all"
+                                  >
+                                      🗑️ Remove Video
+                                  </button>
+                              </div>
+
+                              {/* DIRECT VIDEO URL INPUT */}
+                              <div className="bg-white rounded-xl p-2.5 border border-sky-100">
+                                  <label className="text-[10px] font-bold text-slate-600 block mb-1">Ya Direct Video URL (Cloudinary / MP4) Paste Karein:</label>
+                                  <input
+                                      type="url"
+                                      value={localSettings.loadingScreenVideoUrl || ''}
+                                      onChange={(e) => {
+                                          const val = e.target.value;
+                                          setLocalSettings({
+                                              ...localSettings,
+                                              loadingScreenVideoUrl: val,
+                                              loadingScreenVideoEnabled: val.trim() ? true : localSettings.loadingScreenVideoEnabled,
+                                          });
+                                          try {
+                                              localStorage.setItem('nst_loading_screen_video_url', val.trim());
+                                              if (val.trim()) localStorage.setItem('nst_loading_screen_video_enabled', 'true');
+                                          } catch {}
+                                      }}
+                                      placeholder="https://res.cloudinary.com/.../video.mp4"
+                                      className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none focus:border-sky-500"
+                                  />
+                              </div>
                           </div>
 
                           {/* ── Sequential Page Reading Setting ── */}
@@ -11249,48 +11504,53 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                       <p className="text-[8px] text-slate-400 mt-0.5">Dark + Blue mode dono mein apply hoga</p>
                                                     </div>
                                                   </div>
-                                                  <div className="bg-rose-50 border border-rose-200 rounded-lg p-2">
-                                                    <label className="text-[9px] font-black text-rose-700 uppercase block mb-1">🎬 Video Link (Google Drive / YouTube)</label>
-                                                    <input
-                                                      type="url"
-                                                      value={(pg as any).videoUrl || ''}
-                                                      onChange={e => {
-                                                        const updated = [...newLucent.pages];
-                                                        updated[pgIdx] = { ...updated[pgIdx], videoUrl: e.target.value } as any;
-                                                        setNewLucent({...newLucent, pages: updated});
-                                                      }}
-                                                      className="w-full p-2 border border-rose-200 rounded text-sm outline-none focus:border-rose-500 bg-white"
-                                                      placeholder="https://drive.google.com/file/d/FILE_ID/view  ya  YouTube link"
-                                                    />
-                                                    <p className="text-[9px] text-rose-600 mt-1">💡 Google Drive link: File ko &quot;Anyone with the link&quot; share karein — student ko Gmail login nahi maangega.</p>
+                                                  <div className="bg-rose-50 border border-rose-200 rounded-lg p-2 space-y-1.5">
+                                                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                      <label className="text-[9px] font-black text-rose-700 uppercase block">🎬 Video (Direct App Upload ya Link)</label>
+                                                      <DirectUploadButton
+                                                        kind="video"
+                                                        compact
+                                                        currentUrl={(pg as any).videoUrl}
+                                                        onUploaded={(url) => {
+                                                          const updated = [...newLucent.pages];
+                                                          updated[pgIdx] = { ...updated[pgIdx], videoUrl: url } as any;
+                                                          setNewLucent({ ...newLucent, pages: updated });
+                                                        }}
+                                                      />
+                                                    </div>
+
                                                   </div>
-                                                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-2">
-                                                    <label className="text-[9px] font-black text-blue-700 uppercase block mb-1">📄 PDF Link (Google Drive)</label>
-                                                    <input
-                                                      type="url"
-                                                      value={(pg as any).pdfUrl || ''}
-                                                      onChange={e => {
-                                                        const updated = [...newLucent.pages];
-                                                        updated[pgIdx] = { ...updated[pgIdx], pdfUrl: e.target.value || undefined } as any;
-                                                        setNewLucent({...newLucent, pages: updated});
-                                                      }}
-                                                      className="w-full p-2 border border-blue-200 rounded text-sm outline-none focus:border-blue-500 bg-white"
-                                                      placeholder="https://drive.google.com/file/d/FILE_ID/view"
-                                                    />
+                                                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 space-y-1.5">
+                                                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                      <label className="text-[9px] font-black text-blue-700 uppercase block">📄 PDF (Direct App Upload ya Link)</label>
+                                                      <DirectUploadButton
+                                                        kind="pdf"
+                                                        compact
+                                                        currentUrl={(pg as any).pdfUrl}
+                                                        onUploaded={(url) => {
+                                                          const updated = [...newLucent.pages];
+                                                          updated[pgIdx] = { ...updated[pgIdx], pdfUrl: url } as any;
+                                                          setNewLucent({ ...newLucent, pages: updated });
+                                                        }}
+                                                      />
+                                                    </div>
+
                                                   </div>
-                                                  <div className="bg-purple-50 border border-purple-200 rounded-lg p-2">
-                                                    <label className="text-[9px] font-black text-purple-700 uppercase block mb-1">🎧 Audio Link</label>
-                                                    <input
-                                                      type="url"
-                                                      value={(pg as any).audioUrl || ''}
-                                                      onChange={e => {
-                                                        const updated = [...newLucent.pages];
-                                                        updated[pgIdx] = { ...updated[pgIdx], audioUrl: e.target.value || undefined } as any;
-                                                        setNewLucent({...newLucent, pages: updated});
-                                                      }}
-                                                      className="w-full p-2 border border-purple-200 rounded text-sm outline-none focus:border-purple-500 bg-white"
-                                                      placeholder="https://... audio file ya link"
-                                                    />
+                                                  <div className="bg-purple-50 border border-purple-200 rounded-lg p-2 space-y-1.5">
+                                                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                      <label className="text-[9px] font-black text-purple-700 uppercase block">🎧 Audio (Direct App Upload ya Link)</label>
+                                                      <DirectUploadButton
+                                                        kind="audio"
+                                                        compact
+                                                        currentUrl={(pg as any).audioUrl}
+                                                        onUploaded={(url) => {
+                                                          const updated = [...newLucent.pages];
+                                                          updated[pgIdx] = { ...updated[pgIdx], audioUrl: url } as any;
+                                                          setNewLucent({ ...newLucent, pages: updated });
+                                                        }}
+                                                      />
+                                                    </div>
+
                                                   </div>
                                                   <details className="text-[9px]">
                                                     <summary className="text-slate-400 cursor-pointer hover:text-slate-600">Legacy content field (purana data ke liye)</summary>
@@ -11524,18 +11784,39 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           <textarea value={newHomework.mcqText} onChange={e => setNewHomework({...newHomework, mcqText: e.target.value})} className="w-full mt-1 p-2 border border-slate-200 rounded text-sm outline-none h-20 focus:border-indigo-500" placeholder="Enter MCQ text..." />
                                       </details>
                                   </div>
-                                  <div>
-                                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Audio URL (Optional)</label>
-                                      <input type="text" value={newHomework.audioUrl} onChange={e => setNewHomework({...newHomework, audioUrl: e.target.value})} className="w-full p-2 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500" placeholder="Enter Audio Link" />
+                                  <div className="bg-purple-50/70 border border-purple-200 rounded-lg p-2.5 space-y-1.5">
+                                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                                          <label className="text-[10px] font-bold text-purple-700 uppercase block">🎧 Audio (Direct App Upload ya Link)</label>
+                                          <DirectUploadButton
+                                              kind="audio"
+                                              compact
+                                              currentUrl={newHomework.audioUrl}
+                                              onUploaded={(url) => setNewHomework({ ...newHomework, audioUrl: url })}
+                                          />
+                                      </div>
                                   </div>
-                                  <div>
-                                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Video URL (Optional)</label>
-                                      <input type="text" value={newHomework.videoUrl} onChange={e => setNewHomework({...newHomework, videoUrl: e.target.value})} className="w-full p-2 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500" placeholder="Enter Video Link" />
+                                  <div className="bg-rose-50/70 border border-rose-200 rounded-lg p-2.5 space-y-1.5">
+                                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                                          <label className="text-[10px] font-bold text-rose-700 uppercase block">🎬 Video (Direct App Upload ya Link)</label>
+                                          <DirectUploadButton
+                                              kind="video"
+                                              compact
+                                              currentUrl={newHomework.videoUrl}
+                                              onUploaded={(url) => setNewHomework({ ...newHomework, videoUrl: url })}
+                                          />
+                                      </div>
                                   </div>
-                                  <div>
-                                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">PDF URL — Google Drive Link (Optional)</label>
-                                      <input type="text" value={newHomework.pdfUrl} onChange={e => setNewHomework({...newHomework, pdfUrl: e.target.value})} className="w-full p-2 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500" placeholder="https://drive.google.com/file/d/..." />
-                                      <p className="text-[10px] text-slate-400 mt-1">Google Drive ka PDF link daalein — app ke andar khulega, download blocked rahega.</p>
+                                  <div className="bg-blue-50/70 border border-blue-200 rounded-lg p-2.5 space-y-1.5">
+                                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                                          <label className="text-[10px] font-bold text-blue-700 uppercase block">📄 PDF (Direct App Upload ya Google Drive Link)</label>
+                                          <DirectUploadButton
+                                              kind="pdf"
+                                              compact
+                                              currentUrl={newHomework.pdfUrl}
+                                              onUploaded={(url) => setNewHomework({ ...newHomework, pdfUrl: url })}
+                                          />
+                                      </div>
+                                      <p className="text-[10px] text-blue-600">Direct App se PDF upload karein ya Drive link daalein — app ke andar khulega.</p>
                                   </div>
                                   <div className="pt-2">
                                       <button onClick={() => {
@@ -11862,31 +12143,52 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                       </div>
                                                   ))}
                                               </div>
-                                              <div className="grid grid-cols-2 gap-2">
-                                                <div>
-                                                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Audio URL</label>
-                                                    <input type="text" value={hw.audioUrl || ''} onChange={e => {
-                                                        const updated = [...(localSettings.homework || [])];
-                                                        updated[i] = { ...updated[i], audioUrl: e.target.value };
-                                                        setLocalSettings({...localSettings, homework: updated});
-                                                    }} className="w-full p-2 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500 bg-slate-50" />
+                                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                                <div className="space-y-1">
+                                                    <div className="flex items-center justify-between gap-1 flex-wrap">
+                                                        <label className="text-[10px] font-bold text-slate-500 uppercase block">🎧 Audio URL / Upload</label>
+                                                        <DirectUploadButton
+                                                            kind="audio"
+                                                            compact
+                                                            currentUrl={hw.audioUrl}
+                                                            onUploaded={(url) => {
+                                                                const updated = [...(localSettings.homework || [])];
+                                                                updated[i] = { ...updated[i], audioUrl: url };
+                                                                setLocalSettings({ ...localSettings, homework: updated });
+                                                            }}
+                                                        />
+                                                    </div>
                                                 </div>
-                                                <div>
-                                                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Video URL</label>
-                                                    <input type="text" value={hw.videoUrl || ''} onChange={e => {
-                                                        const updated = [...(localSettings.homework || [])];
-                                                        updated[i] = { ...updated[i], videoUrl: e.target.value };
-                                                        setLocalSettings({...localSettings, homework: updated});
-                                                    }} className="w-full p-2 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500 bg-slate-50" />
+                                                <div className="space-y-1">
+                                                    <div className="flex items-center justify-between gap-1 flex-wrap">
+                                                        <label className="text-[10px] font-bold text-slate-500 uppercase block">🎬 Video URL / Upload</label>
+                                                        <DirectUploadButton
+                                                            kind="video"
+                                                            compact
+                                                            currentUrl={hw.videoUrl}
+                                                            onUploaded={(url) => {
+                                                                const updated = [...(localSettings.homework || [])];
+                                                                updated[i] = { ...updated[i], videoUrl: url };
+                                                                setLocalSettings({ ...localSettings, homework: updated });
+                                                            }}
+                                                        />
+                                                    </div>
                                                 </div>
                                               </div>
-                                              <div>
-                                                  <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">PDF URL (Google Drive)</label>
-                                                  <input type="text" value={hw.pdfUrl || ''} onChange={e => {
-                                                      const updated = [...(localSettings.homework || [])];
-                                                      updated[i] = { ...updated[i], pdfUrl: e.target.value || undefined };
-                                                      setLocalSettings({...localSettings, homework: updated});
-                                                  }} className="w-full p-2 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500 bg-slate-50" placeholder="https://drive.google.com/file/d/..." />
+                                              <div className="space-y-1">
+                                                  <div className="flex items-center justify-between gap-1 flex-wrap">
+                                                      <label className="text-[10px] font-bold text-slate-500 uppercase block">📄 PDF URL / Upload</label>
+                                                      <DirectUploadButton
+                                                          kind="pdf"
+                                                          compact
+                                                          currentUrl={hw.pdfUrl}
+                                                          onUploaded={(url) => {
+                                                              const updated = [...(localSettings.homework || [])];
+                                                              updated[i] = { ...updated[i], pdfUrl: url };
+                                                              setLocalSettings({ ...localSettings, homework: updated });
+                                                          }}
+                                                      />
+                                                  </div>
                                               </div>
                                           </div>
                                       </div>
@@ -13615,16 +13917,17 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                             })()}
                           </div>
 
-                          <div className="md:col-span-2">
-                              <label className="text-xs font-bold text-slate-600 uppercase block mb-1">Custom Page Video URL</label>
-                              <input
-                                  type="text"
-                                  placeholder="Paste Google Drive video URL here"
-                                  value={localSettings.customBloggerVideoUrl || ''}
-                                  onChange={(e) => setLocalSettings({...localSettings, customBloggerVideoUrl: e.target.value})}
-                                  className="w-full p-2 bg-slate-50 border rounded-lg text-sm"
-                              />
-                              <p className="text-[10px] text-slate-500 mt-1">This video will play in the Custom Page. (Google Drive link)</p>
+                          <div className="md:col-span-2 space-y-1.5">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                  <label className="text-xs font-bold text-slate-600 uppercase block">Custom Page Video (Direct Upload ya URL)</label>
+                                  <DirectUploadButton
+                                      kind="video"
+                                      compact
+                                      currentUrl={localSettings.customBloggerVideoUrl}
+                                      onUploaded={(url) => setLocalSettings({ ...localSettings, customBloggerVideoUrl: url })}
+                                  />
+                              </div>
+                              <p className="text-[10px] text-slate-500">This video will play in the Custom Page.</p>
                           </div>
                       </div>
                   </div>
@@ -15749,13 +16052,38 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           value={newBookNoteMcqs}
                                           onChange={setNewBookNoteMcqs}
                                       />
-                                      <div>
-                                          <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">🎬 Video URL (Optional)</label>
-                                          <input type="text" value={newBookNote.videoUrl} onChange={e => setNewBookNote({...newBookNote, videoUrl: e.target.value})} className="w-full p-2 border border-slate-200 rounded text-sm outline-none focus:border-amber-500" placeholder="Video link" />
+                                      <div className="bg-rose-50/70 border border-rose-200 rounded-lg p-2.5 space-y-1.5">
+                                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                                              <label className="text-[10px] font-bold text-rose-700 uppercase block">🎬 Video (Direct App Upload ya Link)</label>
+                                              <DirectUploadButton
+                                                  kind="video"
+                                                  compact
+                                                  currentUrl={newBookNote.videoUrl}
+                                                  onUploaded={(url) => setNewBookNote({ ...newBookNote, videoUrl: url })}
+                                              />
+                                          </div>
                                       </div>
-                                      <div>
-                                          <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">🎙️ Audio URL (Optional)</label>
-                                          <input type="text" value={newBookNote.audioUrl} onChange={e => setNewBookNote({...newBookNote, audioUrl: e.target.value})} className="w-full p-2 border border-slate-200 rounded text-sm outline-none focus:border-amber-500" placeholder="Audio link" />
+                                      <div className="bg-purple-50/70 border border-purple-200 rounded-lg p-2.5 space-y-1.5">
+                                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                                              <label className="text-[10px] font-bold text-purple-700 uppercase block">🎙️ Audio (Direct App Upload ya Link)</label>
+                                              <DirectUploadButton
+                                                  kind="audio"
+                                                  compact
+                                                  currentUrl={newBookNote.audioUrl}
+                                                  onUploaded={(url) => setNewBookNote({ ...newBookNote, audioUrl: url })}
+                                              />
+                                          </div>
+                                      </div>
+                                      <div className="bg-blue-50/70 border border-blue-200 rounded-lg p-2.5 space-y-1.5">
+                                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                                              <label className="text-[10px] font-bold text-blue-700 uppercase block">📄 PDF (Direct App Upload ya Link)</label>
+                                              <DirectUploadButton
+                                                  kind="pdf"
+                                                  compact
+                                                  currentUrl={newBookNote.pdfUrl}
+                                                  onUploaded={(url) => setNewBookNote({ ...newBookNote, pdfUrl: url })}
+                                              />
+                                          </div>
                                       </div>
                                       <button onClick={() => {
                                           const pg = newBookNote.pageNo.trim();
@@ -15783,6 +16111,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                               parsedMcqs: structuredMcqs,
                                               audioUrl: newBookNote.audioUrl,
                                               videoUrl: newBookNote.videoUrl,
+                                              pdfUrl: newBookNote.pdfUrl || undefined,
                                               targetSubject: newBookNote.targetSubject,
                                               pageNo: pg,
                                               board: newBookNote.board || undefined,
@@ -16257,7 +16586,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           mcqText: hw.mcqText || '',
                                           audioUrl: hw.audioUrl || '',
                                           videoUrl: hw.videoUrl || '',
-                                          pdfUrl: '',
+                                          pdfUrl: (hw as any).pdfUrl || '',
                                           targetSubject: hw.targetSubject || 'sarSangrah',
                                           pageNo: (hw as any).pageNo || '',
                                           topicName: '',
@@ -16530,21 +16859,54 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           <textarea value={pg.htmlNotes || ''} onChange={e => { const u=[...newLucent.pages]; u[pgIdx]={...u[pgIdx], htmlNotes: e.target.value}; setNewLucent({...newLucent, pages: u}); }} className="w-full p-2 border border-teal-200 rounded text-sm outline-none min-h-[110px] resize-y focus:border-teal-500 bg-white font-mono" placeholder="<h2>Topic</h2><p>HTML formatted notes — bold, tables, colors sab supported hai.</p>" />
                                       </div>
                                       {/* Media Links */}
-                                      <div className="bg-rose-50 border border-rose-200 rounded-lg p-2 space-y-2">
-                                          <p className="text-[9px] font-black text-rose-700 uppercase">🎬 Media Links (Google Drive ya YouTube)</p>
-                                          <div>
-                                              <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">▶ Video URL</label>
-                                              <input type="url" value={(pg as any).videoUrl || ''} onChange={e => { const u=[...newLucent.pages]; u[pgIdx]={...u[pgIdx], videoUrl: e.target.value}; setNewLucent({...newLucent, pages: u}); }} className="w-full p-1.5 border border-rose-200 rounded text-xs outline-none focus:border-rose-500 bg-white" placeholder="https://drive.google.com/file/d/... ya YouTube link" />
+                                      <div className="bg-rose-50 border border-rose-200 rounded-lg p-2.5 space-y-2.5">
+                                          <p className="text-[9px] font-black text-rose-700 uppercase">🎬 Media (Direct App se Upload karein ya Link daalein)</p>
+                                          <div className="space-y-1">
+                                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                  <label className="text-[9px] font-bold text-slate-600 uppercase block">▶ Video (App Upload ya Link)</label>
+                                                  <DirectUploadButton
+                                                      kind="video"
+                                                      compact
+                                                      currentUrl={(pg as any).videoUrl}
+                                                      onUploaded={(url) => {
+                                                          const u = [...newLucent.pages];
+                                                          u[pgIdx] = { ...u[pgIdx], videoUrl: url } as any;
+                                                          setNewLucent({ ...newLucent, pages: u });
+                                                      }}
+                                                  />
+                                              </div>
                                           </div>
-                                          <div>
-                                              <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">🎵 Audio URL</label>
-                                              <input type="url" value={(pg as any).audioUrl || ''} onChange={e => { const u=[...newLucent.pages]; u[pgIdx]={...u[pgIdx], audioUrl: e.target.value}; setNewLucent({...newLucent, pages: u}); }} className="w-full p-1.5 border border-rose-200 rounded text-xs outline-none focus:border-rose-500 bg-white" placeholder="https://drive.google.com/file/d/... (audio file)" />
+                                          <div className="space-y-1">
+                                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                  <label className="text-[9px] font-bold text-slate-600 uppercase block">🎵 Audio (App Upload ya Link)</label>
+                                                  <DirectUploadButton
+                                                      kind="audio"
+                                                      compact
+                                                      currentUrl={(pg as any).audioUrl}
+                                                      onUploaded={(url) => {
+                                                          const u = [...newLucent.pages];
+                                                          u[pgIdx] = { ...u[pgIdx], audioUrl: url } as any;
+                                                          setNewLucent({ ...newLucent, pages: u });
+                                                      }}
+                                                  />
+                                              </div>
                                           </div>
-                                          <div>
-                                              <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">📄 PDF URL</label>
-                                              <input type="url" value={(pg as any).pdfUrl || ''} onChange={e => { const u=[...newLucent.pages]; u[pgIdx]={...u[pgIdx], pdfUrl: e.target.value}; setNewLucent({...newLucent, pages: u}); }} className="w-full p-1.5 border border-rose-200 rounded text-xs outline-none focus:border-rose-500 bg-white" placeholder="https://drive.google.com/file/d/... (PDF file)" />
+                                          <div className="space-y-1">
+                                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                  <label className="text-[9px] font-bold text-slate-600 uppercase block">📄 PDF (App Upload ya Link)</label>
+                                                  <DirectUploadButton
+                                                      kind="pdf"
+                                                      compact
+                                                      currentUrl={(pg as any).pdfUrl}
+                                                      onUploaded={(url) => {
+                                                          const u = [...newLucent.pages];
+                                                          u[pgIdx] = { ...u[pgIdx], pdfUrl: url } as any;
+                                                          setNewLucent({ ...newLucent, pages: u });
+                                                      }}
+                                                  />
+                                              </div>
                                           </div>
-                                          <p className="text-[8px] text-rose-600">💡 Google Drive links: File ko "Anyone with the link" se share karein. App ke andar hi play hoga — user bahar nahi jayega.</p>
+                                          <p className="text-[8px] text-rose-600">💡 Direct App se Video, Audio ya PDF upload kar sakte hain — ya Google Drive / YouTube link bhi daal sakte hain.</p>
                                       </div>
                                       <div className="border-t border-slate-200 pt-2">
                                           <CoachingMcqEditor
@@ -18810,10 +19172,12 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                   </select>
                               </div>
                               <div>
-                                  <label className="text-xs font-bold text-pink-700 uppercase block mb-1">Level</label>
+                                  <label className="text-xs font-bold text-pink-700 uppercase block mb-1">Level (VIP / VIP+)</label>
                                   <select value={newCodeSubLevel} onChange={e => setNewCodeSubLevel(e.target.value)} className="p-3 rounded-xl border border-pink-200 bg-white font-bold">
-                                      <option value="BASIC">Basic</option>
-                                      <option value="ULTRA">Ultra</option>
+                                      <option value="BASIC">Basic (PRO VIP)</option>
+                                      <option value="ULTRA">Ultra (MAX VIP)</option>
+                                      <option value="PRO_PLUS">⭐💎 PRO+ (VIP+ with Daily Diamonds)</option>
+                                      <option value="MAX_PLUS">👑💎 MAX+ (VIP+ with Daily Diamonds)</option>
                                   </select>
                               </div>
                           </>
@@ -19018,15 +19382,26 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                       <span className="text-[11px] text-slate-500 font-mono bg-white/70 px-1.5 py-0.5 rounded border border-slate-200">UID: {u.id}</span>
                                   </p>
                               </div>
-                              <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                                  u.subscriptionTier === 'LIFETIME' ? 'bg-yellow-200 text-yellow-800' :
-                                  u.subscriptionTier === 'YEARLY' ? 'bg-purple-200 text-purple-800' :
-                                  u.subscriptionTier === 'MONTHLY' ? 'bg-blue-200 text-blue-800' :
-                                  u.subscriptionTier === 'WEEKLY' ? 'bg-green-200 text-green-800' :
-                                  'bg-slate-200 text-slate-700'
-                              }`}>
-                                  {u.subscriptionTier === 'LIFETIME' ? '🌟 LIFETIME' : u.subscriptionTier === 'YEARLY' ? '📅 YEARLY' : u.subscriptionTier === 'MONTHLY' ? '📆 MONTHLY' : u.subscriptionTier === 'WEEKLY' ? '⏰ WEEKLY' : 'FREE'}
-                              </span>
+                              <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                                  {(u.vipPlusTier === 'PRO_PLUS' || u.vipPlusTier === 'MAX_PLUS') && u.isPremium && (
+                                      <span className={`px-2.5 py-1 rounded-full text-[11px] font-black border ${
+                                          u.vipPlusTier === 'MAX_PLUS'
+                                              ? 'bg-pink-100 text-pink-800 border-pink-300'
+                                              : 'bg-cyan-100 text-cyan-800 border-cyan-300'
+                                      }`}>
+                                          {u.vipPlusTier === 'MAX_PLUS' ? '👑💎 MAX+ VIP+' : '⭐💎 PRO+ VIP+'}
+                                      </span>
+                                  )}
+                                  <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                                      u.subscriptionTier === 'LIFETIME' ? 'bg-yellow-200 text-yellow-800' :
+                                      u.subscriptionTier === 'YEARLY' ? 'bg-purple-200 text-purple-800' :
+                                      u.subscriptionTier === 'MONTHLY' ? 'bg-blue-200 text-blue-800' :
+                                      u.subscriptionTier === 'WEEKLY' ? 'bg-green-200 text-green-800' :
+                                      'bg-slate-200 text-slate-700'
+                                  }`}>
+                                      {u.subscriptionTier === 'LIFETIME' ? '🌟 LIFETIME' : u.subscriptionTier === 'YEARLY' ? '📅 YEARLY' : u.subscriptionTier === 'MONTHLY' ? '📆 MONTHLY' : u.subscriptionTier === 'WEEKLY' ? '⏰ WEEKLY' : 'FREE'}
+                                  </span>
+                              </div>
                           </div>
 
                           <div className="grid grid-cols-4 gap-3 mb-3 text-xs">
@@ -19819,28 +20194,17 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
 
                       {/* SUBSCRIPTION TIER */}
                       <div className="border-t pt-3">
-                          <label className="text-xs font-bold text-slate-600 uppercase">👑 Grant Subscription</label>
+                          <label className="text-xs font-bold text-slate-600 uppercase">👑 Grant Subscription (VIP & VIP+)</label>
                           <div className="grid grid-cols-2 gap-2 mt-2">
-                              <button onClick={() => { setEditSubscriptionTier('FREE'); setEditSubscriptionPrice(0); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'FREE' ? 'bg-slate-200 text-slate-800' : 'bg-slate-100 text-slate-600'}`}>FREE</button>
-                              <button onClick={() => { setEditSubscriptionTier('WEEKLY'); updatePriceForSelection('WEEKLY', editSubscriptionLevel); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'WEEKLY' ? 'bg-green-200 text-green-800' : 'bg-green-50 text-green-600'}`}>⏰ WEEKLY</button>
-                              <button onClick={() => { setEditSubscriptionTier('MONTHLY'); updatePriceForSelection('MONTHLY', editSubscriptionLevel); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'MONTHLY' ? 'bg-blue-200 text-blue-800' : 'bg-blue-50 text-blue-600'}`}>📆 MONTHLY</button>
-                              <button onClick={() => { setEditSubscriptionTier('3_MONTHLY'); updatePriceForSelection('3_MONTHLY', editSubscriptionLevel); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === '3_MONTHLY' ? 'bg-indigo-200 text-indigo-800' : 'bg-indigo-50 text-indigo-600'}`}>📅 3 MONTHLY</button>
-                              <button onClick={() => { setEditSubscriptionTier('YEARLY'); updatePriceForSelection('YEARLY', editSubscriptionLevel); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'YEARLY' ? 'bg-purple-200 text-purple-800' : 'bg-purple-50 text-purple-600'}`}>📅 YEARLY</button>
-                              <button onClick={() => { setEditSubscriptionTier('LIFETIME'); updatePriceForSelection('LIFETIME', editSubscriptionLevel); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'LIFETIME' ? 'bg-yellow-200 text-yellow-800' : 'bg-yellow-50 text-yellow-600'}`}>🌟 LIFETIME</button>
+                              <button onClick={() => { setEditSubscriptionTier('FREE'); setEditVipPlusTier('NONE'); setEditSubscriptionPrice(0); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'FREE' ? 'bg-slate-200 text-slate-800' : 'bg-slate-100 text-slate-600'}`}>FREE</button>
+                              <button onClick={() => { setEditSubscriptionTier('WEEKLY'); updatePriceForSelection('WEEKLY', editSubscriptionLevel, editVipPlusTier); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'WEEKLY' ? 'bg-green-200 text-green-800' : 'bg-green-50 text-green-600'}`}>⏰ WEEKLY</button>
+                              <button onClick={() => { setEditSubscriptionTier('MONTHLY'); updatePriceForSelection('MONTHLY', editSubscriptionLevel, editVipPlusTier); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'MONTHLY' ? 'bg-blue-200 text-blue-800' : 'bg-blue-50 text-blue-600'}`}>📆 MONTHLY</button>
+                              <button onClick={() => { setEditSubscriptionTier('3_MONTHLY'); updatePriceForSelection('3_MONTHLY', editSubscriptionLevel, editVipPlusTier); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === '3_MONTHLY' ? 'bg-indigo-200 text-indigo-800' : 'bg-indigo-50 text-indigo-600'}`}>📅 3 MONTHLY</button>
+                              <button onClick={() => { setEditSubscriptionTier('YEARLY'); updatePriceForSelection('YEARLY', editSubscriptionLevel, editVipPlusTier); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'YEARLY' ? 'bg-purple-200 text-purple-800' : 'bg-purple-50 text-purple-600'}`}>📅 YEARLY</button>
+                              <button onClick={() => { setEditSubscriptionTier('LIFETIME'); updatePriceForSelection('LIFETIME', editSubscriptionLevel, editVipPlusTier); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'LIFETIME' ? 'bg-yellow-200 text-yellow-800' : 'bg-yellow-50 text-yellow-600'}`}>🌟 LIFETIME</button>
                               <button onClick={() => { setEditSubscriptionTier('CUSTOM'); setEditSubscriptionPrice(0); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'CUSTOM' ? 'bg-pink-200 text-pink-800' : 'bg-pink-50 text-pink-600'}`}>⚙️ CUSTOMIZED</button>
                           </div>
                       </div>
-
-                      {/* SUBSCRIPTION LEVEL */}
-                      {editSubscriptionTier !== 'FREE' && (
-                          <div className="mt-2">
-                              <label className="text-xs font-bold text-slate-600 uppercase">Level (For Real Users)</label>
-                              <div className="grid grid-cols-2 gap-2 mt-1">
-                                  <button onClick={() => { setEditSubscriptionLevel('BASIC'); updatePriceForSelection(editSubscriptionTier, 'BASIC'); }} className={`p-2 rounded font-bold text-xs border ${editSubscriptionLevel === 'BASIC' ? 'bg-blue-100 border-blue-300 text-blue-800' : 'bg-white border-slate-200'}`}>BASIC</button>
-                                  <button onClick={() => { setEditSubscriptionLevel('ULTRA'); updatePriceForSelection(editSubscriptionTier, 'ULTRA'); }} className={`p-2 rounded font-bold text-xs border ${editSubscriptionLevel === 'ULTRA' ? 'bg-purple-100 border-purple-300 text-purple-800' : 'bg-white border-slate-200'}`}>ULTRA</button>
-                              </div>
-                          </div>
-                      )}
 
                       {editSubscriptionTier === 'CUSTOM' && (
                           <div className="space-y-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
@@ -19883,14 +20247,86 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                           </div>
                       )}
 
-                      {/* SUBSCRIPTION LEVEL */}
+                      {/* SUBSCRIPTION LEVEL (VIP & VIP+ PLANS) */}
                       {editSubscriptionTier !== 'FREE' && (
-                          <div className="mt-2">
-                              <label className="text-xs font-bold text-slate-600 uppercase">Level (For Real Users)</label>
-                              <div className="grid grid-cols-2 gap-2 mt-1">
-                                  <button onClick={() => { setEditSubscriptionLevel('BASIC'); updatePriceForSelection(editSubscriptionTier, 'BASIC'); }} className={`p-2 rounded font-bold text-xs border ${editSubscriptionLevel === 'BASIC' ? 'bg-blue-100 border-blue-300 text-blue-800' : 'bg-white border-slate-200'}`}>BASIC</button>
-                                  <button onClick={() => { setEditSubscriptionLevel('ULTRA'); updatePriceForSelection(editSubscriptionTier, 'ULTRA'); }} className={`p-2 rounded font-bold text-xs border ${editSubscriptionLevel === 'ULTRA' ? 'bg-purple-100 border-purple-300 text-purple-800' : 'bg-white border-slate-200'}`}>ULTRA</button>
+                          <div className="mt-2 space-y-2">
+                              <label className="text-xs font-bold text-slate-600 uppercase block">Level (For Real Users — VIP & VIP+)</label>
+                              <div className="grid grid-cols-2 gap-2">
+                                  <button
+                                      type="button"
+                                      onClick={() => {
+                                          setEditVipPlusTier('NONE');
+                                          setEditSubscriptionLevel('BASIC');
+                                          updatePriceForSelection(editSubscriptionTier, 'BASIC', 'NONE');
+                                      }}
+                                      className={`p-2 rounded-lg font-bold text-xs border transition ${
+                                          editSubscriptionLevel === 'BASIC' && editVipPlusTier === 'NONE'
+                                              ? 'bg-blue-100 border-blue-400 text-blue-900 shadow-sm'
+                                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                                      }`}
+                                  >
+                                      ⭐ BASIC (VIP Pro)
+                                  </button>
+                                  <button
+                                      type="button"
+                                      onClick={() => {
+                                          setEditVipPlusTier('NONE');
+                                          setEditSubscriptionLevel('ULTRA');
+                                          updatePriceForSelection(editSubscriptionTier, 'ULTRA', 'NONE');
+                                      }}
+                                      className={`p-2 rounded-lg font-bold text-xs border transition ${
+                                          editSubscriptionLevel === 'ULTRA' && editVipPlusTier === 'NONE'
+                                              ? 'bg-purple-100 border-purple-400 text-purple-900 shadow-sm'
+                                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                                      }`}
+                                  >
+                                      👑 ULTRA (VIP Max)
+                                  </button>
+                                  <button
+                                      type="button"
+                                      onClick={() => {
+                                          setEditVipPlusTier('PRO_PLUS');
+                                          setEditSubscriptionLevel('BASIC');
+                                          updatePriceForSelection(editSubscriptionTier, 'BASIC', 'PRO_PLUS');
+                                      }}
+                                      className={`p-2 rounded-lg font-bold text-xs border transition ${
+                                          editVipPlusTier === 'PRO_PLUS'
+                                              ? 'bg-cyan-100 border-cyan-500 text-cyan-900 shadow-sm ring-1 ring-cyan-400'
+                                              : 'bg-cyan-50/50 border-cyan-200 text-cyan-800 hover:bg-cyan-50'
+                                      }`}
+                                  >
+                                      ⭐💎 PRO+ (VIP+)
+                                  </button>
+                                  <button
+                                      type="button"
+                                      onClick={() => {
+                                          setEditVipPlusTier('MAX_PLUS');
+                                          setEditSubscriptionLevel('ULTRA');
+                                          updatePriceForSelection(editSubscriptionTier, 'ULTRA', 'MAX_PLUS');
+                                      }}
+                                      className={`p-2 rounded-lg font-bold text-xs border transition ${
+                                          editVipPlusTier === 'MAX_PLUS'
+                                              ? 'bg-pink-100 border-pink-500 text-pink-900 shadow-sm ring-1 ring-pink-400'
+                                              : 'bg-pink-50/50 border-pink-200 text-pink-800 hover:bg-pink-50'
+                                      }`}
+                                  >
+                                      👑💎 MAX+ (VIP+)
+                                  </button>
                               </div>
+                              {(editVipPlusTier === 'PRO_PLUS' || editVipPlusTier === 'MAX_PLUS') && (
+                                  <div className={`p-2.5 rounded-xl border text-[11px] font-bold flex items-center justify-between ${
+                                      editVipPlusTier === 'MAX_PLUS'
+                                          ? 'bg-gradient-to-r from-pink-50 to-purple-50 border-pink-200 text-purple-900'
+                                          : 'bg-gradient-to-r from-cyan-50 to-sky-50 border-cyan-200 text-cyan-900'
+                                  }`}>
+                                      <span>
+                                          {editVipPlusTier === 'MAX_PLUS' ? '👑💎 MAX+ (VIP+) Selected' : '⭐💎 PRO+ (VIP+) Selected'} — All {editVipPlusTier === 'MAX_PLUS' ? 'Max' : 'Pro'} Features + Daily Diamonds
+                                      </span>
+                                      <span className="px-2 py-0.5 rounded-full bg-white border text-[10px] font-black shrink-0">
+                                          +{getVipPlusDiamondsPerDay({ duration: editSubscriptionTier === 'WEEKLY' ? '7 days' : editSubscriptionTier === '3_MONTHLY' ? '3 months' : editSubscriptionTier === 'YEARLY' || editSubscriptionTier === 'LIFETIME' ? '365 days' : '30 days' }, editVipPlusTier)} 💎/d
+                                      </span>
+                                  </div>
+                              )}
                           </div>
                       )}
 
@@ -19926,6 +20362,195 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                               </p>
                           </div>
                       )}
+
+                      {/* --- VIP+ PLAN SUBSCRIPTION (PRO+ / MAX+ WITH DAILY DIAMONDS) --- */}
+                      <div className="border-t pt-3">
+                          <label className="text-xs font-bold text-cyan-800 uppercase flex items-center gap-1.5">
+                              <span>👑💎</span>
+                              VIP+ Plan Subscription (PRO+ / MAX+)
+                          </label>
+                          <p className="text-[10px] text-slate-500 mb-2">
+                              VIP+ Plan se Premium Content (Pro/Max) + Daily Diamonds dono ek saath unlock hote hain.
+                          </p>
+
+                          {isVipPlusUser(editingUser) ? (
+                              <div className={`p-3 rounded-xl border space-y-2 ${
+                                  editingUser.vipPlusTier === 'MAX_PLUS'
+                                      ? 'bg-pink-50 border-pink-200'
+                                      : 'bg-cyan-50 border-cyan-200'
+                              }`}>
+                                  <div className="flex items-center justify-between">
+                                      <span className={`text-xs font-black ${
+                                          editingUser.vipPlusTier === 'MAX_PLUS' ? 'text-pink-900' : 'text-cyan-900'
+                                      }`}>
+                                          {editingUser.vipPlusTier === 'MAX_PLUS' ? '👑💎 MAX+ (VIP+ Elite)' : '⭐💎 PRO+ (VIP+)'} — {editingUser.subscriptionTier}
+                                      </span>
+                                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                                          editingUser.vipPlusTier === 'MAX_PLUS'
+                                              ? 'bg-pink-200 text-pink-900'
+                                              : 'bg-cyan-200 text-cyan-900'
+                                      }`}>
+                                          ACTIVE
+                                      </span>
+                                  </div>
+                                  <div className="text-xs text-slate-700 grid grid-cols-2 gap-1">
+                                      <div>💎 Daily Diamonds: <strong>+{editingUser.dailyVipDiamonds || (editingUser.vipPlusTier === 'MAX_PLUS' ? 50 : 25)} 💎/d</strong></div>
+                                      <div>👑 Content Tier: <strong>{editingUser.vipPlusTier === 'MAX_PLUS' ? 'ULTRA (Max)' : 'BASIC (Pro)'}</strong></div>
+                                      <div className="col-span-2">📅 Expires: <strong>{editingUser.subscriptionEndDate ? new Date(editingUser.subscriptionEndDate).toLocaleDateString() : 'Lifetime'}</strong></div>
+                                  </div>
+                                  <button
+                                      type="button"
+                                      onClick={async () => {
+                                          if (!confirm(`Kya aap ${editingUser.name} ka VIP+ Plan (${editingUser.vipPlusTier === 'MAX_PLUS' ? 'MAX+' : 'PRO+'}) cancel/revoke karna chahte hain?`)) return;
+                                          const updated: User = {
+                                              ...editingUser,
+                                              isPremium: false,
+                                              subscriptionTier: 'FREE',
+                                              vipPlusTier: undefined,
+                                              dailyVipDiamonds: undefined,
+                                              subscriptionEndDate: undefined,
+                                              diamondSubscription: editingUser.diamondSubscription
+                                                  ? { ...editingUser.diamondSubscription, status: 'EXPIRED' }
+                                                  : undefined,
+                                          };
+                                          const ok = await saveUserToLive(updated);
+                                          if (ok) {
+                                              setEditingUser(updated);
+                                              setEditSubscriptionTier('FREE');
+                                              setEditVipPlusTier('NONE');
+                                              setUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
+                                              alert('VIP+ Plan revoked successfully.');
+                                          }
+                                      }}
+                                      className="w-full py-1.5 bg-red-100 hover:bg-red-200 text-red-700 text-xs font-bold rounded-lg transition"
+                                  >
+                                      ❌ Revoke / Cancel VIP+ Plan
+                                  </button>
+                              </div>
+                          ) : (
+                              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
+                                  <span className="text-xs text-slate-500 italic block">No active VIP+ subscription</span>
+                                  <div className="grid grid-cols-2 gap-2">
+                                      <button
+                                          type="button"
+                                          onClick={() => setSelectedVipPlusGrantTier('PRO_PLUS')}
+                                          className={`p-2 rounded-lg font-bold text-[11px] border leading-tight transition ${
+                                              selectedVipPlusGrantTier === 'PRO_PLUS'
+                                                  ? 'bg-cyan-100 border-cyan-500 text-cyan-900 shadow-sm'
+                                                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                                          }`}
+                                      >
+                                          <div className="text-cyan-700 font-black">⭐💎 PRO+ (VIP+)</div>
+                                          <div className="opacity-80 font-normal text-[10px]">Pro Content + Daily 💎</div>
+                                      </button>
+                                      <button
+                                          type="button"
+                                          onClick={() => setSelectedVipPlusGrantTier('MAX_PLUS')}
+                                          className={`p-2 rounded-lg font-bold text-[11px] border leading-tight transition ${
+                                              selectedVipPlusGrantTier === 'MAX_PLUS'
+                                                  ? 'bg-pink-100 border-pink-500 text-pink-900 shadow-sm'
+                                                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                                          }`}
+                                      >
+                                          <div className="text-pink-700 font-black">👑💎 MAX+ (VIP+)</div>
+                                          <div className="opacity-80 font-normal text-[10px]">Max Content + Daily 💎</div>
+                                      </button>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                      <span className="text-[10px] font-bold text-slate-500 uppercase w-16">Validity:</span>
+                                      <div className="flex-1 grid grid-cols-5 gap-1">
+                                          {([
+                                              { label: '1W', tier: 'WEEKLY' as const, days: 7 },
+                                              { label: '1M', tier: 'MONTHLY' as const, days: 30 },
+                                              { label: '3M', tier: '3_MONTHLY' as const, days: 90 },
+                                              { label: '1Y', tier: 'YEARLY' as const, days: 365 },
+                                              { label: 'LIFE', tier: 'LIFETIME' as const, days: 1825 },
+                                          ]).map(opt => (
+                                              <button
+                                                  key={opt.tier}
+                                                  type="button"
+                                                  onClick={() => setSelectedVipPlusGrantDuration(opt.tier)}
+                                                  className={`py-1.5 rounded font-bold text-[11px] border ${
+                                                      selectedVipPlusGrantDuration === opt.tier
+                                                          ? 'bg-cyan-800 border-cyan-900 text-white shadow-sm'
+                                                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                                                  }`}
+                                              >
+                                                  {opt.label}
+                                              </button>
+                                          ))}
+                                      </div>
+                                  </div>
+                                  <button
+                                      type="button"
+                                      onClick={async () => {
+                                          const durDays = selectedVipPlusGrantDuration === 'WEEKLY' ? 7 : selectedVipPlusGrantDuration === 'MONTHLY' ? 30 : selectedVipPlusGrantDuration === '3_MONTHLY' ? 90 : selectedVipPlusGrantDuration === 'YEARLY' ? 365 : 1825;
+                                          const durObj = { duration: selectedVipPlusGrantDuration === 'WEEKLY' ? '7 days' : selectedVipPlusGrantDuration === '3_MONTHLY' ? '3 months' : selectedVipPlusGrantDuration === 'YEARLY' || selectedVipPlusGrantDuration === 'LIFETIME' ? '365 days' : '30 days' };
+                                          const dailyDia = getVipPlusDiamondsPerDay(durObj, selectedVipPlusGrantTier);
+                                          const tierLabel = selectedVipPlusGrantTier === 'MAX_PLUS' ? 'MAX+ (VIP+)' : 'PRO+ (VIP+)';
+                                          if (!confirm(`Kya aap ${editingUser.name} ko "${selectedVipPlusGrantDuration} ${tierLabel}" (+${dailyDia} 💎/day) grant karna chahte hain?`)) return;
+
+                                          const now = new Date();
+                                          const endDate = new Date(now.getTime() + durDays * 24 * 60 * 60 * 1000);
+                                          const isoEndDate = endDate.toISOString();
+                                          const finalLevel: 'BASIC' | 'ULTRA' = selectedVipPlusGrantTier === 'MAX_PLUS' ? 'ULTRA' : 'BASIC';
+
+                                          const historyEntry: SubscriptionHistoryEntry = {
+                                              id: `hist-${Date.now()}`,
+                                              tier: selectedVipPlusGrantDuration,
+                                              level: finalLevel,
+                                              startDate: now.toISOString(),
+                                              endDate: selectedVipPlusGrantDuration === 'LIFETIME' ? 'LIFETIME' : isoEndDate,
+                                              durationHours: durDays * 24,
+                                              price: 0,
+                                              originalPrice: 0,
+                                              isFree: true,
+                                              grantSource: 'ADMIN',
+                                              grantedBy: currentUser?.id,
+                                              grantedByName: currentUser?.name,
+                                          };
+
+                                          const updated: User = {
+                                              ...editingUser,
+                                              isPremium: true,
+                                              subscriptionTier: selectedVipPlusGrantDuration,
+                                              subscriptionLevel: finalLevel,
+                                              vipPlusTier: selectedVipPlusGrantTier,
+                                              dailyVipDiamonds: dailyDia,
+                                              subscriptionEndDate: isoEndDate,
+                                              grantedByAdmin: true,
+                                              subscriptionHistory: [historyEntry, ...(editingUser.subscriptionHistory || [])],
+                                              diamondSubscription: {
+                                                  planId: `vipplus_${selectedVipPlusGrantTier.toLowerCase()}_${Date.now()}`,
+                                                  planName: `${selectedVipPlusGrantDuration} (${selectedVipPlusGrantTier === 'MAX_PLUS' ? 'MAX+' : 'PRO+'})`,
+                                                  dailyDiamonds: dailyDia,
+                                                  totalDays: durDays,
+                                                  startDate: now.toISOString(),
+                                                  endDate: isoEndDate,
+                                                  totalClaimedDays: 0,
+                                                  totalDiamondsClaimed: 0,
+                                                  pricePaid: 0,
+                                                  status: 'ACTIVE',
+                                              },
+                                          };
+
+                                          const ok = await saveUserToLive(updated);
+                                          if (ok) {
+                                              setEditingUser(updated);
+                                              setEditSubscriptionTier(selectedVipPlusGrantDuration);
+                                              setEditSubscriptionLevel(finalLevel);
+                                              setEditVipPlusTier(selectedVipPlusGrantTier);
+                                              setUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
+                                              alert(`✅ ${tierLabel} (${selectedVipPlusGrantDuration}) with +${dailyDia} 💎/day granted to ${editingUser.name}!`);
+                                          }
+                                      }}
+                                      className="w-full py-2 bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-700 hover:to-purple-700 text-white text-xs font-bold rounded-lg transition shadow-sm"
+                                  >
+                                      👑💎 Grant VIP+ Plan ({selectedVipPlusGrantTier === 'MAX_PLUS' ? 'MAX+' : 'PRO+'} • {selectedVipPlusGrantDuration})
+                                  </button>
+                              </div>
+                          )}
+                      </div>
 
                       {/* --- DAILY CREDIT SUBSCRIPTION (DAILY PASS) --- */}
                       <div className="border-t pt-3">
@@ -20291,12 +20916,18 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                   className="w-full p-2 border rounded-lg text-sm"
                               >
                                   <option value="">Select Plan</option>
-                                  <option value="WEEKLY_BASIC">Weekly Basic</option>
-                                  <option value="WEEKLY_ULTRA">Weekly Ultra</option>
-                                  <option value="MONTHLY_BASIC">Monthly Basic</option>
-                                  <option value="MONTHLY_ULTRA">Monthly Ultra</option>
-                                  <option value="YEARLY_BASIC">Yearly Basic</option>
-                                  <option value="YEARLY_ULTRA">Yearly Ultra</option>
+                                  <option value="WEEKLY_BASIC">Weekly Basic (VIP Pro)</option>
+                                  <option value="WEEKLY_ULTRA">Weekly Ultra (VIP Max)</option>
+                                  <option value="WEEKLY_PRO_PLUS">⭐💎 Weekly PRO+ (VIP+)</option>
+                                  <option value="WEEKLY_MAX_PLUS">👑💎 Weekly MAX+ (VIP+)</option>
+                                  <option value="MONTHLY_BASIC">Monthly Basic (VIP Pro)</option>
+                                  <option value="MONTHLY_ULTRA">Monthly Ultra (VIP Max)</option>
+                                  <option value="MONTHLY_PRO_PLUS">⭐💎 Monthly PRO+ (VIP+)</option>
+                                  <option value="MONTHLY_MAX_PLUS">👑💎 Monthly MAX+ (VIP+)</option>
+                                  <option value="YEARLY_BASIC">Yearly Basic (VIP Pro)</option>
+                                  <option value="YEARLY_ULTRA">Yearly Ultra (VIP Max)</option>
+                                  <option value="YEARLY_PRO_PLUS">⭐💎 Yearly PRO+ (VIP+)</option>
+                                  <option value="YEARLY_MAX_PLUS">👑💎 Yearly MAX+ (VIP+)</option>
                               </select>
                               <div className="flex gap-2 items-center">
                                   <label className="text-xs text-slate-600">Duration (Days):</label>
@@ -20377,17 +21008,19 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                       <Trash2 size={16} />
                                   </button>
                               </div>
-                              <input 
-                                  type="text" 
-                                  value={vid.url || ''} 
-                                  onChange={(e) => {
-                                      const updated = [...universalVideos];
-                                      updated[i] = {...updated[i], url: e.target.value};
-                                      setUniversalVideos(updated);
-                                  }}
-                                  placeholder="YouTube URL (e.g. https://youtu.be/...)"
-                                  className="w-full p-2 border border-slate-200 rounded text-xs font-mono text-blue-600 bg-slate-50" 
-                              />
+                              <div className="space-y-1.5">
+                                  <DirectUploadButton
+                                      kind="video"
+                                      compact
+                                      currentUrl={vid.url}
+                                      onUploaded={(url, file) => {
+                                          const updated = [...universalVideos];
+                                          const autoTitle = updated[i]?.title || file.name.replace(/\.[^/.]+$/, '');
+                                          updated[i] = { ...updated[i], url, title: autoTitle };
+                                          setUniversalVideos(updated);
+                                      }}
+                                  />
+                              </div>
                           </div>
                       ))}
                   </div>
@@ -20760,12 +21393,24 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                               placeholder="Topic (e.g. Geometry)"
                               className="w-full p-2 border border-slate-200 rounded text-sm"
                           />
-                          <input
-                              type="text"
-                              id="prem-note-url"
-                              placeholder="PDF URL (e.g. https://...)"
-                              className="w-full p-2 border border-slate-200 rounded text-sm text-blue-600"
-                          />
+                          <div className="space-y-1.5">
+                              <input
+                                  type="hidden"
+                                  id="prem-note-url"
+                              />
+                              <DirectUploadButton
+                                  kind="pdf"
+                                  compact
+                                  onUploaded={(url, file) => {
+                                      const urlInput = document.getElementById('prem-note-url') as HTMLInputElement | null;
+                                      const titleInput = document.getElementById('prem-note-title') as HTMLInputElement | null;
+                                      if (urlInput) urlInput.value = url;
+                                      if (titleInput && !titleInput.value) {
+                                          titleInput.value = file.name.replace(/\.[^/.]+$/, '');
+                                      }
+                                  }}
+                              />
+                          </div>
                           <button
                               onClick={() => {
                                   const title = (document.getElementById('prem-note-title') as HTMLInputElement).value;
@@ -21622,6 +22267,22 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                   </div>
               </div>
           </div>
+      )}
+
+      {/* 🗺️ CLOUDINARY VIDEO TEASER & LEVEL ROADMAP MANAGER */}
+      {activeTab === 'ROADMAP_MANAGER' && (
+        <div className="bg-slate-950 p-4 sm:p-6 rounded-3xl shadow-sm border border-slate-800 animate-in slide-in-from-right space-y-4">
+          <div className="flex items-center gap-4 border-b border-white/10 pb-4">
+            <button onClick={() => setActiveTab('DASHBOARD')} className="bg-slate-800 p-2 rounded-full hover:bg-slate-700 text-white">
+              <ArrowLeft size={20} />
+            </button>
+            <div>
+              <h3 className="text-xl font-black text-white">Level Roadmap &amp; Cloudinary Video Manager</h3>
+              <p className="text-xs text-slate-400 mt-0.5">Cloudinary (ox4kpil0) par teaser clips upload karein aur Level features preview set karein</p>
+            </div>
+          </div>
+          <AdminRoadmapManager />
+        </div>
       )}
 
       {/* 🏫 COACHING CENTRES — Create / Assign Admin / Subscription */}

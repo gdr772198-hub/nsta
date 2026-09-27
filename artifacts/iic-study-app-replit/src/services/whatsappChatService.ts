@@ -30,7 +30,7 @@ export interface ChatMessage {
   senderColor?: string;
   text: string;
   timestamp: number;
-  type?: 'TEXT' | 'VOICE' | 'IMAGE' | 'DOUBT' | 'NOTE' | 'SYSTEM';
+  type?: 'TEXT' | 'VOICE' | 'IMAGE' | 'VIDEO' | 'DOUBT' | 'NOTE' | 'SYSTEM';
   mediaUrl?: string;
   mediaUrls?: string[]; // Multiple photos (up to 10 at once)
   voiceDuration?: number; // seconds
@@ -3446,3 +3446,123 @@ export const verifyChatPin = (enteredPin: string, contextId?: string, userId?: s
   const current = getDefaultChatPin(userId);
   return !!current && (enteredPin || '').trim() === current;
 };
+
+// ─── NSTA 24-Hour Status / Story System (Video & Image via Cloudinary) ──────────────
+export interface UserStatusItem {
+  id: string;
+  userId: string;
+  userName: string;
+  userPhoto?: string;
+  mediaUrl: string;
+  mediaType: 'VIDEO' | 'IMAGE';
+  caption?: string;
+  createdAt: number;
+  expiresAt: number;
+  views?: Record<string, number>;
+}
+
+const LOCAL_STATUS_KEY = 'nsta_whatsapp_statuses_v1';
+
+export const postUserStatus = async (params: {
+  userId: string;
+  userName: string;
+  userPhoto?: string;
+  mediaUrl: string;
+  mediaType: 'VIDEO' | 'IMAGE';
+  caption?: string;
+}): Promise<UserStatusItem> => {
+  const now = Date.now();
+  const statusId = `status_${now}_${Math.random().toString(36).substring(2, 7)}`;
+  const item: UserStatusItem = {
+    id: statusId,
+    userId: params.userId,
+    userName: params.userName || 'Student',
+    ...(params.userPhoto ? { userPhoto: params.userPhoto } : {}),
+    mediaUrl: params.mediaUrl,
+    mediaType: params.mediaType,
+    ...(params.caption?.trim() ? { caption: params.caption.trim() } : {}),
+    createdAt: now,
+    expiresAt: now + 36500 * 24 * 60 * 60 * 1000, // Permanent status — No auto-delete
+    views: {},
+  };
+
+  try {
+    const existingRaw = localStorage.getItem(LOCAL_STATUS_KEY);
+    const list: UserStatusItem[] = existingRaw ? JSON.parse(existingRaw) : [];
+    list.unshift(item);
+    localStorage.setItem(LOCAL_STATUS_KEY, JSON.stringify(list.slice(0, 100)));
+  } catch {}
+
+  try {
+    const statusRef = ref(rtdb, `chat/whatsapp_status/${statusId}`);
+    await set(statusRef, cleanPayload(item));
+  } catch (err) {
+    console.warn('[WhatsApp Status] RTDB write error:', err);
+  }
+
+  return item;
+};
+
+export const subscribeToStatuses = (callback: (statuses: UserStatusItem[]) => void): (() => void) => {
+  const loadLocal = (): UserStatusItem[] => {
+    try {
+      const raw = localStorage.getItem(LOCAL_STATUS_KEY);
+      if (!raw) return [];
+      const parsed: UserStatusItem[] = JSON.parse(raw);
+      return parsed.filter((s) => s && s.mediaUrl);
+    } catch {
+      return [];
+    }
+  };
+
+  callback(loadLocal());
+
+  const statusRef = ref(rtdb, 'chat/whatsapp_status');
+  const unsub = onValue(
+    statusRef,
+    (snap) => {
+      const map = new Map<string, UserStatusItem>();
+      loadLocal().forEach((s) => map.set(s.id, s));
+      if (snap.exists()) {
+        const val = snap.val();
+        Object.entries(val).forEach(([id, data]: [string, any]) => {
+          if (data && data.mediaUrl) {
+            map.set(id, { id, ...data });
+          }
+        });
+      }
+      const list = Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
+      try {
+        localStorage.setItem(LOCAL_STATUS_KEY, JSON.stringify(list.slice(0, 100)));
+      } catch {}
+      callback(list);
+    },
+    () => {
+      callback(loadLocal());
+    }
+  );
+
+  return () => unsub();
+};
+
+export const deleteUserStatus = async (statusId: string): Promise<void> => {
+  try {
+    const raw = localStorage.getItem(LOCAL_STATUS_KEY);
+    if (raw) {
+      const list: UserStatusItem[] = JSON.parse(raw);
+      localStorage.setItem(LOCAL_STATUS_KEY, JSON.stringify(list.filter((s) => s.id !== statusId)));
+    }
+  } catch {}
+  try {
+    await remove(ref(rtdb, `chat/whatsapp_status/${statusId}`));
+  } catch {}
+};
+
+export const markStatusViewed = async (statusId: string, viewerId: string): Promise<void> => {
+  if (!statusId || !viewerId) return;
+  try {
+    const viewRef = ref(rtdb, `chat/whatsapp_status/${statusId}/views/${sanitizeRtdbKey(viewerId)}`);
+    await set(viewRef, Date.now());
+  } catch {}
+};
+

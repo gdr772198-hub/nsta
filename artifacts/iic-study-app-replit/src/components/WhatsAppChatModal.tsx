@@ -68,6 +68,7 @@ import {
   Download,
   ChevronLeft,
   Archive,
+  Video,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { User } from '../types';
@@ -75,9 +76,11 @@ import { applyDeduction, getTotalCredits } from '../utils/creditSystem';
 import { logScoreActivity } from '../utils/scoreSystem';
 import { saveUserToLive, auth } from '../firebase';
 import { uploadImageToImgBB } from '../services/imgbbService';
+import { uploadToCloudinary, getOptimizedVideoUrl } from '../services/cloudinaryService';
 import { ImageCropper } from './ImageCropper';
 import { ProfileCameraModal } from './ProfileCameraModal';
 import { NstaChatLockPasswordModal } from './NstaChatLockPasswordModal';
+import { UserLevelBadge, UserNameTierBadge } from './UserLevelBadge';
 import {
   ChatContact,
   ChatMessage,
@@ -156,6 +159,11 @@ import {
   getLocalSentFriendRequests,
   getLocalFriends,
   getLocalFriendRequests,
+  UserStatusItem,
+  postUserStatus,
+  subscribeToStatuses,
+  deleteUserStatus,
+  markStatusViewed,
 } from '../services/whatsappChatService';
 
 // Block limit tiers: Free user -> 10, Basic -> 20, Ultra -> 30
@@ -703,6 +711,208 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   const imageInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const addMoreImageInputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
+
+  // Chat Video Upload State (Cloudinary)
+  const [selectedVideoToSend, setSelectedVideoToSend] = useState<File | null>(null);
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
+  const [videoCaptionInput, setVideoCaptionInput] = useState<string>('');
+  const [isUploadingChatVideo, setIsUploadingChatVideo] = useState<boolean>(false);
+  const [chatVideoUploadProgress, setChatVideoUploadProgress] = useState<number>(0);
+
+  // NSTA 24-Hour Status / Story State (Cloudinary Video & Image)
+  const [statuses, setStatuses] = useState<UserStatusItem[]>([]);
+  const [showStatusUploadModal, setShowStatusUploadModal] = useState<boolean>(false);
+  const [statusFileToUpload, setStatusFileToUpload] = useState<File | null>(null);
+  const [statusPreviewUrl, setStatusPreviewUrl] = useState<string | null>(null);
+  const [statusMediaType, setStatusMediaType] = useState<'VIDEO' | 'IMAGE'>('VIDEO');
+  const [statusCaptionInput, setStatusCaptionInput] = useState<string>('');
+  const [isUploadingStatus, setIsUploadingStatus] = useState<boolean>(false);
+  const [statusUploadProgress, setStatusUploadProgress] = useState<number>(0);
+  const [activeViewingStatuses, setActiveViewingStatuses] = useState<UserStatusItem[] | null>(null);
+  const [activeViewingStatusIdx, setActiveViewingStatusIdx] = useState<number>(0);
+  const statusVideoInputRef = useRef<HTMLInputElement>(null);
+  const statusImageInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const unsub = subscribeToStatuses((list) => {
+      setStatuses(list);
+    });
+    return () => unsub();
+  }, []);
+
+  const handleSelectStatusFile = (e: React.ChangeEvent<HTMLInputElement>, type: 'VIDEO' | 'IMAGE') => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 100 * 1024 * 1024) {
+      showToast('⚠️ Status file maximum 100MB tak ho sakti hai!');
+      return;
+    }
+    if (statusPreviewUrl) {
+      try { URL.revokeObjectURL(statusPreviewUrl); } catch {}
+    }
+    setStatusFileToUpload(file);
+    setStatusMediaType(type);
+    setStatusPreviewUrl(URL.createObjectURL(file));
+    setShowStatusUploadModal(true);
+    e.target.value = '';
+  };
+
+  const handlePublishStatus = async () => {
+    if (!statusFileToUpload) return;
+    setIsUploadingStatus(true);
+    setStatusUploadProgress(1);
+    try {
+      const res = await uploadToCloudinary(
+        statusFileToUpload,
+        statusMediaType === 'VIDEO' ? 'video' : 'image',
+        (pct) => setStatusUploadProgress(pct)
+      );
+      const uploadedUrl = res.secure_url || res.url;
+      const userPhoto = user.photoURL || (user as any).avatarUrl;
+      await postUserStatus({
+        userId: effectiveUserId || user.id,
+        userName: user.name || 'Student',
+        userPhoto,
+        mediaUrl: uploadedUrl,
+        mediaType: statusMediaType,
+        caption: statusCaptionInput.trim(),
+      });
+      showToast(`🎉 Aapka ${statusMediaType === 'VIDEO' ? 'Video' : 'Photo'} Status lag gaya! (Permanent status active rahega)`);
+      if (statusPreviewUrl) {
+        try { URL.revokeObjectURL(statusPreviewUrl); } catch {}
+      }
+      setShowStatusUploadModal(false);
+      setStatusFileToUpload(null);
+      setStatusPreviewUrl(null);
+      setStatusCaptionInput('');
+      setStatusUploadProgress(0);
+    } catch (err: any) {
+      showToast(`❌ Status upload fail ho gaya: ${err?.message || 'Error'}`);
+    } finally {
+      setIsUploadingStatus(false);
+    }
+  };
+
+  const handleSelectVideoFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 100 * 1024 * 1024) {
+      showToast('⚠️ Video maximum 100MB tak bhej sakte hain!');
+      return;
+    }
+    if (videoPreviewUrl) {
+      try { URL.revokeObjectURL(videoPreviewUrl); } catch {}
+    }
+    setSelectedVideoToSend(file);
+    setVideoPreviewUrl(URL.createObjectURL(file));
+    setVideoCaptionInput('');
+    e.target.value = '';
+  };
+
+  const handleSendVideoMessage = async () => {
+    if (!selectedVideoToSend) return;
+    if (totalDailyMsgLimit !== Infinity && dailyMessagesSent >= totalDailyMsgLimit) {
+      setShowMessageLimitModal(true);
+      return;
+    }
+    if (selectedContact && isUserBlocked(selectedContact.id)) {
+      showToast('Aapne is user ko block kiya hua hai. Pehle unblock karein.');
+      return;
+    }
+
+    setIsUploadingChatVideo(true);
+    setChatVideoUploadProgress(1);
+    try {
+      const res = await uploadToCloudinary(selectedVideoToSend, 'video', (pct) => {
+        setChatVideoUploadProgress(pct);
+      });
+      const uploadedVideoUrl = res.secure_url || res.url;
+      if (!uploadedVideoUrl) throw new Error('Video link generate nahi ho saka.');
+
+      const userPhoto = user.photoURL || (user as any).avatarUrl;
+      const captionText = videoCaptionInput.trim();
+
+      if (totalDailyMsgLimit !== Infinity) {
+        const today = getTodayStr();
+        const nextSent = dailyMessagesSent + 1;
+        setDailyMessagesSent(nextSent);
+        try {
+          localStorage.setItem(`nsta_daily_msg_${user.id}_${today}`, String(nextSent));
+        } catch {}
+      }
+
+      if (selectedContact) {
+        const optimisticMsg: ChatMessage = {
+          id: `local_vid_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          senderId: effectiveUserId,
+          senderName: user.name || 'Student',
+          ...(userPhoto ? { senderPhoto: userPhoto } : {}),
+          text: captionText,
+          timestamp: Date.now(),
+          type: 'VIDEO',
+          mediaUrl: uploadedVideoUrl,
+          status: 'SENT',
+          seen: false,
+          delivered: false,
+          readByRecipient: false,
+        };
+        setMessages((prev) => [
+          ...prev.filter((m) => !isMessageDeletedForUser(effectiveUserId, m)),
+          optimisticMsg,
+        ]);
+        await sendPrivateMessage(
+          effectiveUserId,
+          user.name || 'Student',
+          userPhoto,
+          selectedContact.id,
+          captionText,
+          'VIDEO',
+          { mediaUrl: uploadedVideoUrl }
+        );
+      } else if (selectedGroup) {
+        const optimisticMsg: ChatMessage = {
+          id: `local_grp_vid_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          senderId: effectiveUserId,
+          senderName: user.name || 'Student',
+          ...(userPhoto ? { senderPhoto: userPhoto } : {}),
+          text: captionText,
+          timestamp: Date.now(),
+          type: 'VIDEO',
+          mediaUrl: uploadedVideoUrl,
+          status: 'SENT',
+          seen: false,
+          delivered: false,
+        };
+        setMessages((prev) => [
+          ...prev.filter((m) => !isMessageDeletedForUser(effectiveUserId, m)),
+          optimisticMsg,
+        ]);
+        await sendGroupMessage(
+          selectedGroup.id,
+          effectiveUserId,
+          user.name || 'Student',
+          userPhoto,
+          captionText,
+          'VIDEO',
+          { mediaUrl: uploadedVideoUrl }
+        );
+      }
+
+      showToast('🎬 Video safaltapoorvak bhej diya gaya!');
+      if (videoPreviewUrl) {
+        try { URL.revokeObjectURL(videoPreviewUrl); } catch {}
+      }
+      setSelectedVideoToSend(null);
+      setVideoPreviewUrl(null);
+      setVideoCaptionInput('');
+      setChatVideoUploadProgress(0);
+    } catch (err: any) {
+      showToast(`❌ Video bhejte samay samasya aayi: ${err?.message || 'Error'}`);
+    } finally {
+      setIsUploadingChatVideo(false);
+    }
+  };
 
   // Maintain stable object URLs for all selected photos in batch (prevents broken thumbnails and preview blanks)
   useEffect(() => {
@@ -3130,7 +3340,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
 
   return (
     <div className={`fixed inset-0 z-[550] bg-slate-950/70 backdrop-blur-md flex items-center justify-center p-0 md:p-4 animate-in fade-in duration-200 transition-all ${
-      !isBottomNavHidden ? 'pb-[64px] md:pb-0' : 'pb-0'
+      !isBottomNavHidden ? 'pb-[64px]' : 'pb-0'
     }`}>
       <div className="w-full h-full md:max-w-2xl md:h-[92vh] md:rounded-3xl bg-slate-100 dark:bg-slate-950 flex flex-col shadow-2xl overflow-hidden border border-purple-500/20">
 
@@ -3148,88 +3358,78 @@ export const WhatsAppChatModal: React.FC<Props> = ({
         {isTopBarHidden && (
           <div
             onClick={onToggleTopBar}
-            className="w-full py-1.5 bg-gradient-to-r from-slate-950 via-purple-950 to-slate-950 border-b border-purple-500/30 flex items-center justify-center gap-2 cursor-pointer hover:bg-slate-900 transition-colors z-30 shadow-md select-none"
+            className="w-full py-1 bg-gradient-to-r from-slate-950 via-purple-950 to-slate-950 border-b border-purple-500/30 flex items-center justify-center gap-1.5 cursor-pointer hover:bg-slate-900 transition-colors z-30 shadow-md select-none"
             title="Top bar wapas dikhane ke liye tap karein"
           >
-            <div className="w-8 h-1 rounded-full bg-gradient-to-r from-purple-400 via-pink-400 to-indigo-400 shadow-[0_0_8px_rgba(236,72,153,0.8)]" />
-            <span className="text-[10px] text-purple-200 font-bold tracking-wide flex items-center gap-1">
+            <div className="w-6 h-0.5 rounded-full bg-gradient-to-r from-purple-400 via-pink-400 to-indigo-400 shadow-[0_0_8px_rgba(236,72,153,0.8)]" />
+            <span className="text-[9px] text-purple-200 font-bold tracking-wide flex items-center gap-1">
               <span>Top Bar Wapas Dikhayein</span>
-              <span className="text-xs text-pink-400">▾</span>
+              <span className="text-[10px] text-pink-400">▾</span>
             </span>
           </div>
         )}
 
-        {/* ─── NSTA MESSENGER MAIN HEADER (Ultra-Premium Glass Aesthetic) ─── */}
+        {/* ─── NSTA MESSENGER MAIN HEADER (50% Ultra-Slim Glass Aesthetic) ─── */}
         {!isCurrentChatActive ? (
           <div
-            className={`text-white shadow-2xl border-b border-purple-500/30 transition-all duration-200 ease-in-out relative select-none ${
+            className={`text-white shadow-xl border-b border-purple-500/30 transition-all duration-200 ease-in-out relative select-none ${
               isTopBarHidden ? '-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none p-0 border-none' : 'translate-y-0 opacity-100'
             }`}
             style={{
               background: 'radial-gradient(ellipse at 50% -20%, #2e1065 0%, #0d0722 60%, #05020c 100%)',
             }}
           >
-            {/* Top row */}
-            <div className="px-3.5 pt-3 pb-2 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                {/* Nsta Messenger Gradient Icon with Outer Glow */}
+            {/* Top row — 50% thinner */}
+            <div className="px-2.5 py-1 flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                {/* Nsta Messenger Compact Gradient Icon */}
                 <div className="relative group">
-                  <div className="w-10 h-10 rounded-2xl p-[2px] bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 shadow-[0_0_15px_rgba(244,63,94,0.4)] transition-transform duration-200 group-hover:scale-105">
-                    <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center relative overflow-hidden">
-                      <div className="absolute inset-0 bg-gradient-to-b from-purple-500/20 to-transparent pointer-events-none" />
-                      <MessageCircle size={20} className="text-pink-400 fill-pink-500/20 drop-shadow-[0_2px_6px_rgba(244,63,94,0.6)]" />
+                  <div className="w-6 h-6 rounded-lg p-[1.5px] bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 shadow-[0_0_10px_rgba(244,63,94,0.35)]">
+                    <div className="w-full h-full bg-slate-950 rounded-[6px] flex items-center justify-center relative overflow-hidden">
+                      <MessageCircle size={12} className="text-pink-400 fill-pink-500/20" />
                     </div>
                   </div>
-                  <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-slate-950 shadow-[0_0_6px_rgba(16,185,129,0.8)]" />
+                  <span className="absolute -bottom-0.5 -right-0.5 w-2 h-2 bg-emerald-500 rounded-full border border-slate-950" />
                 </div>
 
-                <div>
-                  <h2 className="font-black text-lg sm:text-xl tracking-tight leading-none flex items-center gap-1.5">
-                    <span className="bg-gradient-to-r from-pink-300 via-purple-200 to-indigo-200 bg-clip-text text-transparent font-black drop-shadow-sm">
-                      Nsta Messenger
-                    </span>
-                    <span className="text-[9px] sm:text-[10px] bg-gradient-to-r from-purple-600/50 to-pink-600/50 text-purple-100 border border-purple-400/50 px-2 py-0.5 rounded-full font-black uppercase tracking-wider shadow-[0_0_10px_rgba(168,85,247,0.4)] flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping inline-block" />
-                      LIVE
-                    </span>
-                  </h2>
-                  <p className="text-[11px] text-purple-200/80 font-medium mt-1 flex items-center gap-1.5">
-                    <span>Friends, Direct Chats & Study Groups</span>
-                  </p>
-                </div>
+                <h2 className="font-black text-xs sm:text-sm tracking-tight leading-none flex items-center gap-1">
+                  <span className="bg-gradient-to-r from-pink-300 via-purple-200 to-indigo-200 bg-clip-text text-transparent font-black">
+                    Nsta Messenger
+                  </span>
+                  <span className="text-[8px] bg-gradient-to-r from-purple-600/50 to-pink-600/50 text-purple-100 border border-purple-400/50 px-1.5 py-0 rounded-full font-black uppercase tracking-wider flex items-center gap-0.5">
+                    <span className="w-1 h-1 rounded-full bg-emerald-400 animate-ping inline-block" />
+                    LIVE
+                  </span>
+                </h2>
               </div>
 
-              {/* Right Action Icons */}
-              <div className="flex items-center gap-1 sm:gap-1.5">
+              {/* Right Action Icons — Compact */}
+              <div className="flex items-center gap-1">
                 <button
                   type="button"
                   onClick={() => setShowSearchInput(!showSearchInput)}
-                  className={`p-2 rounded-xl transition-all border ${
+                  className={`p-1 rounded-lg transition-all border ${
                     showSearchInput
-                      ? 'bg-purple-600/30 border-purple-400/50 text-pink-300 shadow-[0_0_10px_rgba(168,85,247,0.3)]'
+                      ? 'bg-purple-600/30 border-purple-400/50 text-pink-300'
                       : 'bg-white/5 hover:bg-white/15 border-white/10 text-white/90 hover:text-white'
                   }`}
                   title="Search contacts or groups"
                 >
-                  <Search size={17} />
+                  <Search size={13} />
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setActiveTab('FIND_FRIENDS')}
-                  className={`px-3 py-1.5 rounded-full transition-all flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95 border ${
+                  className={`px-2 py-0.5 rounded-full transition-all flex items-center gap-1 cursor-pointer shadow-sm active:scale-95 border ${
                     activeTab === 'FIND_FRIENDS'
-                      ? 'bg-gradient-to-r from-pink-500 via-rose-500 to-purple-600 text-white border-pink-300/80 ring-2 ring-purple-300/50 shadow-[0_0_15px_rgba(244,63,94,0.5)]'
-                      : 'bg-gradient-to-r from-rose-500/90 via-pink-600/90 to-purple-600/90 hover:from-rose-500 hover:to-purple-600 text-white border-pink-400/50 shadow-[0_0_12px_rgba(244,63,94,0.35)]'
+                      ? 'bg-gradient-to-r from-pink-500 via-rose-500 to-purple-600 text-white border-pink-300/80 ring-1 ring-purple-300/50'
+                      : 'bg-gradient-to-r from-rose-500/90 via-pink-600/90 to-purple-600/90 hover:from-rose-500 hover:to-purple-600 text-white border-pink-400/50'
                   }`}
                   title="Dost Banayein / Naye Classmates Se Judein"
                 >
-                  <div className="relative flex items-center justify-center">
-                    <UserPlus size={14} className="text-amber-200 drop-shadow" />
-                    <span className="absolute -top-1 -right-1 w-2 h-2 bg-emerald-400 rounded-full animate-ping" />
-                    <span className="absolute -top-1 -right-1 w-2 h-2 bg-emerald-400 rounded-full" />
-                  </div>
-                  <span className="text-[11px] font-black tracking-tight text-white whitespace-nowrap drop-shadow-xs">
+                  <UserPlus size={11} className="text-amber-200" />
+                  <span className="text-[9px] font-black tracking-tight text-white whitespace-nowrap">
                     +Dost
                   </span>
                 </button>
@@ -3238,13 +3438,13 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                   <button
                     type="button"
                     onClick={() => setShowMainMenu(!showMainMenu)}
-                    className="p-2 rounded-xl bg-white/5 hover:bg-white/15 border border-white/10 text-white/90 transition-all hover:text-white"
+                    className="p-1 rounded-lg bg-white/5 hover:bg-white/15 border border-white/10 text-white/90 transition-all hover:text-white"
                     title="Menu"
                   >
-                    <MoreVertical size={17} />
+                    <MoreVertical size={13} />
                   </button>
                   {showMainMenu && (
-                    <div className="absolute right-0 top-full mt-1.5 w-52 bg-slate-900/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-purple-500/30 py-1.5 z-50 animate-in fade-in zoom-in-95">
+                    <div className="absolute right-0 top-full mt-1 w-52 bg-slate-900/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-purple-500/30 py-1.5 z-50 animate-in fade-in zoom-in-95">
                       <button
                         onClick={() => {
                           setShowMainMenu(false);
@@ -3292,131 +3492,111 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="p-2 rounded-xl bg-white/5 hover:bg-rose-500/20 border border-white/10 hover:border-rose-400/40 text-white/90 hover:text-rose-300 transition-all ml-0.5"
+                  className="p-1 rounded-lg bg-white/5 hover:bg-rose-500/20 border border-white/10 hover:border-rose-400/40 text-white/90 hover:text-rose-300 transition-all"
                   title="Close Messenger"
                 >
-                  <X size={18} />
+                  <X size={14} />
                 </button>
               </div>
             </div>
 
             {/* Expandable Search Input */}
             {showSearchInput && (
-              <div className="px-3.5 pb-2.5 pt-0.5">
+              <div className="px-2.5 pb-1.5 pt-0.5">
                 <div className="relative">
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search friends, students or study groups..."
-                    className="w-full bg-slate-900/90 text-white placeholder-purple-200/50 rounded-xl px-9 py-2 text-xs md:text-sm border border-purple-500/40 focus:outline-none focus:ring-2 focus:ring-purple-400 shadow-inner"
+                    className="w-full bg-slate-900/90 text-white placeholder-purple-200/50 rounded-lg px-7 py-1 text-xs border border-purple-500/40 focus:outline-none focus:ring-1 focus:ring-purple-400 shadow-inner"
                     autoFocus
                   />
-                  <Search size={15} className="absolute left-3 top-2.5 text-purple-300/70" />
+                  <Search size={13} className="absolute left-2.5 top-1.5 text-purple-300/70" />
                   {searchQuery && (
                     <button
                       onClick={() => setSearchQuery('')}
-                      className="absolute right-3 top-2.5 text-purple-300/70 hover:text-white"
+                      className="absolute right-2.5 top-1.5 text-purple-300/70 hover:text-white"
                     >
-                      <X size={15} />
+                      <X size={13} />
                     </button>
                   )}
                 </div>
               </div>
             )}
 
-            {/* ── Navigation Tabs (Ultra-Premium "Patta" Strip with Glowing Neon Indicators) ── */}
-            <div className="bg-[#080415]/90 backdrop-blur-xl border-t border-purple-500/25 px-2 py-1.5 flex items-center justify-between gap-1 sm:gap-2">
+            {/* ── Navigation Tabs (50% Slimmer "Patta" Strip) ── */}
+            <div className="bg-[#080415]/90 backdrop-blur-xl border-t border-purple-500/25 px-1.5 py-0.5 flex items-center justify-between gap-1">
               <button
                 type="button"
                 onClick={() => setActiveTab('CHATS')}
-                className={`flex-1 py-2 px-1 rounded-xl text-xs font-black tracking-wider transition-all duration-200 relative flex flex-col items-center justify-center gap-1 cursor-pointer ${
+                className={`flex-1 py-1 px-1 rounded-lg text-[10px] font-black tracking-wider transition-all duration-200 relative flex items-center justify-center gap-1 cursor-pointer ${
                   activeTab === 'CHATS'
-                    ? 'bg-gradient-to-r from-purple-950/90 via-indigo-950/90 to-purple-900/90 text-white border border-purple-400/50 shadow-[0_2px_12px_rgba(168,85,247,0.3)]'
+                    ? 'bg-gradient-to-r from-purple-950/90 via-indigo-950/90 to-purple-900/90 text-white border border-purple-400/50 shadow-[0_1px_8px_rgba(168,85,247,0.25)]'
                     : 'text-purple-300/70 hover:text-white hover:bg-white/5 border border-transparent'
                 }`}
               >
-                <div className="flex items-center gap-1.5">
-                  <MessageCircle size={14} className={activeTab === 'CHATS' ? 'text-pink-400 fill-pink-500/30' : ''} />
-                  <span>CHATS</span>
-                  {friends.length > 0 && (
-                    <span className="bg-emerald-500 text-white text-[9px] px-1.5 py-0.2 rounded-full font-black shadow-[0_0_8px_rgba(16,185,129,0.7)]">
-                      {friends.length}
-                    </span>
-                  )}
-                </div>
-                {activeTab === 'CHATS' && (
-                  <span className="w-6 h-[2.5px] rounded-full bg-gradient-to-r from-emerald-400 to-teal-300 shadow-[0_0_8px_rgba(52,211,153,0.9)] animate-in zoom-in-75 duration-200" />
+                <MessageCircle size={11} className={activeTab === 'CHATS' ? 'text-pink-400 fill-pink-500/30' : ''} />
+                <span>CHATS</span>
+                {friends.length > 0 && (
+                  <span className="bg-emerald-500 text-white text-[8px] px-1 py-0 rounded-full font-black leading-tight">
+                    {friends.length}
+                  </span>
                 )}
               </button>
 
               <button
                 type="button"
                 onClick={() => setActiveTab('GROUPS')}
-                className={`flex-1 py-2 px-1 rounded-xl text-xs font-black tracking-wider transition-all duration-200 relative flex flex-col items-center justify-center gap-1 cursor-pointer ${
+                className={`flex-1 py-1 px-1 rounded-lg text-[10px] font-black tracking-wider transition-all duration-200 relative flex items-center justify-center gap-1 cursor-pointer ${
                   activeTab === 'GROUPS'
-                    ? 'bg-gradient-to-r from-purple-950/90 via-indigo-950/90 to-purple-900/90 text-white border border-purple-400/50 shadow-[0_2px_12px_rgba(168,85,247,0.3)]'
+                    ? 'bg-gradient-to-r from-purple-950/90 via-indigo-950/90 to-purple-900/90 text-white border border-purple-400/50 shadow-[0_1px_8px_rgba(168,85,247,0.25)]'
                     : 'text-purple-300/70 hover:text-white hover:bg-white/5 border border-transparent'
                 }`}
               >
-                <div className="flex items-center gap-1.5">
-                  <Users size={14} className={activeTab === 'GROUPS' ? 'text-indigo-400 fill-indigo-500/30' : ''} />
-                  <span>GROUPS</span>
-                  <span className="bg-purple-800/90 text-purple-200 text-[9px] px-1.5 py-0.2 rounded-full font-bold">
-                    {groups.length}
-                  </span>
-                </div>
-                {activeTab === 'GROUPS' && (
-                  <span className="w-6 h-[2.5px] rounded-full bg-gradient-to-r from-purple-400 to-indigo-300 shadow-[0_0_8px_rgba(168,85,247,0.9)] animate-in zoom-in-75 duration-200" />
-                )}
+                <Users size={11} className={activeTab === 'GROUPS' ? 'text-indigo-400 fill-indigo-500/30' : ''} />
+                <span>GROUPS</span>
+                <span className="bg-purple-800/90 text-purple-200 text-[8px] px-1 py-0 rounded-full font-bold leading-tight">
+                  {groups.length}
+                </span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setActiveTab('REQUESTS')}
-                className={`flex-1 py-2 px-1 rounded-xl text-xs font-black tracking-wider transition-all duration-200 relative flex flex-col items-center justify-center gap-1 cursor-pointer ${
+                className={`flex-1 py-1 px-1 rounded-lg text-[10px] font-black tracking-wider transition-all duration-200 relative flex items-center justify-center gap-1 cursor-pointer ${
                   activeTab === 'REQUESTS'
-                    ? 'bg-gradient-to-r from-purple-950/90 via-indigo-950/90 to-purple-900/90 text-white border border-purple-400/50 shadow-[0_2px_12px_rgba(168,85,247,0.3)]'
+                    ? 'bg-gradient-to-r from-purple-950/90 via-indigo-950/90 to-purple-900/90 text-white border border-purple-400/50 shadow-[0_1px_8px_rgba(168,85,247,0.25)]'
                     : 'text-purple-300/70 hover:text-white hover:bg-white/5 border border-transparent'
                 }`}
               >
-                <div className="flex items-center gap-1.5">
-                  <UserCheck size={14} className={activeTab === 'REQUESTS' ? 'text-amber-400' : ''} />
-                  <span>REQUESTS</span>
-                  {friendRequests.length > 0 && (
-                    <span className="bg-amber-400 text-slate-950 text-[9px] px-1.5 py-0.2 rounded-full font-black animate-pulse shadow-[0_0_8px_rgba(245,158,11,0.8)]">
-                      {friendRequests.length}
-                    </span>
-                  )}
-                </div>
-                {activeTab === 'REQUESTS' && (
-                  <span className="w-6 h-[2.5px] rounded-full bg-gradient-to-r from-amber-400 to-orange-400 shadow-[0_0_8px_rgba(245,158,11,0.9)] animate-in zoom-in-75 duration-200" />
+                <UserCheck size={11} className={activeTab === 'REQUESTS' ? 'text-amber-400' : ''} />
+                <span>REQUESTS</span>
+                {friendRequests.length > 0 && (
+                  <span className="bg-amber-400 text-slate-950 text-[8px] px-1 py-0 rounded-full font-black animate-pulse leading-tight">
+                    {friendRequests.length}
+                  </span>
                 )}
               </button>
 
               <button
                 type="button"
                 onClick={() => setActiveTab('PROFILE')}
-                className={`flex-1 py-2 px-1 rounded-xl text-xs font-black tracking-wider transition-all duration-200 relative flex flex-col items-center justify-center gap-1 cursor-pointer ${
+                className={`flex-1 py-1 px-1 rounded-lg text-[10px] font-black tracking-wider transition-all duration-200 relative flex items-center justify-center gap-1 cursor-pointer ${
                   activeTab === 'PROFILE'
-                    ? 'bg-gradient-to-r from-purple-950/90 via-indigo-950/90 to-purple-900/90 text-white border border-purple-400/50 shadow-[0_2px_12px_rgba(168,85,247,0.3)]'
+                    ? 'bg-gradient-to-r from-purple-950/90 via-indigo-950/90 to-purple-900/90 text-white border border-purple-400/50 shadow-[0_1px_8px_rgba(168,85,247,0.25)]'
                     : 'text-purple-300/70 hover:text-white hover:bg-white/5 border border-transparent'
                 }`}
               >
-                <div className="flex items-center gap-1.5">
-                  <UserIcon size={14} className={activeTab === 'PROFILE' ? 'text-pink-400' : ''} />
-                  <span>PROFILE</span>
-                </div>
-                {activeTab === 'PROFILE' && (
-                  <span className="w-6 h-[2.5px] rounded-full bg-gradient-to-r from-pink-400 to-rose-300 shadow-[0_0_8px_rgba(244,63,94,0.9)] animate-in zoom-in-75 duration-200" />
-                )}
+                <UserIcon size={11} className={activeTab === 'PROFILE' ? 'text-pink-400' : ''} />
+                <span>PROFILE</span>
               </button>
             </div>
           </div>
         ) : isSelectMode ? (
           /* ─── MULTI-SELECT ACTION BAR HEADER (COPY, SAVE, DELETE, SELECT ALL) ─── */
-          <div className="bg-gradient-to-r from-purple-950 via-indigo-950 to-slate-950 text-white px-3 py-2.5 flex items-center justify-between shadow-lg border-b border-purple-500/40 animate-in fade-in duration-150">
-            <div className="flex items-center gap-2.5">
+          <div className="bg-gradient-to-r from-purple-950 via-indigo-950 to-slate-950 text-white px-2.5 py-1 flex items-center justify-between shadow-lg border-b border-purple-500/40 animate-in fade-in duration-150">
+            <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -3424,20 +3604,19 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                   setSelectedMsgIds(new Set());
                   setReactionPickerMsgId(null);
                 }}
-                className="p-1.5 rounded-full hover:bg-white/15 text-white transition-colors cursor-pointer"
+                className="p-1 rounded-full hover:bg-white/15 text-white transition-colors cursor-pointer"
                 title="Cancel Selection (X)"
               >
-                <X size={20} />
+                <X size={16} />
               </button>
               <div>
-                <h3 className="font-black text-sm text-white flex items-center gap-1.5">
+                <h3 className="font-black text-xs text-white flex items-center gap-1.5 leading-tight">
                   <span>{selectedMsgIds.size} Selected</span>
                 </h3>
-                <p className="text-[10px] text-purple-200/80 leading-none">Tap message to select/deselect</p>
               </div>
             </div>
 
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1">
               {/* Select or Deselect All */}
               <button
                 type="button"
@@ -3448,10 +3627,10 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                     setSelectedMsgIds(new Set(displayMessages.map((m) => m.id)));
                   }
                 }}
-                className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all flex items-center gap-1 cursor-pointer active:scale-95"
+                className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer active:scale-95"
                 title="Select or Deselect All"
               >
-                <CheckCheck size={14} />
+                <CheckCheck size={13} />
                 <span className="hidden sm:inline">{selectedMsgIds.size === displayMessages.length ? 'Deselect All' : 'Select All'}</span>
               </button>
 
@@ -3460,14 +3639,14 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                 type="button"
                 onClick={handleCopySelectedMessages}
                 disabled={selectedMsgIds.size === 0}
-                className={`px-2.5 py-1.5 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold ${
+                className={`px-2 py-1 rounded-lg transition-all flex items-center gap-1 text-[11px] font-bold ${
                   selectedMsgIds.size > 0
                     ? 'bg-purple-600/80 hover:bg-purple-600 text-white shadow-sm cursor-pointer active:scale-95'
                     : 'opacity-40 cursor-not-allowed text-slate-400 bg-white/5'
                 }`}
                 title="Copy Selected Messages (Clipboard me copy karein)"
               >
-                <Copy size={15} />
+                <Copy size={13} />
                 <span className="hidden xs:inline">Copy</span>
               </button>
 
@@ -3480,7 +3659,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                     type="button"
                     onClick={() => handleToggleSaveSelectedMessages()}
                     disabled={selectedMsgIds.size === 0}
-                    className={`px-2.5 py-1.5 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold ${
+                    className={`px-2 py-1 rounded-lg transition-all flex items-center gap-1 text-[11px] font-bold ${
                       selectedMsgIds.size > 0
                         ? allSaved
                           ? 'bg-amber-500/25 hover:bg-amber-500/35 text-amber-300 border border-amber-400/40 shadow-sm cursor-pointer active:scale-95'
@@ -3493,7 +3672,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                         : 'Save message (Snapchat Vanish Mode me kabhi delete na hoga unsave hone tak)'
                     }
                   >
-                    {allSaved ? <BookmarkCheck size={15} /> : <Bookmark size={15} />}
+                    {allSaved ? <BookmarkCheck size={13} /> : <Bookmark size={13} />}
                     <span className="hidden xs:inline">{allSaved ? 'Unsave' : 'Save'}</span>
                   </button>
                 );
@@ -3506,29 +3685,29 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                   if (selectedMsgIds.size > 0) setShowBatchDeleteDialog(true);
                 }}
                 disabled={selectedMsgIds.size === 0}
-                className={`p-2 rounded-xl transition-all flex items-center justify-center ${
+                className={`p-1.5 rounded-lg transition-all flex items-center justify-center ${
                   selectedMsgIds.size > 0
                     ? 'bg-rose-600/80 hover:bg-rose-600 text-white shadow-sm cursor-pointer active:scale-95'
                     : 'opacity-40 cursor-not-allowed text-slate-400 bg-white/5'
                 }`}
                 title="Delete Selected Messages"
               >
-                <Trash2 size={16} />
+                <Trash2 size={14} />
               </button>
             </div>
           </div>
         ) : (
-          /* ─── ACTIVE CHAT CONVERSATION HEADER ──────────────────────── */
+          /* ─── ACTIVE CHAT CONVERSATION HEADER (50% Slimmer) ──────────────────────── */
           <div className={`bg-gradient-to-r from-slate-950 via-purple-950 to-slate-900 text-white flex items-center justify-between shadow-md border-b border-purple-500/20 transition-all duration-200 ease-in-out ${
-            isTopBarHidden ? '-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none p-0 border-none' : 'px-3 py-2 translate-y-0 opacity-100'
+            isTopBarHidden ? '-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none p-0 border-none' : 'px-2.5 py-1 translate-y-0 opacity-100'
           }`}>
-            <div className="flex items-center gap-2 flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 flex-1 min-w-0">
               <button
                 onClick={handleExitChat}
-                className="p-1.5 rounded-full hover:bg-white/10 text-white transition-colors"
+                className="p-1 rounded-full hover:bg-white/10 text-white transition-colors"
                 title="Back to Chats (Locks chat if enabled)"
               >
-                <ArrowLeft size={20} />
+                <ArrowLeft size={16} />
               </button>
 
               {/* Avatar with Instagram-style story ring */}
@@ -3539,8 +3718,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                 className="relative cursor-pointer flex-shrink-0"
               >
                 {selectedContact ? (
-                  <div className="w-10 h-10 rounded-full p-[2px] bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 shadow-md">
-                    <div className="w-full h-full rounded-full bg-slate-900 flex items-center justify-center text-white font-bold text-sm overflow-hidden">
+                  <div className="w-7 h-7 rounded-full p-[1.5px] bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 shadow-sm">
+                    <div className="w-full h-full rounded-full bg-slate-900 flex items-center justify-center text-white font-bold text-xs overflow-hidden">
                       {selectedContact.photoURL ? (
                         <img
                           src={selectedContact.photoURL}
@@ -3553,12 +3732,12 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                     </div>
                   </div>
                 ) : (
-                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-purple-800 to-indigo-900 flex items-center justify-center text-lg shadow-inner border border-purple-400/40">
+                  <div className="w-7 h-7 rounded-xl bg-gradient-to-br from-purple-800 to-indigo-900 flex items-center justify-center text-sm shadow-inner border border-purple-400/40">
                     {selectedGroup?.emoji || '👥'}
                   </div>
                 )}
                 {(selectedContact && isUserFriend(selectedContact.id) && isUserCurrentlyOnline(selectedContact.id)) && (
-                  <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 rounded-full border-2 border-slate-950" />
+                  <div className="absolute bottom-0 right-0 w-2 h-2 bg-emerald-500 rounded-full border border-slate-950" />
                 )}
               </div>
 
@@ -3569,47 +3748,47 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                 }}
                 className="cursor-pointer flex-1 min-w-0"
               >
-                <h3 className="font-bold text-sm text-white truncate leading-tight flex items-center gap-1.5">
+                <h3 className="font-bold text-xs text-white truncate leading-none flex items-center gap-1">
                   <span>{selectedContact?.name || selectedGroup?.name}</span>
                   {activeChatContextId && (
                     isChatStarred(activeChatContextId, effectiveUserId || user.id) ? (
-                      <span title="Special Category (Special Password se open hogi)" className="text-[10px] bg-amber-400/25 border border-amber-400/70 px-1.5 py-0.2 rounded text-amber-300 font-bold flex items-center gap-0.5">
-                        <Star size={9} className="fill-amber-400 text-amber-400" /> Special
+                      <span title="Special Category (Special Password se open hogi)" className="text-[8px] bg-amber-400/25 border border-amber-400/70 px-1 py-0 rounded text-amber-300 font-bold flex items-center gap-0.5">
+                        <Star size={8} className="fill-amber-400 text-amber-400" /> Special
                       </span>
                     ) : (
-                      <span title="Default Category (Default Password se open hogi)" className="text-[10px] bg-white/10 border border-white/20 px-1.5 py-0.2 rounded text-purple-200 font-normal">
+                      <span title="Default Category (Default Password se open hogi)" className="text-[8px] bg-white/10 border border-white/20 px-1 py-0 rounded text-purple-200 font-normal">
                         Default
                       </span>
                     )
                   )}
                   {isCurrentChatLocked && (
-                    <span title="Chat is Locked with PIN" className="text-[11px] bg-rose-950/80 border border-rose-500/50 px-1 py-0.2 rounded text-rose-300 flex items-center gap-0.5">
-                      <Lock size={10} /> Lock
+                    <span title="Chat is Locked with PIN" className="text-[9px] bg-rose-950/80 border border-rose-500/50 px-1 py-0 rounded text-rose-300 flex items-center gap-0.5">
+                      <Lock size={8} /> Lock
                     </span>
                   )}
                   {currentDisappearingTimer !== 0 && (
-                    <span title={`Disappearing messages: ${formatDisappearingDuration(currentDisappearingTimer)}`} className="text-[11px] bg-amber-950/80 border border-amber-500/50 px-1 py-0.2 rounded text-amber-300 flex items-center gap-0.5">
-                      <Clock size={10} /> {currentDisappearingTimer === -1 ? 'Vanish' : formatDisappearingDuration(currentDisappearingTimer).split(' ')[0]}
+                    <span title={`Disappearing messages: ${formatDisappearingDuration(currentDisappearingTimer)}`} className="text-[9px] bg-amber-950/80 border border-amber-500/50 px-1 py-0 rounded text-amber-300 flex items-center gap-0.5">
+                      <Clock size={8} /> {currentDisappearingTimer === -1 ? 'Vanish' : formatDisappearingDuration(currentDisappearingTimer).split(' ')[0]}
                     </span>
                   )}
                   {selectedContact?.role === 'SUB_ADMIN' && (
-                    <Shield size={12} className="text-purple-300 fill-purple-400" />
+                    <Shield size={10} className="text-purple-300 fill-purple-400" />
                   )}
                   {selectedGroup?.isPrivate ? (
-                    <span className="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1 py-0.2 rounded font-bold flex items-center gap-0.5">
-                      <Lock size={9} /> Private
+                    <span className="text-[8px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1 py-0 rounded font-bold flex items-center gap-0.5">
+                      <Lock size={8} /> Private
                     </span>
                   ) : selectedGroup ? (
-                    <span className="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1 py-0.2 rounded font-bold flex items-center gap-0.5">
-                      <Globe size={9} /> Public
+                    <span className="text-[8px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1 py-0 rounded font-bold flex items-center gap-0.5">
+                      <Globe size={8} /> Public
                     </span>
                   ) : null}
                 </h3>
-                <p className="text-[11px] text-purple-200/80 truncate">
+                <p className="text-[9px] text-purple-200/80 truncate leading-none mt-0.5">
                   {selectedContact ? (
                     isUserCurrentlyOnline(selectedContact.id) ? (
                       <span className="text-emerald-400 font-semibold flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse" />
+                        <span className="w-1 h-1 rounded-full bg-emerald-400 inline-block animate-pulse" />
                         <span>Online</span>
                       </span>
                     ) : (
@@ -3625,7 +3804,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
             </div>
 
             {/* Quick action buttons on chat header */}
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5">
               {/* Star / Special Category Button */}
               {activeChatContextId && (
                 <button
@@ -3639,7 +3818,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                     );
                     setStarredStateTick((v) => v + 1);
                   }}
-                  className={`p-2 rounded-full transition-colors cursor-pointer ${
+                  className={`p-1.5 rounded-full transition-colors cursor-pointer ${
                     isChatStarred(activeChatContextId, effectiveUserId || user.id)
                       ? 'text-amber-400 bg-amber-400/20 hover:bg-amber-400/30'
                       : 'text-white/80 hover:text-amber-300 hover:bg-white/10'
@@ -3651,7 +3830,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                   }
                 >
                   <Star
-                    size={17}
+                    size={14}
                     className={
                       isChatStarred(activeChatContextId, effectiveUserId || user.id)
                         ? 'fill-amber-400 text-amber-400'
@@ -3664,14 +3843,14 @@ export const WhatsAppChatModal: React.FC<Props> = ({
               {/* Disappearing Messages Quick Button */}
               <button
                 onClick={() => setShowDisappearingModal(true)}
-                className={`p-2 rounded-full hover:bg-white/10 transition-colors relative ${
+                className={`p-1.5 rounded-full hover:bg-white/10 transition-colors relative ${
                   currentDisappearingTimer !== 0 ? 'bg-amber-500/25 text-amber-300' : 'text-white'
                 }`}
                 title={`Disappearing Messages: ${formatDisappearingDuration(currentDisappearingTimer)}`}
               >
-                <Clock size={17} />
+                <Clock size={14} />
                 {currentDisappearingTimer !== 0 && (
-                  <span className="absolute top-1 right-1 w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
+                  <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse" />
                 )}
               </button>
 
@@ -3679,10 +3858,10 @@ export const WhatsAppChatModal: React.FC<Props> = ({
               {selectedGroup && (
                 <button
                   onClick={() => setShowAddFriendModal(true)}
-                  className="px-2 py-1 bg-purple-600/80 hover:bg-purple-600 text-white text-[10px] font-bold rounded-lg flex items-center gap-1 shadow-sm transition-colors border border-purple-400/40"
+                  className="px-1.5 py-0.5 bg-purple-600/80 hover:bg-purple-600 text-white text-[9px] font-bold rounded-md flex items-center gap-0.5 shadow-sm transition-colors border border-purple-400/40"
                   title="Add Friend to Group"
                 >
-                  <UserPlus size={13} />
+                  <UserPlus size={11} />
                   <span className="hidden sm:inline">Add Friend</span>
                 </button>
               )}
@@ -3690,10 +3869,10 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                 <div className="relative">
                   <button
                     onClick={() => setShowContactMenu(!showContactMenu)}
-                    className="p-2 rounded-full hover:bg-white/10 text-white transition-colors"
+                    className="p-1.5 rounded-full hover:bg-white/10 text-white transition-colors"
                     title="Group Options"
                   >
-                    <MoreVertical size={18} />
+                    <MoreVertical size={15} />
                   </button>
 
                   {showContactMenu && (
@@ -3975,6 +4154,153 @@ export const WhatsAppChatModal: React.FC<Props> = ({
             {/* TAB 1: CONFIRMED CHATS (FRIENDS ONLY) */}
             {activeTab === 'CHATS' && (
               <div className="relative min-h-full pb-20">
+                {/* ── NSTA 24-HOUR STATUS / STORIES STRIP (VIDEO & PHOTO VIA CLOUDINARY) ── */}
+                <div className="px-3.5 pt-3 pb-2.5 bg-gradient-to-r from-purple-950/15 via-indigo-950/10 to-pink-950/15 border-b border-slate-200/80 dark:border-slate-800/80">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-purple-700 dark:text-purple-300 flex items-center gap-1">
+                      <Radio size={11} className="text-rose-500 animate-pulse" />
+                      <span>NSTA Status (Video &amp; Photo • No Auto-Delete)</span>
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => statusVideoInputRef.current?.click()}
+                        className="px-2 py-0.5 rounded-lg bg-gradient-to-r from-rose-500 to-purple-600 text-white text-[10px] font-bold flex items-center gap-1 shadow-2xs active:scale-95 cursor-pointer"
+                        title="Video Status Lagayein (Cloudinary)"
+                      >
+                        <Video size={11} />
+                        <span>+ Video Status</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => statusImageInputRef.current?.click()}
+                        className="px-2 py-0.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-[10px] font-bold flex items-center gap-1 active:scale-95 cursor-pointer"
+                        title="Photo Status Lagayein"
+                      >
+                        <Camera size={11} />
+                        <span>+ Photo</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Hidden File Inputs for Status */}
+                  <input
+                    ref={statusVideoInputRef}
+                    type="file"
+                    accept="video/*"
+                    className="sr-only"
+                    onChange={(e) => handleSelectStatusFile(e, 'VIDEO')}
+                  />
+                  <input
+                    ref={statusImageInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="sr-only"
+                    onChange={(e) => handleSelectStatusFile(e, 'IMAGE')}
+                  />
+
+                  <div className="flex items-center gap-3 overflow-x-auto no-scrollbar py-0.5">
+                    {/* My Status Circle */}
+                    {(() => {
+                      const myUid = effectiveUserId || user.id;
+                      const myStatuses = statuses.filter((s) => isSameUser(s.userId, myUid));
+                      const hasMyStatus = myStatuses.length > 0;
+                      const myAvatar = currentUser?.photoURL || user?.photoURL;
+                      return (
+                        <div className="flex flex-col items-center shrink-0">
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (hasMyStatus) {
+                                  setActiveViewingStatuses(myStatuses);
+                                  setActiveViewingStatusIdx(0);
+                                } else {
+                                  statusVideoInputRef.current?.click();
+                                }
+                              }}
+                              className={`w-14 h-14 rounded-full p-[2.5px] transition-transform active:scale-95 cursor-pointer ${
+                                hasMyStatus
+                                  ? 'bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 shadow-md'
+                                  : 'border-2 border-dashed border-purple-400 dark:border-purple-600'
+                              }`}
+                              title={hasMyStatus ? 'Apna Status Dekhein' : 'Video ya Photo Status Lagayein'}
+                            >
+                              <div className="w-full h-full rounded-full bg-slate-900 text-white font-bold flex items-center justify-center overflow-hidden">
+                                {myAvatar ? (
+                                  <img src={myAvatar} alt="My Status" className="w-full h-full object-cover" />
+                                ) : (
+                                  (user.name || 'M').charAt(0).toUpperCase()
+                                )}
+                              </div>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                statusVideoInputRef.current?.click();
+                              }}
+                              className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-gradient-to-r from-rose-500 to-purple-600 text-white flex items-center justify-center border-2 border-white dark:border-slate-900 shadow-sm cursor-pointer"
+                              title="Naya Video Status Add Karein"
+                            >
+                              <Plus size={11} />
+                            </button>
+                          </div>
+                          <span className="text-[10px] font-bold text-slate-700 dark:text-slate-300 mt-1 max-w-[60px] truncate">
+                            {hasMyStatus ? `My (${myStatuses.length})` : 'My Status'}
+                          </span>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Other Users' Active Statuses Grouped by User */}
+                    {(() => {
+                      const myUid = effectiveUserId || user.id;
+                      const grouped = new Map<string, UserStatusItem[]>();
+                      statuses.forEach((st) => {
+                        if (isSameUser(st.userId, myUid)) return;
+                        const existing = grouped.get(st.userId) || [];
+                        existing.push(st);
+                        grouped.set(st.userId, existing);
+                      });
+                      return Array.from(grouped.entries()).map(([uid, userStatuses]) => {
+                        const latest = userStatuses[0];
+                        const hasVideo = userStatuses.some((s) => s.mediaType === 'VIDEO');
+                        return (
+                          <button
+                            key={uid}
+                            type="button"
+                            onClick={() => {
+                              setActiveViewingStatuses(userStatuses);
+                              setActiveViewingStatusIdx(0);
+                              markStatusViewed(userStatuses[0].id, myUid);
+                            }}
+                            className="flex flex-col items-center shrink-0 group cursor-pointer"
+                          >
+                            <div className="relative w-14 h-14 rounded-full p-[2.5px] bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 shadow-md group-hover:scale-105 transition-transform">
+                              <div className="w-full h-full rounded-full bg-slate-900 text-white font-bold flex items-center justify-center overflow-hidden">
+                                {latest.userPhoto ? (
+                                  <img src={latest.userPhoto} alt={latest.userName} className="w-full h-full object-cover" />
+                                ) : (
+                                  (latest.userName || 'U').charAt(0).toUpperCase()
+                                )}
+                              </div>
+                              {hasVideo && (
+                                <span className="absolute -bottom-0.5 -right-0.5 px-1 py-0.2 rounded-full bg-rose-600 text-white text-[8px] font-black border border-white dark:border-slate-900">
+                                  🎬
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] font-semibold text-slate-700 dark:text-slate-300 mt-1 max-w-[64px] truncate">
+                              {latest.userName.split(' ')[0]}
+                            </span>
+                          </button>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+
                 {/* Blocked Users Notice Bar */}
                 {blockedUsers.length > 0 && (
                   <div className="mx-4 mt-2.5 p-2 bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between">
@@ -5115,6 +5441,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                             FREE
                           </span>
                         )}
+                        <UserLevelBadge user={currentUser || user} size="xs" />
                       </div>
 
                       <div className="flex items-center gap-2 mt-0.5 flex-wrap">
@@ -5787,6 +6114,39 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                           <Ban size={12} className="opacity-70" />
                           <span>This message was deleted</span>
                         </p>
+                      ) : msg.type === 'VIDEO' && msg.mediaUrl ? (
+                        <div className="space-y-1.5 max-w-[260px] sm:max-w-[300px]">
+                          <div className="relative overflow-hidden rounded-xl bg-black border border-white/15">
+                            <video
+                              src={getOptimizedVideoUrl(msg.mediaUrl)}
+                              controls
+                              playsInline
+                              preload="metadata"
+                              className="w-full max-h-72 object-contain rounded-xl"
+                            />
+                          </div>
+                          <div className="flex items-center justify-between px-0.5">
+                            <span className={`text-[10px] font-bold flex items-center gap-1 ${isMe ? 'text-white/80' : 'text-purple-600 dark:text-purple-400'}`}>
+                              <Video size={11} /> Video
+                            </span>
+                            <a
+                              href={msg.mediaUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              download
+                              onClick={(e) => e.stopPropagation()}
+                              className={`px-2 py-0.5 rounded-lg text-[10px] font-bold flex items-center gap-1 opacity-80 hover:opacity-100 ${
+                                isMe ? 'text-white' : 'text-slate-600 dark:text-slate-300'
+                              }`}
+                            >
+                              <Download size={11} />
+                              <span>Download</span>
+                            </a>
+                          </div>
+                          {msg.text && (
+                            <p className="text-xs whitespace-pre-wrap leading-relaxed px-0.5">{msg.text}</p>
+                          )}
+                        </div>
                       ) : (msg.type === 'IMAGE' || !!msg.mediaUrl || (msg.mediaUrls && msg.mediaUrls.length > 0)) ? (
                         <div className="space-y-2">
                           {msg.mediaUrls && msg.mediaUrls.length > 1 ? (
@@ -6089,6 +6449,21 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                 </button>
                 <button
                   type="button"
+                  onClick={() => {
+                    setShowAttachmentMenu(false);
+                    if (videoInputRef.current) {
+                      videoInputRef.current.value = '';
+                      videoInputRef.current.click();
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-gradient-to-r from-sky-600 to-blue-600 hover:opacity-95 text-white rounded-xl text-xs font-bold shadow-xs flex-shrink-0 flex items-center gap-1.5 cursor-pointer active:scale-95 select-none"
+                  title="Mobile Gallery se Video Bhejein (Cloudinary)"
+                >
+                  <Video size={14} />
+                  <span>🎬 Video Bhejein</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => handleSendQuickAttachment('DOUBT', '📐 Mujhe is question ke formula calculation me doubt hai. Koi step explain kar sakta hai?')}
                   className="px-3 py-1.5 bg-amber-50 dark:bg-amber-950/50 hover:bg-amber-100 text-amber-800 dark:text-amber-200 rounded-xl text-xs font-bold border border-amber-200 flex-shrink-0 flex items-center gap-1 cursor-pointer"
                 >
@@ -6217,6 +6592,31 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                   >
                     <Camera size={20} />
                   </label>
+
+                  {/* Dedicated Video Upload Button (Cloudinary) */}
+                  <label
+                    htmlFor="nsta-chat-video-input"
+                    id="nsta-chat-video-button"
+                    className="p-2 text-slate-500 hover:text-sky-600 dark:hover:text-sky-400 transition-colors cursor-pointer flex items-center justify-center rounded-lg active:scale-95 select-none"
+                    title="Mobile Gallery se Video Bhejein (Cloudinary)"
+                    aria-label="Mobile Gallery se Video Bhejein"
+                    onClick={() => {
+                      if (videoInputRef.current) {
+                        videoInputRef.current.value = '';
+                      }
+                    }}
+                  >
+                    <Video size={20} />
+                  </label>
+                  <input
+                    id="nsta-chat-video-input"
+                    ref={videoInputRef}
+                    type="file"
+                    accept="video/*"
+                    className="sr-only"
+                    tabIndex={-1}
+                    onChange={handleSelectVideoFile}
+                  />
                   {/* File Selection Dialog (Gallery / Camera on Mobile) */}
                   <input
                     id="nsta-chat-image-input"
@@ -8154,6 +8554,352 @@ export const WhatsAppChatModal: React.FC<Props> = ({
             </div>
           </div>
         )}
+
+        {/* ─── MODAL: CHAT VIDEO PREVIEW & SEND (CLOUDINARY) ─────────────── */}
+        {selectedVideoToSend && videoPreviewUrl && (
+          <div className="fixed inset-0 z-[9995] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+            <div className="bg-white dark:bg-slate-900 border border-purple-500/30 rounded-3xl max-w-md w-full p-4 shadow-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+                  <Video size={16} className="text-sky-500" />
+                  <span>🎬 Video Message Bhejein</span>
+                </h3>
+                {!isUploadingChatVideo && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (videoPreviewUrl) {
+                        try { URL.revokeObjectURL(videoPreviewUrl); } catch {}
+                      }
+                      setSelectedVideoToSend(null);
+                      setVideoPreviewUrl(null);
+                      setVideoCaptionInput('');
+                    }}
+                    className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500"
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+
+              <div className="relative rounded-2xl overflow-hidden bg-black aspect-video max-h-64 mx-auto flex items-center justify-center">
+                <video
+                  src={videoPreviewUrl}
+                  controls
+                  playsInline
+                  className="w-full h-full object-contain"
+                />
+              </div>
+
+              {isUploadingChatVideo && (
+                <div className="bg-sky-50 dark:bg-sky-950/50 border border-sky-200 dark:border-sky-800 rounded-xl p-2.5">
+                  <div className="flex justify-between text-[11px] font-bold text-sky-700 dark:text-sky-300 mb-1">
+                    <span>☁️ Uploading Video to Cloudinary...</span>
+                    <span>{chatVideoUploadProgress}%</span>
+                  </div>
+                  <div className="w-full h-2 bg-sky-200 dark:bg-sky-900 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-sky-500 to-indigo-600 transition-all duration-300"
+                      style={{ width: `${chatVideoUploadProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <input
+                type="text"
+                value={videoCaptionInput}
+                onChange={(e) => setVideoCaptionInput(e.target.value)}
+                disabled={isUploadingChatVideo}
+                placeholder="Video ke sath message ya caption likhein (optional)..."
+                className="w-full bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 rounded-xl px-3.5 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-sky-500"
+              />
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={isUploadingChatVideo}
+                  onClick={() => {
+                    if (videoPreviewUrl) {
+                      try { URL.revokeObjectURL(videoPreviewUrl); } catch {}
+                    }
+                    setSelectedVideoToSend(null);
+                    setVideoPreviewUrl(null);
+                    setVideoCaptionInput('');
+                  }}
+                  className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isUploadingChatVideo}
+                  onClick={handleSendVideoMessage}
+                  className="flex-2 py-2.5 bg-gradient-to-r from-sky-600 to-indigo-600 text-white rounded-xl text-xs font-bold shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {isUploadingChatVideo ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      <span>Uploading {chatVideoUploadProgress}%...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send size={14} />
+                      <span>Video Bhejein 🚀</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─── MODAL: STATUS UPLOAD PREVIEW (VIDEO / PHOTO VIA CLOUDINARY) ─── */}
+        {showStatusUploadModal && statusFileToUpload && statusPreviewUrl && (
+          <div className="fixed inset-0 z-[9996] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+            <div className="bg-white dark:bg-slate-900 border border-purple-500/30 rounded-3xl max-w-md w-full p-4 shadow-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+                  <Radio size={16} className="text-rose-500" />
+                  <span>{statusMediaType === 'VIDEO' ? '🎬 Video Status Lagayein' : '📷 Photo Status Lagayein'}</span>
+                </h3>
+                {!isUploadingStatus && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (statusPreviewUrl) {
+                        try { URL.revokeObjectURL(statusPreviewUrl); } catch {}
+                      }
+                      setShowStatusUploadModal(false);
+                      setStatusFileToUpload(null);
+                      setStatusPreviewUrl(null);
+                      setStatusCaptionInput('');
+                    }}
+                    className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500"
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+
+              <div className="relative rounded-2xl overflow-hidden bg-black aspect-video max-h-72 mx-auto flex items-center justify-center">
+                {statusMediaType === 'VIDEO' ? (
+                  <video src={statusPreviewUrl} controls playsInline className="w-full h-full object-contain" />
+                ) : (
+                  <img src={statusPreviewUrl} alt="Status Preview" className="w-full h-full object-contain" />
+                )}
+              </div>
+
+              {isUploadingStatus && (
+                <div className="bg-purple-50 dark:bg-purple-950/50 border border-purple-200 dark:border-purple-800 rounded-xl p-2.5">
+                  <div className="flex justify-between text-[11px] font-bold text-purple-700 dark:text-purple-300 mb-1">
+                    <span>☁️ Uploading Status to Cloudinary...</span>
+                    <span>{statusUploadProgress}%</span>
+                  </div>
+                  <div className="w-full h-2 bg-purple-200 dark:bg-purple-900 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-rose-500 to-purple-600 transition-all duration-300"
+                      style={{ width: `${statusUploadProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <input
+                type="text"
+                value={statusCaptionInput}
+                onChange={(e) => setStatusCaptionInput(e.target.value)}
+                disabled={isUploadingStatus}
+                placeholder="Status caption likhein (optional)..."
+                className="w-full bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 rounded-xl px-3.5 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"
+              />
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={isUploadingStatus}
+                  onClick={() => {
+                    if (statusPreviewUrl) {
+                      try { URL.revokeObjectURL(statusPreviewUrl); } catch {}
+                    }
+                    setShowStatusUploadModal(false);
+                    setStatusFileToUpload(null);
+                    setStatusPreviewUrl(null);
+                    setStatusCaptionInput('');
+                  }}
+                  className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isUploadingStatus}
+                  onClick={handlePublishStatus}
+                  className="flex-2 py-2.5 bg-gradient-to-r from-rose-500 via-purple-600 to-indigo-600 text-white rounded-xl text-xs font-bold shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {isUploadingStatus ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      <span>Uploading {statusUploadProgress}%...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send size={14} />
+                      <span>Status Lagayein (Permanent) 🚀</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─── MODAL: FULLSCREEN STATUS / STORY VIEWER ───────────────────── */}
+        {activeViewingStatuses && activeViewingStatuses[activeViewingStatusIdx] && (() => {
+          const currentSt = activeViewingStatuses[activeViewingStatusIdx];
+          const myUid = effectiveUserId || user.id;
+          const isMyOwnStatus = isSameUser(currentSt.userId, myUid);
+          const viewCount = Object.keys(currentSt.views || {}).length;
+
+          return (
+            <div className="fixed inset-0 z-[9998] bg-black/95 backdrop-blur-md flex flex-col justify-between p-3 sm:p-5 select-none animate-in fade-in">
+              {/* Top Progress Bars + Author Header */}
+              <div className="space-y-3 z-20">
+                <div className="flex gap-1.5">
+                  {activeViewingStatuses.map((st, idx) => (
+                    <div key={st.id} className="flex-1 h-1 rounded-full bg-white/25 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${
+                          idx <= activeViewingStatusIdx ? 'bg-gradient-to-r from-amber-400 to-rose-500 w-full' : 'w-0'
+                        }`}
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 p-[2px]">
+                      <div className="w-full h-full rounded-full bg-slate-900 text-white font-bold flex items-center justify-center overflow-hidden text-xs">
+                        {currentSt.userPhoto ? (
+                          <img src={currentSt.userPhoto} alt={currentSt.userName} className="w-full h-full object-cover" />
+                        ) : (
+                          (currentSt.userName || 'U').charAt(0).toUpperCase()
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-white">{currentSt.userName}</h4>
+                      <p className="text-[10px] text-white/60">
+                        {new Date(currentSt.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • Permanent Status
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {isMyOwnStatus && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await deleteUserStatus(currentSt.id);
+                          const remaining = activeViewingStatuses.filter((s) => s.id !== currentSt.id);
+                          if (remaining.length === 0) {
+                            setActiveViewingStatuses(null);
+                          } else {
+                            setActiveViewingStatuses(remaining);
+                            setActiveViewingStatusIdx(0);
+                          }
+                          showToast('🗑️ Status delete kar diya gaya');
+                        }}
+                        className="p-2 rounded-full bg-rose-600/80 hover:bg-rose-600 text-white cursor-pointer"
+                        title="Status Delete Karein"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setActiveViewingStatuses(null)}
+                      className="p-2 rounded-full bg-white/15 hover:bg-white/25 text-white cursor-pointer"
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Center Media Player */}
+              <div className="relative flex-1 flex items-center justify-center my-2 overflow-hidden">
+                {activeViewingStatusIdx > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const prevIdx = activeViewingStatusIdx - 1;
+                      setActiveViewingStatusIdx(prevIdx);
+                      markStatusViewed(activeViewingStatuses[prevIdx].id, myUid);
+                    }}
+                    className="absolute left-2 z-30 p-2.5 rounded-full bg-black/60 hover:bg-white/20 text-white cursor-pointer"
+                  >
+                    <ChevronLeft size={22} />
+                  </button>
+                )}
+
+                {currentSt.mediaType === 'VIDEO' ? (
+                  <video
+                    key={currentSt.id}
+                    src={getOptimizedVideoUrl(currentSt.mediaUrl)}
+                    autoPlay
+                    controls
+                    playsInline
+                    onEnded={() => {
+                      if (activeViewingStatusIdx < activeViewingStatuses.length - 1) {
+                        const nextIdx = activeViewingStatusIdx + 1;
+                        setActiveViewingStatusIdx(nextIdx);
+                        markStatusViewed(activeViewingStatuses[nextIdx].id, myUid);
+                      }
+                    }}
+                    className="max-w-full max-h-[72vh] rounded-2xl object-contain"
+                  />
+                ) : (
+                  <img
+                    key={currentSt.id}
+                    src={currentSt.mediaUrl}
+                    alt="Status"
+                    className="max-w-full max-h-[72vh] rounded-2xl object-contain"
+                  />
+                )}
+
+                {activeViewingStatusIdx < activeViewingStatuses.length - 1 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextIdx = activeViewingStatusIdx + 1;
+                      setActiveViewingStatusIdx(nextIdx);
+                      markStatusViewed(activeViewingStatuses[nextIdx].id, myUid);
+                    }}
+                    className="absolute right-2 z-30 p-2.5 rounded-full bg-black/60 hover:bg-white/20 text-white cursor-pointer"
+                  >
+                    <ChevronRight size={22} />
+                  </button>
+                )}
+              </div>
+
+              {/* Bottom Caption & Views */}
+              <div className="z-20 text-center space-y-2 pb-2">
+                {currentSt.caption && (
+                  <p className="text-sm text-white font-semibold bg-black/60 px-4 py-2 rounded-2xl max-w-md mx-auto">
+                    {currentSt.caption}
+                  </p>
+                )}
+                <div className="flex items-center justify-center gap-3 text-xs text-white/70">
+                  <span className="flex items-center gap-1">
+                    <Eye size={14} /> {viewCount} views
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
       </div>
     </div>

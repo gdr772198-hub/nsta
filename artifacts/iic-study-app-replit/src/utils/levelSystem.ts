@@ -421,7 +421,7 @@ export interface LevelSubTier {
   nextStepTitle: string;
 }
 
-const METAL_LEAGUES: Array<{
+export const METAL_LEAGUES: Array<{
   name: MetalLeague;
   emoji: string;
   color: string;
@@ -620,23 +620,66 @@ export const getSubTierInfoFromScore = (
   return getLevelSubTier(lvlInfo.level, progressPct);
 };
 
+export const formatScoreNumber = (num: number): string => {
+  if (num == null || isNaN(num)) return '0';
+  return num.toLocaleString('en-IN');
+};
+
+export const formatScoreCompact = (num: number): string => {
+  if (num >= 10000000) return `${(num / 10000000).toFixed(2).replace(/\.00$/, '')}Cr`;
+  if (num >= 100000) return `${(num / 100000).toFixed(2).replace(/\.00$/, '')}L`;
+  if (num >= 1000) return `${(num / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+  return String(num);
+};
+
+export interface SubTierBlock {
+  id: string;
+  title: string;
+  short: string;
+  roman: RomanSubStep;
+  greek?: GreekTier;
+  greekSymbol?: string;
+  metal?: MetalLeague;
+  metalEmoji?: string;
+  minPct: number;
+  maxPct: number;
+  minScore: number;
+  maxScore: number;
+  color: string;
+  coinReward?: number;
+  diamondReward?: number;
+  isSpecialPinnacle?: boolean;
+}
+
 /**
- * Returns all sub-tier blocks that constitute a given level.
- * Used to render visual progression trees in Level Roadmaps.
+ * Returns all sub-tier blocks that constitute a given level with exact required XP scores.
+ * Used to render visual progression trees and exact score calculations in Level Roadmaps.
  */
-export const getAllSubTiersForLevel = (level: number) => {
+export const getAllSubTiersForLevel = (level: number): SubTierBlock[] => {
   const lvl = Math.min(MAX_LEVEL, Math.max(1, level));
+  const currentLvlInfo = LEVEL_INFO.find(l => l.level === lvl) || LEVEL_INFO[0];
+  const nextLvlInfo = LEVEL_INFO.find(l => l.level === lvl + 1);
+  const startScore = currentLvlInfo.minScore;
+  const range = nextLvlInfo ? (nextLvlInfo.minScore - startScore) : 25000000;
 
   if (lvl <= 5) {
-    return ROMAN_STEPS.map((r, i) => ({
-      id: `base-${r}`,
-      title: `Rank ${r}`,
-      short: r,
-      roman: r,
-      minPct: i * 20,
-      maxPct: (i + 1) * 20,
-      color: LEVEL_INFO[lvl - 1].color,
-    }));
+    return ROMAN_STEPS.map((r, i) => {
+      const minPct = i * 20;
+      const maxPct = (i + 1) * 20;
+      const minScore = Math.round(startScore + (range * minPct) / 100);
+      const maxScore = Math.round(startScore + (range * maxPct) / 100);
+      return {
+        id: `base-${r}`,
+        title: `Rank ${r}`,
+        short: r,
+        roman: r,
+        minPct,
+        maxPct,
+        minScore,
+        maxScore,
+        color: LEVEL_INFO[lvl - 1].color,
+      };
+    });
   }
 
   if (lvl <= 10) {
@@ -646,12 +689,14 @@ export const getAllSubTiersForLevel = (level: number) => {
       { greek: 'Gamma', symbol: 'γ', min: 60, max: 100, color: '#f59e0b' },
     ];
 
-    const list: any[] = [];
+    const list: SubTierBlock[] = [];
     greekDefs.forEach(g => {
       const span = g.max - g.min;
       ROMAN_STEPS.forEach((r, ri) => {
         const stepMin = g.min + (span * (ri * 20)) / 100;
         const stepMax = g.min + (span * ((ri + 1) * 20)) / 100;
+        const minScore = Math.round(startScore + (range * stepMin) / 100);
+        const maxScore = Math.round(startScore + (range * stepMax) / 100);
         list.push({
           id: `${g.greek}-${r}`,
           title: `${g.greek} ${r}`,
@@ -659,8 +704,10 @@ export const getAllSubTiersForLevel = (level: number) => {
           roman: r,
           greek: g.greek,
           greekSymbol: g.symbol,
-          minPct: Math.round(stepMin),
-          maxPct: Math.round(stepMax),
+          minPct: Number(stepMin.toFixed(2)),
+          maxPct: Number(stepMax.toFixed(2)),
+          minScore,
+          maxScore,
           color: g.color,
         });
       });
@@ -669,7 +716,7 @@ export const getAllSubTiersForLevel = (level: number) => {
   }
 
   // Level 11 se 15
-  const list: any[] = [];
+  const list: SubTierBlock[] = [];
   METAL_LEAGUES.forEach((m, mi) => {
     const metalMin = mi * 20;
     const metalSpan = 20;
@@ -686,18 +733,26 @@ export const getAllSubTiersForLevel = (level: number) => {
         const stepMaxRatio = g.minRatio + (gSpan * ((ri + 1) * 20)) / 100;
         const stepMin = metalMin + metalSpan * stepMinRatio;
         const stepMax = metalMin + metalSpan * stepMaxRatio;
+        const minScore = Math.round(startScore + (range * stepMin) / 100);
+        const maxScore = Math.round(startScore + (range * stepMax) / 100);
+        const isPinnacle = lvl === 15 && m.name === 'Diamond' && g.greek === 'Gamma' && r === 'V';
         list.push({
           id: `${m.name}-${g.greek}-${r}`,
-          title: `${m.emoji} ${m.name} ${g.greek} ${r}`,
+          title: isPinnacle ? `👑 ${m.emoji} ${m.name} ${g.greek} ${r} (ABSOLUTE LEGEND)` : `${m.emoji} ${m.name} ${g.greek} ${r}`,
           short: `${m.emoji} ${g.symbol}-${r}`,
           roman: r,
           greek: g.greek,
           greekSymbol: g.symbol,
           metal: m.name,
           metalEmoji: m.emoji,
-          minPct: Math.round(stepMin),
-          maxPct: Math.round(stepMax),
-          color: m.color,
+          minPct: Number(stepMin.toFixed(2)),
+          maxPct: Number(stepMax.toFixed(2)),
+          minScore,
+          maxScore,
+          color: isPinnacle ? '#c084fc' : m.color,
+          coinReward: isPinnacle ? LEVEL_15_DIAMOND_GAMMA_V_COINS : SUB_TIER_COIN_REWARD,
+          diamondReward: isPinnacle ? LEVEL_15_DIAMOND_GAMMA_V_DIAMONDS : 0,
+          isSpecialPinnacle: isPinnacle,
         });
       });
     });
@@ -705,8 +760,24 @@ export const getAllSubTiersForLevel = (level: number) => {
   return list;
 };
 
-/** Reward in coins (credits) awarded every time a student unlocks or advances to a new sub-tier / rank */
+/** Reward in coins (credits) awarded every time a student unlocks or advances to a standard sub-tier / rank */
 export const SUB_TIER_COIN_REWARD = 50;
+
+/** Grand Pinnacle Rewards specifically for LEVEL 15 (ABSOLUTE LEGEND) Diamond Gamma V */
+export const LEVEL_15_DIAMOND_GAMMA_V_COINS = 1000;
+export const LEVEL_15_DIAMOND_GAMMA_V_DIAMONDS = 100;
+
+/** Check if score qualifies for Level 15 Diamond Gamma V (Absolute Legend highest tier) */
+export const isLevel15DiamondGammaV = (
+  score: number,
+  settings?: { levelScoreOverride?: Record<string, number> } | null
+): boolean => {
+  const lvlInfo = getLevelInfo(score, settings);
+  if (lvlInfo.level < 15) return false;
+  const progressPct = getLevelProgress(score);
+  const subTier = getLevelSubTier(15, progressPct);
+  return subTier.metal === 'Diamond' && subTier.greek === 'Gamma' && subTier.roman === 'V';
+};
 
 /**
  * Returns all unlocked sub-tier IDs earned for a given total score.
@@ -748,6 +819,7 @@ export const getUnlockedSubTierKeys = (
 
 /**
  * Calculates unclaimed sub-tier rewards for a given score and list of already claimed keys.
+ * Level 15 Diamond Gamma V uniquely awards 100 Diamonds + 1,000 Coins!
  */
 export const getSubTierRewardSummary = (
   score: number,
@@ -756,14 +828,88 @@ export const getSubTierRewardSummary = (
   unlockedKeys: string[];
   unclaimedKeys: string[];
   unclaimedCoins: number;
+  unclaimedDiamonds: number;
+  hasPinnacleReward: boolean;
 } => {
   const unlockedKeys = getUnlockedSubTierKeys(score);
   const claimedSet = new Set(claimedKeys);
   const unclaimedKeys = unlockedKeys.filter(k => !claimedSet.has(k));
+
+  let unclaimedCoins = 0;
+  let unclaimedDiamonds = 0;
+  let hasPinnacleReward = false;
+
+  unclaimedKeys.forEach(k => {
+    if (k === 'L15_Diamond-Gamma-V') {
+      unclaimedCoins += LEVEL_15_DIAMOND_GAMMA_V_COINS; // 1,000 Coins
+      unclaimedDiamonds += LEVEL_15_DIAMOND_GAMMA_V_DIAMONDS; // 100 Diamonds
+      hasPinnacleReward = true;
+    } else {
+      unclaimedCoins += SUB_TIER_COIN_REWARD; // 50 Coins
+    }
+  });
+
   return {
     unlockedKeys,
     unclaimedKeys,
-    unclaimedCoins: unclaimedKeys.length * SUB_TIER_COIN_REWARD,
+    unclaimedCoins,
+    unclaimedDiamonds,
+    hasPinnacleReward,
   };
 };
+
+/**
+ * Quick search / lookup for a specific sub-rank:
+ * e.g. level: 11, metal: 'Silver', greek: 'Beta', roman: 'III'
+ */
+export const findSubTierByCriteria = (
+  level: number,
+  criteria: {
+    metal?: string;
+    greek?: string;
+    roman?: string;
+  }
+): SubTierBlock | undefined => {
+  const list = getAllSubTiersForLevel(level);
+  return list.find(item => {
+    if (criteria.metal && item.metal && item.metal.toLowerCase() !== criteria.metal.toLowerCase()) return false;
+    if (criteria.greek && item.greek && item.greek.toLowerCase() !== criteria.greek.toLowerCase()) return false;
+    if (criteria.roman && item.roman !== criteria.roman) return false;
+    return true;
+  });
+};
+
+export interface GlobalSubTierRow extends SubTierBlock {
+  globalIndex: number; // 1 to 475
+  level: number;
+  levelLabel: string;
+  levelEmoji: string;
+  levelColor: string;
+}
+
+let _cachedGlobalSubTiers: GlobalSubTierRow[] | null = null;
+
+export const getAllGlobalSubTiers = (): GlobalSubTierRow[] => {
+  if (_cachedGlobalSubTiers) return _cachedGlobalSubTiers;
+  const all: GlobalSubTierRow[] = [];
+  let idx = 1;
+  for (let l = 1; l <= MAX_LEVEL; l++) {
+    const lvlInfo = LEVEL_INFO.find(item => item.level === l) || LEVEL_INFO[0];
+    const blocks = getAllSubTiersForLevel(l);
+    blocks.forEach(b => {
+      all.push({
+        ...b,
+        globalIndex: idx++,
+        level: l,
+        levelLabel: lvlInfo.label,
+        levelEmoji: lvlInfo.emoji,
+        levelColor: lvlInfo.color,
+      });
+    });
+  }
+  _cachedGlobalSubTiers = all;
+  return all;
+};
+
+
 

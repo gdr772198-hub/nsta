@@ -2,6 +2,10 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { SUPPORT_EMAIL } from '../constants';
 import { CustomPlayer } from './CustomPlayer';
+import { ModernVideoPlayer } from './ModernVideoPlayer';
+import { ModernAudioPlayer } from './ModernAudioPlayer';
+import { ModernPdfViewer } from './ModernPdfViewer';
+import { OfflineDownloadsHub } from './OfflineDownloadsHub';
 import { createPortal } from "react-dom";
 import { FeatureHints, FeatureTipsList } from "./FeatureHints";
 import { TopBarEffectsLayer } from "../utils/topBarEffects";
@@ -17,6 +21,7 @@ import { getDiamondUnlockCost, getAllModesDiamondCost, UNLOCK_COSTS } from "../u
 import { LevelLeaderboard } from "./LevelLeaderboard";
 import { StudentLevelPage } from "./StudentLevelPage";
 import { TopBarRow2XpBar } from "./TopBarRow2XpBar";
+import { UserLevelBadge, UserNameTierBadge, UserBadgeGroup } from "./UserLevelBadge";
 import {
   User,
   Subject,
@@ -90,7 +95,13 @@ import {
   getCreditSubDaysRemaining,
   getCreditSubPlanMultiplier,
 } from "../utils/creditSubscriptionUtils";
-import { activateDiamondSub, canClaimDiamondSubToday } from "../utils/diamondUtils";
+import {
+  activateDiamondSub,
+  canClaimDiamondSubToday,
+  isDiamondSubActive,
+  getDiamondSubDaysRemaining,
+  claimDailyDiamonds,
+} from "../utils/diamondUtils";
 import { isVipPlusUser } from "../utils/vipPlusUtils";
 import { Button } from "./ui/button";
 import { MathLessonViewer } from './MathLessonViewer';
@@ -129,6 +140,9 @@ import { Store } from "./Store";
 import { AppStore } from "./AppStore";
 import { McqHub } from "./McqHub";
 import { DraggableNstaLogoFab } from "./DraggableNstaLogoFab";
+import { LevelRoadmapModal } from "./LevelRoadmapModal";
+import { LevelUpCelebrationModal } from "./LevelUpCelebrationModal";
+import { getFeaturesUnlockedAtLevel, isFeatureUnlockedForLevel, isFeatureUnlockedForUser, ROADMAP_CUSTOM_STORAGE_KEY, getAllRoadmapCustomContent } from "../constants/levelRoadmapData";
 import {
   Globe,
   Gift,
@@ -273,6 +287,7 @@ import { UniversalInfoPage } from "./UniversalInfoPage";
 import { UniversalChat } from "./UniversalChat";
 import { WhatsAppChatModal } from "./WhatsAppChatModal";
 import { NstaQuickWheelModal } from "./NstaQuickWheelModal";
+import { NotesFixTrackerModal } from "./NotesFixTrackerModal";
 import { ExpiryPopup } from "./ExpiryPopup";
 import { SubscriptionHistory } from "./SubscriptionHistory";
 import { getTierTheme, buildOverrideTierTheme, buildGranularTierTheme, getEffectiveOverrideColor, getUserTier, DEFAULT_NAV_ACTIVE_COLORS } from '../utils/tierTheme';
@@ -930,6 +945,7 @@ export const StudentDashboard: React.FC<Props> = ({
   // Tier-based default colors (officialTierTheme, overrideColor) apply to ALL users including admins.
   const _isAdminUser = (user as any).role === 'ADMIN' || (user as any).role === 'SUB_ADMIN';
   const [showAdminBoard, setShowAdminBoard] = React.useState(false);
+  const [showDownloadsHub, setShowDownloadsHub] = React.useState(false);
 
   const tierTheme =
     // 1. User-selected theme must win over admin defaults after purchase/apply.
@@ -1186,6 +1202,55 @@ export const StudentDashboard: React.FC<Props> = ({
   // Event level gates: admins (level 15) always pass. Level 1 = everyone.
   const EVENT_MIN_LEVELS = { scoreBoost: 5, specialDiscount: 1, globalFreeAccess: 10, creditFree: 8, dailyLimitBoost: 3, themeStudio: 7, creditBonus: 1 } as const;
   const meetsEventLevel = (min: number) => _userLevel >= min;
+
+  // ── REAL-TIME ROADMAP CUSTOMIZATION & LEVEL OVERRIDE SYNC ──
+  const [roadmapRefreshTick, setRoadmapRefreshTick] = useState(0);
+  useEffect(() => {
+    const handleRoadmapUpdate = () => setRoadmapRefreshTick(t => t + 1);
+    window.addEventListener('nsta-roadmap-content-updated', handleRoadmapUpdate);
+
+    let unsubFs: (() => void) | undefined;
+    try {
+      if (db) {
+        unsubFs = onSnapshot(doc(db, 'system_settings', 'roadmap_content'), (snap) => {
+          if (snap.exists()) {
+            const cloudData = snap.data();
+            if (cloudData && typeof cloudData === 'object') {
+              const currentLocal = getAllRoadmapCustomContent();
+              const merged = { ...currentLocal, ...cloudData };
+              localStorage.setItem(ROADMAP_CUSTOM_STORAGE_KEY, JSON.stringify(merged));
+              setRoadmapRefreshTick(t => t + 1);
+            }
+          }
+        }, () => {});
+      }
+    } catch {}
+
+    return () => {
+      window.removeEventListener('nsta-roadmap-content-updated', handleRoadmapUpdate);
+      if (unsubFs) unsubFs();
+    };
+  }, []);
+
+  // ── DYNAMIC BOTTOM NAV & PROFILE ADMIN SUPPORT LOGIC ──
+  // User Rule:
+  // - Initially only Home & Profile exist (2 buttons).
+  // - Until a 3rd button unlocks: Roadmap is shown in Bottom Nav (and hidden from Top Bar).
+  // - When a 3rd button unlocks (count >= 3): Roadmap leaves Bottom Nav and appears in Top Bar (without background).
+  // - Until a 4th button unlocks: Admin Support is shown in Bottom Nav AND hidden from Profile Page.
+  // - When a 4th button unlocks (count >= 4): Admin Support leaves Bottom Nav and returns back to the Profile Page!
+  void roadmapRefreshTick;
+  const isUpdatesUnlocked = isFeatureUnlockedForUser('PRO_PLUS_PAGE', _userLevel, user.totalScore || 0, user.role);
+  const isCommunityUnlocked = isFeatureUnlockedForUser('COMMUNITY_OFFICIAL', _userLevel, user.totalScore || 0, user.role);
+  const isMcqHubUnlocked = isFeatureUnlockedForUser('MCQ_OFFICIAL_HUB', _userLevel, user.totalScore || 0, user.role);
+
+  let standardUnlockedTabsCount = 2; // Home + Profile base buttons
+  if (isUpdatesUnlocked) standardUnlockedTabsCount++;
+  if (isCommunityUnlocked) standardUnlockedTabsCount++;
+  if (isMcqHubUnlocked) standardUnlockedTabsCount++;
+
+  const shouldShowRoadmapInBottomNav = standardUnlockedTabsCount < 3;
+  const shouldShowAdminSupportInBottomNav = standardUnlockedTabsCount < 4;
 
   // Active Top Bar Effects (Custom user animation -> Admin configured Top Bar Effects -> Level fallback)
   const activeTopBarEffects = React.useMemo(() => {
@@ -3017,6 +3082,28 @@ export const StudentDashboard: React.FC<Props> = ({
   const [ttsScoreSessionKey, setTtsScoreSessionKey] = useState<string | null>(null);
   const [showFeatureLimitsModal, setShowFeatureLimitsModal] = useState(false);
   const [showLevelLeaderboard, setShowLevelLeaderboard] = useState(false);
+  const [showLevelRoadmapModal, setShowLevelRoadmapModal] = useState(false);
+  const [showNotesFixTrackerModal, setShowNotesFixTrackerModal] = useState(false);
+  const [levelUpCelebrationData, setLevelUpCelebrationData] = useState<{ newLevel: number; features: any[] } | null>(null);
+  const lastRecordedLevelRef = useRef<number>(_userLevel);
+
+  // Trigger celebration modal when user levels up
+  useEffect(() => {
+    if (user.role === 'ADMIN' || user.role === 'SUB_ADMIN') return;
+    const storedLastLevel = parseInt(localStorage.getItem(`nsta_last_seen_level_${user.id}`) || '1', 10);
+    if (_userLevel > storedLastLevel && _userLevel > 1) {
+      const unlocked = getFeaturesUnlockedAtLevel(_userLevel);
+      setLevelUpCelebrationData({
+        newLevel: _userLevel,
+        features: unlocked,
+      });
+      localStorage.setItem(`nsta_last_seen_level_${user.id}`, String(_userLevel));
+    } else if (!localStorage.getItem(`nsta_last_seen_level_${user.id}`)) {
+      localStorage.setItem(`nsta_last_seen_level_${user.id}`, String(_userLevel));
+    }
+    lastRecordedLevelRef.current = _userLevel;
+  }, [_userLevel, user.id, user.role]);
+
   const [levelUpCelebration, setLevelUpCelebration] = useState<{level: number; emoji: string; label: string; coinReward?: number} | null>(null);
   const [limitsViewPlan, setLimitsViewPlan] = useState<'FREE' | 'BASIC' | 'ULTRA'>('FREE');
   const [showRulesPage, setShowRulesPage] = useState(false);
@@ -3070,6 +3157,28 @@ export const StudentDashboard: React.FC<Props> = ({
       showAlert('Credits claim karne mein error aaya. Kripya dobara try karein.', 'ERROR');
     } finally {
       setClaimingDailyPass(false);
+    }
+  };
+
+  const [claimingDailyDiamondPass, setClaimingDailyDiamondPass] = useState(false);
+  const handleClaimDailyDiamondPass = async () => {
+    if (!user || claimingDailyDiamondPass) return;
+    setClaimingDailyDiamondPass(true);
+    try {
+      const res = claimDailyDiamonds(user);
+      if (res) {
+        await saveUserToLive(res.updatedUser);
+        handleUserUpdate(res.updatedUser);
+        triggerRewardEffect(res.earned, `+${res.earned} Pass Diamonds 💎`);
+        showAlert(`🎉 +${res.earned} Daily Diamonds Claim Ho Gaye! (${res.updatedUser.diamondSubscription?.planName || 'Diamond Pass'})`, 'SUCCESS', 'Diamond Pass Claimed!');
+      } else {
+        showAlert('Aaj ke daily pass diamonds pehle hi claim ho chuke hain.', 'INFO');
+      }
+    } catch (e) {
+      console.error('Failed to claim daily diamond pass:', e);
+      showAlert('Diamonds claim karne mein error aaya. Kripya dobara try karein.', 'ERROR');
+    } finally {
+      setClaimingDailyDiamondPass(false);
     }
   };
 
@@ -3423,9 +3532,10 @@ export const StudentDashboard: React.FC<Props> = ({
 
     const subSummary = getSubTierRewardSummary(score, claimedSubTiers);
     const subCoinsToAdd = subSummary.unclaimedCoins;
+    const subDiamondsToAdd = subSummary.unclaimedDiamonds || 0;
     const totalCoinsToAdd = levelCoinsToAdd + subCoinsToAdd;
 
-    if (totalCoinsToAdd > 0) {
+    if (totalCoinsToAdd > 0 || subDiamondsToAdd > 0) {
       const updatedClaimedLevels = [...new Set([...claimed, ...unclaimedLevels])];
       const updatedClaimedSubTiers = [...new Set([...claimedSubTiers, ...subSummary.unclaimedKeys])];
 
@@ -3436,9 +3546,11 @@ export const StudentDashboard: React.FC<Props> = ({
       } catch {}
       
       const newCredits = (user.credits || 0) + totalCoinsToAdd;
+      const newDiamonds = (user.diamonds || 0) + subDiamondsToAdd;
       const updatedUser = {
         ...user,
         credits: newCredits,
+        diamonds: newDiamonds,
         claimedLevelRewards: updatedClaimedLevels,
         claimedSubTiers: updatedClaimedSubTiers,
         lastLevelNotified: lvl.level,
@@ -3447,23 +3559,34 @@ export const StudentDashboard: React.FC<Props> = ({
       saveUserToLive(updatedUser);
 
       // Trigger Celebration popup
-      if (unclaimedLevels.length > 0) {
+      if (unclaimedLevels.length > 0 || subSummary.hasPinnacleReward) {
         setLevelUpCelebration({ 
           level: lvl.level, 
-          emoji: lvl.emoji, 
-          label: lvl.label,
+          emoji: subSummary.hasPinnacleReward ? '👑💎' : lvl.emoji, 
+          label: subSummary.hasPinnacleReward ? 'ABSOLUTE LEGEND · Diamond Gamma V' : lvl.label,
           coinReward: totalCoinsToAdd,
         });
       }
 
       const curSub = getLevelSubTier(lvl.level, getLevelProgress(score));
-      const rewardMsg = subCoinsToAdd > 0 && levelCoinsToAdd > 0
-        ? `🎉 Level ${lvl.level} & ${curSub.badgeText} Unlocked: +${totalCoinsToAdd} Coins! 🪙`
-        : subCoinsToAdd > 0
-        ? `🎉 ${curSub.badgeText} Unlocked: +${subCoinsToAdd} Coins Reward! 🪙`
-        : `🎉 Level ${lvl.level} Reached: +${levelCoinsToAdd} Coins! 🪙`;
+      let rewardMsg = '';
+      if (subSummary.hasPinnacleReward || subDiamondsToAdd > 0) {
+        rewardMsg = `👑 PINNACLE UNLOCKED! Level 15 Diamond Gamma V: +${subDiamondsToAdd} Diamonds 💎 & +${totalCoinsToAdd} Coins 🪙!`;
+      } else if (subCoinsToAdd > 0 && levelCoinsToAdd > 0) {
+        rewardMsg = `🎉 Level ${lvl.level} & ${curSub.badgeText} Unlocked: +${totalCoinsToAdd} Coins! 🪙`;
+      } else if (subCoinsToAdd > 0) {
+        rewardMsg = `🎉 ${curSub.badgeText} Unlocked: +${subCoinsToAdd} Coins Reward! 🪙`;
+      } else {
+        rewardMsg = `🎉 Level ${lvl.level} Reached: +${levelCoinsToAdd} Coins! 🪙`;
+      }
 
       triggerRewardEffect(totalCoinsToAdd, rewardMsg);
+      if (subDiamondsToAdd > 0) {
+        fireCreditNotify({
+          type: 'REDEEM_SUCCESS',
+          message: `💎 MEGA REWARD: +${subDiamondsToAdd} Diamonds added to your account!`,
+        });
+      }
     } else if (lvl.level > storedNotified) {
       try {
         localStorage.setItem(`nst_last_notified_level_${user.id}`, String(lvl.level));
@@ -3991,6 +4114,7 @@ export const StudentDashboard: React.FC<Props> = ({
   const [lucentPageListViewer, setLucentPageListViewer] = useState<LucentNoteEntry | null>(null);
   const [mathViewerEntry, setMathViewerEntry] = useState<LucentNoteEntry | null>(null);
   const [mathImmersive, setMathImmersive] = useState(false);
+  const [mathViewerMode, setMathViewerMode] = useState<string>('BOOK');
   const [loadingMathLessonId, setLoadingMathLessonId] = useState<string | null>(null);
   const [premiumUpgradeModal, setPremiumUpgradeModal] = useState<{
     isOpen: boolean;
@@ -4865,6 +4989,14 @@ export const StudentDashboard: React.FC<Props> = ({
   const [showRevisionHubScreen, setShowRevisionHubScreen] = useState(false);
   const [showUpdatesPage, setShowUpdatesPage] = useState(false);
   const [forceShowBottomNav, setForceShowBottomNav] = useState(true);
+
+  useEffect(() => {
+    if (showWhatsAppChatModal) {
+      setIsTopBarHidden(false);
+      setIsLandscapeUiHidden(false);
+      setForceShowBottomNav(true);
+    }
+  }, [showWhatsAppChatModal]);
 
   // Auto-hide bottom navigation when any popup or modal is open
   const [isDomModalOpen, setIsDomModalOpen] = useState(false);
@@ -7813,11 +7945,43 @@ export const StudentDashboard: React.FC<Props> = ({
         triggerRewardEffect(finalAmt, applyBonus ? `+${finalAmt} CR 🎉 Bonus!` : 'Gift Reward');
         try { recordCreditTx(user.id, finalAmt, 'EARN_GIFT', `Gift Claimed: +${finalAmt} CR${applyBonus ? ` (${_cbEv?.bonusPercent}% Bonus Event)` : ''}`, updatedUser.credits); } catch {}
       } else if (gift.type === "SUBSCRIPTION") {
-        const [tier, level] = (gift.value as string).split("_");
+        const valStr = String(gift.value || "WEEKLY_BASIC");
+        const isMaxPlus = valStr.endsWith("_MAX_PLUS");
+        const isProPlus = valStr.endsWith("_PRO_PLUS");
+        const tier = isMaxPlus
+          ? valStr.replace("_MAX_PLUS", "")
+          : isProPlus
+          ? valStr.replace("_PRO_PLUS", "")
+          : valStr.split("_")[0];
+        const level = isMaxPlus ? "ULTRA" : isProPlus ? "BASIC" : (valStr.split("_")[1] || "BASIC");
         const duration = gift.durationHours || 24;
         applySubscription(tier, level, duration);
+        if (isProPlus || isMaxPlus) {
+          const vipTier = isMaxPlus ? "MAX_PLUS" : "PRO_PLUS";
+          const durDays = Math.max(1, Math.round(duration / 24));
+          const dailyDia = vipTier === "MAX_PLUS"
+            ? (durDays <= 7 ? 35 : durDays <= 30 ? 50 : durDays <= 90 ? 70 : 100)
+            : (durDays <= 7 ? 10 : durDays <= 30 ? 25 : durDays <= 90 ? 40 : 60);
+          updatedUser.vipPlusTier = vipTier;
+          updatedUser.dailyVipDiamonds = dailyDia;
+          const nowIso = new Date().toISOString();
+          const endIso = updatedUser.subscriptionEndDate || new Date(Date.now() + duration * 3600000).toISOString();
+          updatedUser.diamondSubscription = {
+            planId: `vipplus_${vipTier.toLowerCase()}_${Date.now()}`,
+            planName: `${tier} (${vipTier === "MAX_PLUS" ? "MAX+" : "PRO+"})`,
+            dailyDiamonds: dailyDia,
+            totalDays: durDays,
+            startDate: nowIso,
+            endDate: endIso,
+            totalClaimedDays: 0,
+            totalDiamondsClaimed: 0,
+            pricePaid: 0,
+            status: "ACTIVE",
+          };
+          successMsg = `🎁 Gift Claimed! ${tier} ${vipTier === "MAX_PLUS" ? "MAX+ (VIP+)" : "PRO+ (VIP+)"} unlocked with +${dailyDia} 💎/day!`;
+        }
         updatedUser.totalScore = (user.totalScore || 0) + 5;
-        triggerRewardEffect(0, 'Subscription Unlocked! 🎉');
+        triggerRewardEffect(0, (isProPlus || isMaxPlus) ? 'VIP+ Subscription Unlocked! 💎👑' : 'Subscription Unlocked! 🎉');
       } else if (gift.type === "DIAMONDS") {
         const diaAmt = Number(gift.value) || 50;
         updatedUser.diamonds = (user.diamonds || 0) + diaAmt;
@@ -7977,6 +8141,8 @@ export const StudentDashboard: React.FC<Props> = ({
           "isPremium",
           "subscriptionTier",
           "subscriptionLevel",
+          "vipPlusTier",
+          "dailyVipDiamonds",
           "subscriptionEndDate",
           "activeSubscriptions",
           "subscriptionHistory",
@@ -10436,82 +10602,57 @@ export const StudentDashboard: React.FC<Props> = ({
 
             {/* VIDEO PAGE */}
             {effectiveMode === 'video' && hasVideo && (
-              <div className={`flex-1 relative bg-black overflow-hidden ${!isLandscape ? 'pb-[72px]' : ''}`}>
-                <div style={{ position: 'absolute', inset: 0, bottom: isLandscape ? 0 : 72 }}>
-                  <CustomPlayer videoUrl={activeHw.videoUrl!} onBack={goBack} onBrandingClick={() => setHwImmersive(v => !v)} badgePos={settings?.iicNstaBadgePos} isAdmin={_isAdminUser} onBadgePosChange={handleBadgePosChange} badgeLabel={settings?.playerBadgeLabel} fsButtonLabel={settings?.playerFsButtonLabel} hideYtLogoBlocker={settings?.hideYtLogoBlocker} />
-                </div>
+              <div className={`flex-1 flex flex-col p-2 sm:p-4 overflow-y-auto ${!isLandscape ? 'pb-[72px]' : ''}`}>
+                <ModernVideoPlayer
+                  videoUrl={activeHw.videoUrl!}
+                  title={activeHw.title || 'Homework Video'}
+                  mediaId={`hw_vid_${activeHw.id}`}
+                  subject={activeHw.targetSubject || 'Competition'}
+                  appLogo={settings?.appLogo}
+                  appName={settings?.appShortName || 'NSTA'}
+                  user={user}
+                  isAdmin={_isAdminUser}
+                  onBack={goBack}
+                  onNext={effectiveNextHw ? () => goToHw(effectiveNextHw) : undefined}
+                  nextTitle={effectiveNextHw?.title}
+                  onUpgradeRequired={() => onTabChange('STORE')}
+                />
               </div>
             )}
 
             {/* AUDIO PAGE */}
             {effectiveMode === 'audio' && hasAudio && (
-              <div className="flex-1 flex flex-col items-center justify-center px-6 gap-6 pb-[72px]" style={{ background: 'linear-gradient(135deg, #3b0764 0%, #1e1b4b 100%)' }}>
-                <div className="w-32 h-32 rounded-full bg-purple-600 flex items-center justify-center shadow-2xl border-4 border-purple-400/40">
-                  <span className="text-5xl">🎵</span>
-                </div>
-                <div className="text-center">
-                  <p className="text-white font-black text-lg leading-snug">{activeHw.title || 'Audio Lecture'}</p>
-                  {activeHw.date && (
-                    <p className="text-purple-300 text-xs mt-1">{new Date(activeHw.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
-                  )}
-                </div>
-                {activeHw.audioUrl!.includes('drive.google.com') ? (
-                  <div className="w-full max-w-sm relative">
-                    <iframe
-                      src={formatDriveLink(activeHw.audioUrl!)}
-                      className="w-full border-none rounded-2xl"
-                      style={{ height: '80px', background: 'transparent' }}
-                      sandbox="allow-scripts allow-same-origin allow-presentation"
-                      allow="autoplay"
-                      title="Audio"
-                    />
-                    {/* Targeted blocker — only covers the right-side "Open in Drive" button on audio bar */}
-                    <div
-                      className="absolute z-10"
-                      style={{ top: 0, right: 0, width: '48px', height: '80px', pointerEvents: 'all', background: 'transparent', cursor: 'not-allowed' }}
-                      onClickCapture={e => { e.preventDefault(); e.stopPropagation(); }}
-                      onMouseDownCapture={e => { e.preventDefault(); e.stopPropagation(); }}
-                      onTouchStartCapture={e => { e.preventDefault(); e.stopPropagation(); }}
-                      onContextMenu={e => e.preventDefault()}
-                    />
-                  </div>
-                ) : (
-                  <audio
-                    controls
-                    autoPlay
-                    src={activeHw.audioUrl!}
-                    className="w-full max-w-sm"
-                    controlsList="nodownload noremoteplayback"
-                  />
-                )}
-                <p className="text-purple-300/60 text-[11px]">🔒 Audio app ke andar chal raha hai</p>
+              <div className={`flex-1 flex flex-col items-center justify-center p-4 max-w-xl mx-auto w-full ${!isLandscape ? 'pb-[72px]' : ''}`}>
+                <ModernAudioPlayer
+                  audioUrl={activeHw.audioUrl!}
+                  title={activeHw.title || 'Audio Lecture'}
+                  subtitle={activeHw.targetSubject || 'Competition Lecture'}
+                  mediaId={`hw_aud_${activeHw.id}`}
+                  appLogo={settings?.appLogo}
+                  appName={settings?.appShortName || 'NSTA'}
+                  user={user}
+                  isAdmin={_isAdminUser}
+                  onBack={goBack}
+                  onUpgradeRequired={() => onTabChange('STORE')}
+                />
               </div>
             )}
 
-            {/* PDF PAGE — inline viewer (Lucent jaisa) */}
+            {/* PDF PAGE */}
             {effectiveMode === 'pdf' && hasPdf && (
-              <div className={`flex-1 overflow-hidden flex flex-col ${(!hwImmersive && !isLandscape) ? 'pt-2 px-3 gap-2' : ''}`}>
-                <div className={`flex-1 overflow-hidden bg-white relative ${hwImmersive ? '' : 'rounded-2xl border border-blue-200 shadow-lg'}`}>
-                  <iframe
-                    src={
-                      (activeHw as any).pdfUrl?.includes('drive.google.com')
-                        ? `https://drive.google.com/file/d/${(((activeHw as any).pdfUrl.match(/drive\.google\.com\/file\/d\/([^/?#]+)/) || [])[1])}/preview?rm=minimal`
-                        : (activeHw as any).pdfUrl
-                    }
-                    className="w-full h-full border-none"
-                    sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
-                    allow="autoplay"
-                    title="PDF"
-                  />
-                  {/* Drive top-right blocker */}
-                  {(activeHw as any).pdfUrl?.includes('drive.google.com') && (
-                    <div
-                      className="absolute top-0 right-0 bg-blue-800/80 text-white text-[9px] font-bold px-2 py-1 rounded-bl-lg z-10 select-none"
-                      style={{ pointerEvents: 'all', cursor: 'default' }}
-                      title="Stay in the App"
-                    >🔒 App</div>
-                  )}
-                </div>
+              <div className={`flex-1 flex flex-col p-2 sm:p-4 overflow-hidden ${(!hwImmersive && !isLandscape) ? 'pb-[72px]' : ''}`}>
+                <ModernPdfViewer
+                  pdfUrl={(activeHw as any).pdfUrl}
+                  title={activeHw.title || 'Study PDF Notes'}
+                  subtitle={activeHw.targetSubject || 'Competition Notes'}
+                  mediaId={`hw_pdf_${activeHw.id}`}
+                  appLogo={settings?.appLogo}
+                  appName={settings?.appShortName || 'NSTA'}
+                  user={user}
+                  isAdmin={_isAdminUser}
+                  onBack={goBack}
+                  onUpgradeRequired={() => onTabChange('STORE')}
+                />
               </div>
             )}
 
@@ -11238,8 +11379,8 @@ export const StudentDashboard: React.FC<Props> = ({
             </div>
             )}
 
-            {/* Floating FAB — tap directly to toggle Focus Mode (hidden in video mode — IIC×NSTA button handles it) */}
-            {effectiveMode !== 'video' && (
+            {/* Floating FAB — tap directly to toggle Focus Mode (hidden in video and all MCQ/QA/flashcard modes) */}
+            {effectiveMode !== 'video' && effectiveMode !== 'mcq' && effectiveMode !== 'qa' && effectiveMode !== 'flashcard' && (
               <DraggableNstaLogoFab
                 isActive={hwImmersive}
                 onToggle={() => setHwImmersive(v => !v)}
@@ -12361,6 +12502,9 @@ export const StudentDashboard: React.FC<Props> = ({
     return groupedItems.map((group, gIdx) => {
       // Filter items that are hidden
       const visibleItems = group.items.filter((item) => {
+        if (item.featureId === 'REQUEST_CONTENT' && !isFeatureUnlockedForUser('CONTENT_DEMAND', _userLevel, user.totalScore || 0, user.role)) {
+          return false;
+        }
         if (item.featureId) {
           const access = getFeatureAccess(item.featureId);
           return !access.isHidden;
@@ -12901,6 +13045,8 @@ export const StudentDashboard: React.FC<Props> = ({
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {/* ── 1. MY ROUTINE CARD (ABOVE REVISION HUB & ANIMATES FIRST) ── */}
                         {isHomeSectionVisible('home_my_routine', settings) && (() => {
+                          const isRoutineUnlocked = isFeatureUnlockedForUser('MY_ROUTINE_TAB', _userLevel, user.totalScore || 0, user.role);
+                          if (!isRoutineUnlocked) return null;
                           const _rtBg  = settings?.homeMyRoutineCardBg || settings?.homeClass612CardBg || (tierTheme as any).cardBg || tierTheme.profileCardBg || '#ffffff';
                           const _rtBdr = settings?.homeMyRoutineCardBorder || settings?.homeClass612CardBorder || tierTheme.primary || '#2563eb';
                           const _rt3D  = _masterAll3D || (settings?.homeClass612Card3D ?? false);
@@ -12913,46 +13059,51 @@ export const StudentDashboard: React.FC<Props> = ({
                                   setShowMyRoutine(true);
                                 }}
                                 className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left active:scale-[0.985] transition-all cursor-pointer flex flex-col justify-between group flex-1"
-                                style={_rt3D ? {
-                                  background: _rtBg,
-                                  border: `2px solid ${_rtBdr}`,
-                                  boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${_rtBdr}bb, 0 7px 18px ${_rtBdr}28`,
-                                  transform: 'translateY(-1px)'
-                                } : {
-                                  background: _rtBg,
-                                  border: `2px solid ${_rtBdr}`,
-                                  boxShadow: isDarkMode ? `0 4px 20px ${_rtBdr}20` : '0 2px 10px rgba(0,0,0,0.06)'
-                                }}
-                              >
-                                <div className="space-y-3 w-full">
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div className="flex items-center gap-3">
-                                      <div
-                                        className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-xs text-2xl"
-                                        style={{ background: `${_rtBdr}18`, color: _rtBdr }}
-                                      >
-                                        📅
+                                    style={_rt3D ? {
+                                      background: _rtBg,
+                                      border: `2px solid ${_rtBdr}`,
+                                      boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${_rtBdr}bb, 0 7px 18px ${_rtBdr}28`,
+                                      transform: 'translateY(-1px)'
+                                    } : {
+                                      background: _rtBg,
+                                      border: `2px solid ${_rtBdr}`,
+                                      boxShadow: isDarkMode ? `0 4px 20px ${_rtBdr}20` : '0 2px 10px rgba(0,0,0,0.06)'
+                                    }}
+                                  >
+                                    <div className="space-y-3 w-full">
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div className="flex items-center gap-3">
+                                          <div
+                                            className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-xs text-2xl"
+                                            style={{ background: `${_rtBdr}18`, color: _rtBdr }}
+                                          >
+                                            📅
+                                          </div>
+                                          <div>
+                                            <h4 className="text-base font-black leading-tight" style={{ color: isDarkMode ? '#f8fafc' : tierTheme.textPrimary || '#1e293b' }}>
+                                              My Routine
+                                            </h4>
+                                            <p className="text-[11px] mt-0.5 font-medium leading-tight" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>
+                                              {isRoutineUnlocked ? 'Daily timetable & study target' : 'Unlocks at Level 2 (1000 XP)'}
+                                            </p>
+                                          </div>
+                                        </div>
+                                        <span
+                                          className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0 flex items-center gap-1"
+                                          style={isRoutineUnlocked ? {
+                                            background: `${_rtBdr}18`,
+                                            color: _rtBdr,
+                                            border: `1px solid ${_rtBdr}35`
+                                          } : {
+                                            background: 'rgba(245, 158, 11, 0.15)',
+                                            color: '#f59e0b',
+                                            border: '1px solid rgba(245, 158, 11, 0.35)'
+                                          }}
+                                        >
+                                          {!isRoutineUnlocked && <Lock className="w-2.5 h-2.5" />}
+                                          {isRoutineUnlocked ? 'Daily Planner' : 'Level 2 Unlock'}
+                                        </span>
                                       </div>
-                                      <div>
-                                        <h4 className="text-base font-black leading-tight" style={{ color: isDarkMode ? '#f8fafc' : tierTheme.textPrimary || '#1e293b' }}>
-                                          My Routine
-                                        </h4>
-                                        <p className="text-[11px] mt-0.5 font-medium leading-tight" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>
-                                          Daily timetable & study target
-                                        </p>
-                                      </div>
-                                    </div>
-                                    <span
-                                      className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0"
-                                      style={{
-                                        background: `${_rtBdr}18`,
-                                        color: _rtBdr,
-                                        border: `1px solid ${_rtBdr}35`
-                                      }}
-                                    >
-                                      Daily Planner
-                                    </span>
-                                  </div>
 
                                   <div className="flex flex-wrap items-center gap-1.5 text-[9px] font-bold">
                                     <span className={`px-2 py-0.5 rounded-lg ${isDarkMode ? 'bg-white/10 border border-white/10 text-slate-300' : 'bg-slate-100/90 border border-slate-200/60 text-slate-600'}`}>
@@ -12974,72 +13125,73 @@ export const StudentDashboard: React.FC<Props> = ({
                                   <span className="text-[11px] font-black" style={{ color: _rtBdr }}>
                                     Open My Routine →
                                   </span>
-                                  <span
-                                    className="w-7 h-7 rounded-xl flex items-center justify-center text-white text-xs font-black shadow-xs group-hover:translate-x-0.5 transition-transform"
-                                    style={{ background: tierTheme.btnGrad || _rtBdr }}
-                                  >
-                                    →
-                                  </span>
                                 </div>
                               </button>
                             </div>
                           );
                         })()}
 
-                        {/* ── 2. REVISION HUB CARD (BELOW ROUTINE & ANIMATES AFTER ROUTINE) ── */}
-                        {isHomeSectionVisible('home_revision_hub', settings) && (() => {
-                          const _revBg  = settings?.homeClass612CardBg     || (tierTheme as any).cardBg || tierTheme.profileCardBg || '#ffffff';
-                          const _revBdr = settings?.homeClass612CardBorder || tierTheme.primary || '#6366f1';
-                          const _rev3D  = _masterAll3D || (settings?.homeClass612Card3D ?? false);
-                          return (
-                            <div id="home-revision-card" className="w-full home-revhub-card-anim flex flex-col">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  hapticStrong();
-                                  setShowRevisionHubScreen(true);
-                                }}
-                                className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left active:scale-[0.985] transition-all cursor-pointer flex flex-col justify-between group flex-1"
-                                style={_rev3D ? {
-                                  background: _revBg,
-                                  border: `2px solid ${_revBdr}`,
-                                  boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${_revBdr}bb, 0 7px 18px ${_revBdr}28`,
-                                  transform: 'translateY(-1px)'
-                                } : {
-                                  background: _revBg,
-                                  border: `2px solid ${_revBdr}`,
-                                  boxShadow: isDarkMode ? `0 4px 20px ${_revBdr}20` : '0 2px 10px rgba(0,0,0,0.06)'
-                                }}
-                              >
-                                <div className="space-y-3 w-full">
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div className="flex items-center gap-3">
-                                      <div
-                                        className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-xs text-2xl"
-                                        style={{ background: `${_revBdr}18`, color: _revBdr }}
-                                      >
-                                        🧠
-                                      </div>
-                                      <div>
-                                        <h4 className="text-base font-black leading-tight" style={{ color: isDarkMode ? '#f8fafc' : tierTheme.textPrimary || '#1e293b' }}>
-                                          Revision Hub
-                                        </h4>
-                                        <p className="text-[11px] mt-0.5 font-medium leading-tight" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>
-                                          Spaced repetition & memory drill
-                                        </p>
-                                      </div>
-                                    </div>
-                                    <span
-                                      className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0"
-                                      style={{
-                                        background: `${_revBdr}18`,
-                                        color: _revBdr,
-                                        border: `1px solid ${_revBdr}35`
-                                      }}
-                                    >
-                                      Smart AI
-                                    </span>
+                    {/* ── 2. REVISION HUB CARD (BELOW ROUTINE & ANIMATES AFTER ROUTINE) ── */}
+                    {isHomeSectionVisible('home_revision_hub', settings) && (() => {
+                      const _revBg  = settings?.homeClass612CardBg     || (tierTheme as any).cardBg || tierTheme.profileCardBg || '#ffffff';
+                      const _revBdr = settings?.homeClass612CardBorder || tierTheme.primary || '#6366f1';
+                      const _rev3D  = _masterAll3D || (settings?.homeClass612Card3D ?? false);
+                      const isRevHubUnlocked = isFeatureUnlockedForUser('REVISION_HUB', _userLevel, user.totalScore || 0, user.role);
+                      if (!isRevHubUnlocked) return null;
+                      return (
+                        <div id="home-revision-card" className="w-full home-revhub-card-anim flex flex-col">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              hapticStrong();
+                              setShowRevisionHubScreen(true);
+                            }}
+                            className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left active:scale-[0.985] transition-all cursor-pointer flex flex-col justify-between group flex-1"
+                            style={_rev3D ? {
+                              background: _revBg,
+                              border: `2px solid ${_revBdr}`,
+                              boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${_revBdr}bb, 0 7px 18px ${_revBdr}28`,
+                              transform: 'translateY(-1px)'
+                            } : {
+                              background: _revBg,
+                              border: `2px solid ${_revBdr}`,
+                              boxShadow: isDarkMode ? `0 4px 20px ${_revBdr}20` : '0 2px 10px rgba(0,0,0,0.06)'
+                            }}
+                          >
+                            <div className="space-y-3 w-full">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center gap-3">
+                                  <div
+                                    className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-xs text-2xl"
+                                    style={{ background: `${_revBdr}18`, color: _revBdr }}
+                                  >
+                                    🧠
                                   </div>
+                                  <div>
+                                    <h4 className="text-base font-black leading-tight" style={{ color: isDarkMode ? '#f8fafc' : tierTheme.textPrimary || '#1e293b' }}>
+                                      Revision Hub
+                                    </h4>
+                                    <p className="text-[11px] mt-0.5 font-medium leading-tight" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>
+                                      {isRevHubUnlocked ? 'Spaced repetition & memory drill' : 'Unlocks at Level 3 (2500 XP)'}
+                                    </p>
+                                  </div>
+                                </div>
+                                <span
+                                  className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0 flex items-center gap-1"
+                                  style={isRevHubUnlocked ? {
+                                    background: `${_revBdr}18`,
+                                    color: _revBdr,
+                                    border: `1px solid ${_revBdr}35`
+                                  } : {
+                                    background: 'rgba(245, 158, 11, 0.15)',
+                                    color: '#f59e0b',
+                                    border: '1px solid rgba(245, 158, 11, 0.35)'
+                                  }}
+                                >
+                                  {!isRevHubUnlocked && <Lock className="w-2.5 h-2.5" />}
+                                  {isRevHubUnlocked ? 'Memory Engine' : 'Level 3 Unlock'}
+                                </span>
+                              </div>
 
                                   <div className="flex flex-wrap items-center gap-1.5 text-[9px] font-bold">
                                     <span className={`px-2 py-0.5 rounded-lg ${isDarkMode ? 'bg-white/10 border border-white/10 text-slate-300' : 'bg-slate-100/90 border border-slate-200/60 text-slate-600'}`}>
@@ -13944,7 +14096,7 @@ export const StudentDashboard: React.FC<Props> = ({
                     </div>
 
                     {/* User Name Row */}
-                    <div className="flex items-center justify-center gap-1 max-w-[145px] sm:max-w-[185px] mt-2 mb-1">
+                    <div className="flex items-center justify-center gap-1 max-w-[145px] sm:max-w-[185px] mt-2 mb-0.5">
                       <h2 className="font-black leading-tight tracking-tight truncate text-center" style={{ ...(_nameStyle as object), fontSize: 13.5 }}>
                         {_pLvl.level >= 15
                           ? `(${(user.name || 'Student').replace(/^\(+|\)+$/g, '').toUpperCase()})`
@@ -13961,6 +14113,12 @@ export const StudentDashboard: React.FC<Props> = ({
                         }}>
                         <Edit3 size={10} style={{ color: _light ? '#475569' : '#cbd5e1' }} />
                       </button>
+                    </div>
+
+                    {/* Level Badge & Name Tier Badge Row (Free/Basic/Ultra 3 types + unique animated level badge) */}
+                    <div className="flex items-center justify-center gap-1 flex-wrap mb-1.5 px-0.5 max-w-[155px] sm:max-w-[190px]">
+                      <UserNameTierBadge user={user} size="xs" />
+                      <UserLevelBadge user={user} size="xs" onClick={() => onTabChange("LEVELS")} />
                     </div>
 
                     {/* Join Date & Avatar switcher */}
@@ -14356,19 +14514,21 @@ export const StudentDashboard: React.FC<Props> = ({
                           </div>
 
                           <div className="flex items-center gap-1 shrink-0">
-                            <button
-                              onClick={() => setShowLevelLeaderboard(true)}
-                              className="px-1.5 py-0.5 rounded-md font-bold flex items-center gap-1 text-[8.5px] active:scale-95 transition-transform cursor-pointer"
-                              style={{
-                                background: 'rgba(245,158,11,0.18)',
-                                color: '#fbbf24',
-                                border: '1px solid rgba(245,158,11,0.40)',
-                              }}
-                              title="Open Level Leaderboard"
-                            >
-                              <Trophy size={9} className="text-amber-400" />
-                              <span>Ranks</span>
-                            </button>
+                            {_pLvl.level >= 2 && (
+                              <button
+                                onClick={() => setShowLevelLeaderboard(true)}
+                                className="px-1.5 py-0.5 rounded-md font-bold flex items-center gap-1 text-[8.5px] active:scale-95 transition-transform cursor-pointer"
+                                style={{
+                                  background: 'rgba(245,158,11,0.18)',
+                                  color: '#fbbf24',
+                                  border: '1px solid rgba(245,158,11,0.40)',
+                                }}
+                                title="Open Level Leaderboard"
+                              >
+                                <Trophy size={9} className="text-amber-400" />
+                                <span>Ranks</span>
+                              </button>
+                            )}
                             <div className="px-1.5 py-0.5 rounded-md font-black text-[9px] text-slate-950 font-bold" style={{
                               background: 'linear-gradient(135deg, #fde68a, #eab308)',
                               boxShadow: '0 1px 6px rgba(234, 179, 8, 0.45)',
@@ -14596,50 +14756,52 @@ export const StudentDashboard: React.FC<Props> = ({
               );
             })()}
 
-            {/* 2. Theme Studio Row */}
-            <button
-              onClick={() => {
-                themeOpenerRef.current = 'PROFILE';
-                onTabChange('THEME_CUSTOMIZER' as any);
-              }}
-              className={`w-full px-4 py-3.5 flex items-center gap-3.5 ${_pHovCls} transition-colors cursor-pointer text-left`}
-              style={{ borderBottom: _pSep }}
-            >
-              <div
-                className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-xs"
-                style={{
-                  background: _light ? `${tierTheme.primary}18` : 'rgba(234, 179, 8, 0.15)',
-                  border: _light ? `1.5px solid ${tierTheme.primary}40` : '1.5px solid rgba(234, 179, 8, 0.40)',
+            {/* 2. Theme Studio Row (Unlocked at Level 3) */}
+            {_pLvl.level >= 3 && (
+              <button
+                onClick={() => {
+                  themeOpenerRef.current = 'PROFILE';
+                  onTabChange('THEME_CUSTOMIZER' as any);
                 }}
+                className={`w-full px-4 py-3.5 flex items-center gap-3.5 ${_pHovCls} transition-colors cursor-pointer text-left`}
+                style={{ borderBottom: _pSep }}
               >
-                <Palette size={19} style={{ color: _light ? tierTheme.primary : '#fbbf24' }} />
-              </div>
-              <div className="flex-1 text-left min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <p className={`text-sm font-bold ${_pTxt}`}>Theme Studio</p>
-                  <span
-                    className="text-[8.5px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-wide font-mono"
-                    style={{
-                      background: _light ? `${tierTheme.primary}20` : 'rgba(234, 179, 8, 0.15)',
-                      color: _light ? tierTheme.primary : '#fde047',
-                      border: _light ? `1px solid ${tierTheme.primary}35` : '1px solid rgba(234, 179, 8, 0.35)',
-                    }}
-                  >
-                    {user.personalTheme ? '🎨 Custom Active' : 'Studio'}
-                  </span>
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-xs"
+                  style={{
+                    background: _light ? `${tierTheme.primary}18` : 'rgba(234, 179, 8, 0.15)',
+                    border: _light ? `1.5px solid ${tierTheme.primary}40` : '1.5px solid rgba(234, 179, 8, 0.40)',
+                  }}
+                >
+                  <Palette size={19} style={{ color: _light ? tierTheme.primary : '#fbbf24' }} />
                 </div>
-                <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>
-                  App ke colors, top bar aur card themes badlein
-                </p>
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <span className="text-[10px] font-bold text-amber-400/90 hidden sm:inline">Customize</span>
-                <ChevronRight size={15} style={{ color: _pTxtMutedColor }} />
-              </div>
-            </button>
+                <div className="flex-1 text-left min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <p className={`text-sm font-bold ${_pTxt}`}>Theme Studio</p>
+                    <span
+                      className="text-[8.5px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-wide font-mono"
+                      style={{
+                        background: _light ? `${tierTheme.primary}20` : 'rgba(234, 179, 8, 0.15)',
+                        color: _light ? tierTheme.primary : '#fde047',
+                        border: _light ? `1px solid ${tierTheme.primary}35` : '1px solid rgba(234, 179, 8, 0.35)',
+                      }}
+                    >
+                      {user.personalTheme ? '🎨 Custom Active' : 'Studio'}
+                    </span>
+                  </div>
+                  <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>
+                    App ke colors, top bar aur card themes badlein
+                  </p>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <span className="text-[10px] font-bold text-amber-400/90 hidden sm:inline">Customize</span>
+                  <ChevronRight size={15} style={{ color: _pTxtMutedColor }} />
+                </div>
+              </button>
+            )}
 
-            {/* ── Padhai Ka Tareeqa (Study Mode Rules) Row ── */}
-            {(() => {
+            {/* ── Padhai Ka Tareeqa (Study Mode Rules) Row (Unlocked at Level 3) ── */}
+            {_pLvl.level >= 3 && (() => {
               const currentMode = user.studyMode || 'WITHOUT_CREDIT';
               const isCredit = currentMode === 'CREDIT';
               return (
@@ -14731,37 +14893,73 @@ export const StudentDashboard: React.FC<Props> = ({
               );
             })()}
 
-            {/* 3. Score History Row */}
-            <button
-              onClick={() => {
-                const userLvl = user.level || getLevelInfo(user.totalScore || 0).level || 1;
-                const isScoreUnlocked = _isBasicUser || _isUltraUser || user.role === 'ADMIN' || userLvl >= 3;
-                if (!isScoreUnlocked) {
-                  showAlert('🔒 Score History Free users ke liye Level 3 par unlock hota hai. Basic aur Ultra members ke liye Level 1 se unlocked hai.', 'INFO');
-                  return;
-                }
-                setShowScoreHistoryDirect(true);
-              }}
-              className={`w-full px-4 py-3.5 flex items-center gap-3.5 ${_pHovCls} transition-colors cursor-pointer text-left`}
-              style={{ borderBottom: _pSep }}
-            >
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
-                background: _light ? _pIconBg : 'rgba(234, 179, 8, 0.15)',
-                border: _light ? _pIconBdr : '1px solid rgba(234, 179, 8, 0.40)',
-              }}>
-                <TrendingUp size={19} style={{ color: _light ? tierTheme.primary : '#fbbf24' }} />
-              </div>
-              <div className="flex-1 text-left min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <p className={`text-sm font-bold ${_pTxt}`}>Score History</p>
-                  {!_isBasicUser && !_isUltraUser && user.role !== 'ADMIN' && (
-                    <span className="text-[8.5px] bg-amber-100 text-amber-700 px-1.5 py-0.2 rounded font-black font-mono">Lvl 3</span>
-                  )}
+            {/* 3. Score History Row (Unlocked at Level 2) */}
+            {_pLvl.level >= 2 && (
+              <button
+                onClick={() => {
+                  const userLvl = _pLvl.level;
+                  const isScoreUnlocked = _isBasicUser || _isUltraUser || user.role === 'ADMIN' || userLvl >= 2;
+                  if (!isScoreUnlocked) {
+                    showAlert('🔒 Score History Free users ke liye Level 2 par unlock hota hai. Basic aur Ultra members ke liye Level 1 se unlocked hai.', 'INFO');
+                    return;
+                  }
+                  setShowScoreHistoryDirect(true);
+                }}
+                className={`w-full px-4 py-3.5 flex items-center gap-3.5 ${_pHovCls} transition-colors cursor-pointer text-left`}
+                style={{ borderBottom: _pSep }}
+              >
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
+                  background: _light ? _pIconBg : 'rgba(234, 179, 8, 0.15)',
+                  border: _light ? _pIconBdr : '1px solid rgba(234, 179, 8, 0.40)',
+                }}>
+                  <TrendingUp size={19} style={{ color: _light ? tierTheme.primary : '#fbbf24' }} />
                 </div>
-                <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>Apna activity score ka pura record</p>
-              </div>
-              <ChevronRight size={15} style={{ color: _pTxtMutedColor }} className="shrink-0" />
-            </button>
+                <div className="flex-1 text-left min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <p className={`text-sm font-bold ${_pTxt}`}>Score History</p>
+                    {!_isBasicUser && !_isUltraUser && user.role !== 'ADMIN' && (
+                      <span className="text-[8.5px] bg-amber-100 text-amber-700 px-1.5 py-0.2 rounded font-black font-mono">Lvl 2</span>
+                    )}
+                  </div>
+                  <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>Apna activity score ka pura record</p>
+                </div>
+                <ChevronRight size={15} style={{ color: _pTxtMutedColor }} className="shrink-0" />
+              </button>
+            )}
+
+            {/* 4. Leaderboard Row (Unlocked at Level 2) */}
+            {_pLvl.level >= 2 && (
+              <button
+                onClick={() => setShowLevelLeaderboard(true)}
+                className={`w-full px-4 py-3.5 flex items-center gap-3.5 ${_pHovCls} transition-colors cursor-pointer text-left`}
+                style={{ borderBottom: _pSep }}
+              >
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-xs"
+                  style={{
+                    background: _light ? 'rgba(245,158,11,0.18)' : 'rgba(234, 179, 8, 0.15)',
+                    border: _light ? '1.5px solid rgba(245,158,11,0.40)' : '1.5px solid rgba(234, 179, 8, 0.40)',
+                  }}
+                >
+                  <Trophy size={19} className="text-amber-400" />
+                </div>
+                <div className="flex-1 text-left min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <p className={`text-sm font-bold ${_pTxt}`}>Leaderboard</p>
+                    <span className="text-[8.5px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-wide font-mono bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                      Lvl 2+
+                    </span>
+                  </div>
+                  <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>
+                    Global level rankings aur top students ki list
+                  </p>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <span className="text-[10px] font-bold text-amber-400/90 hidden sm:inline">Rank Dekhein</span>
+                  <ChevronRight size={15} style={{ color: _pTxtMutedColor }} />
+                </div>
+              </button>
+            )}
 
             {/* 4. Link Google Account Row */}
             <button
@@ -15023,37 +15221,39 @@ export const StudentDashboard: React.FC<Props> = ({
             {showProfileSettings && (
               <div className="p-2.5 sm:p-3 bg-black/5 dark:bg-black/40 border-t" style={{ borderColor: _pSep }}>
                 <div className="grid grid-cols-2 gap-2">
-                  {/* Study Mode Quick Setting */}
-                  <button
-                    type="button"
-                    onClick={() => setShowStudyModeModal(true)}
-                    className="p-2.5 rounded-xl border flex flex-col justify-between text-left active:scale-[0.97] transition-all cursor-pointer group"
-                    style={{
-                      background: _light ? 'rgba(255,255,255,0.85)' : '#141e36',
-                      borderColor: _light ? 'rgba(0,0,0,0.08)' : 'rgba(234, 179, 8, 0.28)',
-                      boxShadow: _light ? 'none' : '0 2px 10px rgba(0,0,0,0.30)',
-                    }}
-                  >
-                    <div className="flex items-center justify-between gap-1 mb-1.5 w-full">
-                      <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs" style={{
-                        background: user.studyMode === 'CREDIT' ? 'rgba(59,130,246,0.15)' : 'rgba(16,185,129,0.15)',
-                        border: `1px solid ${user.studyMode === 'CREDIT' ? 'rgba(59,130,246,0.40)' : 'rgba(16,185,129,0.40)'}`,
-                      }}>
-                        <span className="text-xs leading-none">{user.studyMode === 'CREDIT' ? '💰' : '🎓'}</span>
+                  {/* Study Mode Quick Setting (Unlocked at Level 3) */}
+                  {_pLvl.level >= 3 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowStudyModeModal(true)}
+                      className="p-2.5 rounded-xl border flex flex-col justify-between text-left active:scale-[0.97] transition-all cursor-pointer group"
+                      style={{
+                        background: _light ? 'rgba(255,255,255,0.85)' : '#141e36',
+                        borderColor: _light ? 'rgba(0,0,0,0.08)' : 'rgba(234, 179, 8, 0.28)',
+                        boxShadow: _light ? 'none' : '0 2px 10px rgba(0,0,0,0.30)',
+                      }}
+                    >
+                      <div className="flex items-center justify-between gap-1 mb-1.5 w-full">
+                        <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs" style={{
+                          background: user.studyMode === 'CREDIT' ? 'rgba(59,130,246,0.15)' : 'rgba(16,185,129,0.15)',
+                          border: `1px solid ${user.studyMode === 'CREDIT' ? 'rgba(59,130,246,0.40)' : 'rgba(16,185,129,0.40)'}`,
+                        }}>
+                          <span className="text-xs leading-none">{user.studyMode === 'CREDIT' ? '💰' : '🎓'}</span>
+                        </div>
+                        <span className={`text-[7.5px] font-black px-1.5 py-0.5 rounded font-mono shrink-0 ${
+                          user.studyMode === 'CREDIT' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                        }`}>
+                          {user.studyMode === 'CREDIT' ? 'CREDIT' : '0 CR'}
+                        </span>
                       </div>
-                      <span className={`text-[7.5px] font-black px-1.5 py-0.5 rounded font-mono shrink-0 ${
-                        user.studyMode === 'CREDIT' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                      }`}>
-                        {user.studyMode === 'CREDIT' ? 'CREDIT' : '0 CR'}
-                      </span>
-                    </div>
-                    <div className="w-full min-w-0">
-                      <p className={`text-[11.5px] font-bold ${_pTxt} truncate leading-tight`}>Study Mode</p>
-                      <p className={`text-[9px] ${_pTxtSub} truncate mt-0.5 leading-tight`}>
-                        {user.studyMode === 'CREDIT' ? 'Credit Economy' : 'Without Credit'}
-                      </p>
-                    </div>
-                  </button>
+                      <div className="w-full min-w-0">
+                        <p className={`text-[11.5px] font-bold ${_pTxt} truncate leading-tight`}>Study Mode</p>
+                        <p className={`text-[9px] ${_pTxtSub} truncate mt-0.5 leading-tight`}>
+                          {user.studyMode === 'CREDIT' ? 'Credit Economy' : 'Without Credit'}
+                        </p>
+                      </div>
+                    </button>
+                  )}
 
                   {/* 1. Change Name */}
                   <button
@@ -15553,73 +15753,76 @@ export const StudentDashboard: React.FC<Props> = ({
            </div>
 
           {/* ── ADMIN SUPPORT (SAB SE NICHE PROFILE PAGE ME) ── */}
-          <div className="mx-3 sm:mx-4 mb-8">
-            <button
-              type="button"
-              onClick={() => {
-                hapticStrong();
-                setChatMode('SUPPORT');
-                setShowChat(true);
-              }}
-              className="w-full p-4 rounded-2xl flex items-center justify-between text-left active:scale-[0.98] transition-all shadow-xl cursor-pointer relative overflow-hidden group"
-              style={{
-                background: _light
-                  ? 'linear-gradient(135deg, rgba(234, 179, 8, 0.12) 0%, rgba(255, 255, 255, 0.96) 60%, rgba(202, 138, 4, 0.10) 100%)'
-                  : 'linear-gradient(135deg, rgba(234, 179, 8, 0.18) 0%, rgba(18, 27, 51, 0.96) 50%, rgba(202, 138, 4, 0.14) 100%)',
-                border: '1.5px solid rgba(234, 179, 8, 0.55)',
-                boxShadow: '0 0 25px rgba(234, 179, 8, 0.22), 0 8px 24px rgba(0, 0, 0, 0.35)',
-              }}
-            >
-              <div
-                className="absolute inset-0 rounded-2xl pointer-events-none"
-                style={{
-                  boxShadow: 'inset 0 0 15px rgba(234, 179, 8, 0.15)',
+          {/* Jab tak 4th button bottom nav me nahi aata, Admin Support bottom nav me rehta hai aur Profile page se hidden rehta hai. 4th button aate hi wapis Profile page par aa jata hai! */}
+          {!shouldShowAdminSupportInBottomNav && (
+            <div className="mx-3 sm:mx-4 mb-8">
+              <button
+                type="button"
+                onClick={() => {
+                  hapticStrong();
+                  setChatMode('SUPPORT');
+                  setShowChat(true);
                 }}
-              />
-              <div className="absolute -top-8 -left-8 w-24 h-24 rounded-full bg-amber-500/15 blur-xl pointer-events-none group-hover:bg-amber-500/25 transition-all" />
-              <div className="absolute -bottom-8 -right-8 w-24 h-24 rounded-full bg-yellow-500/15 blur-xl pointer-events-none group-hover:bg-yellow-500/25 transition-all" />
-
-              <div className="flex items-center gap-3.5 relative z-10">
-                <div
-                  className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-md relative"
-                  style={{
-                    background: 'linear-gradient(135deg, #fde68a, #eab308, #b45309)',
-                    color: '#0f172a',
-                    boxShadow: '0 4px 14px rgba(234, 179, 8, 0.45)',
-                  }}
-                >
-                  <Headphones size={22} className="text-slate-950 drop-shadow-sm" />
-                  <span className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-400 rounded-full border-2 border-slate-900 animate-pulse" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h4 className={`text-sm font-black ${_pTxt}`}>Admin Support</h4>
-                    <span
-                      className="px-2 py-0.5 rounded-full text-[8.5px] font-black uppercase tracking-wider text-slate-950 font-mono shadow-xs"
-                      style={{
-                        background: 'linear-gradient(90deg, #fde68a, #eab308)',
-                      }}
-                    >
-                      Direct 24/7 Help
-                    </span>
-                  </div>
-                  <p className={`text-[11px] mt-0.5 ${_pTxtSub}`}>
-                    Admin se direct chat karein ya query poochein
-                  </p>
-                </div>
-              </div>
-              <div
-                className="w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black shadow-md shrink-0 relative z-10 transition-transform group-hover:translate-x-0.5"
+                className="w-full p-4 rounded-2xl flex items-center justify-between text-left active:scale-[0.98] transition-all shadow-xl cursor-pointer relative overflow-hidden group"
                 style={{
-                  background: 'linear-gradient(135deg, rgba(234, 179, 8, 0.20), rgba(202, 138, 4, 0.25))',
-                  color: _light ? '#854d0e' : '#fde047',
-                  border: '1px solid rgba(234, 179, 8, 0.45)',
+                  background: _light
+                    ? 'linear-gradient(135deg, rgba(234, 179, 8, 0.12) 0%, rgba(255, 255, 255, 0.96) 60%, rgba(202, 138, 4, 0.10) 100%)'
+                    : 'linear-gradient(135deg, rgba(234, 179, 8, 0.18) 0%, rgba(18, 27, 51, 0.96) 50%, rgba(202, 138, 4, 0.14) 100%)',
+                  border: '1.5px solid rgba(234, 179, 8, 0.55)',
+                  boxShadow: '0 0 25px rgba(234, 179, 8, 0.22), 0 8px 24px rgba(0, 0, 0, 0.35)',
                 }}
               >
-                <ChevronRight size={16} />
-              </div>
-            </button>
-          </div>
+                <div
+                  className="absolute inset-0 rounded-2xl pointer-events-none"
+                  style={{
+                    boxShadow: 'inset 0 0 15px rgba(234, 179, 8, 0.15)',
+                  }}
+                />
+                <div className="absolute -top-8 -left-8 w-24 h-24 rounded-full bg-amber-500/15 blur-xl pointer-events-none group-hover:bg-amber-500/25 transition-all" />
+                <div className="absolute -bottom-8 -right-8 w-24 h-24 rounded-full bg-yellow-500/15 blur-xl pointer-events-none group-hover:bg-yellow-500/25 transition-all" />
+
+                <div className="flex items-center gap-3.5 relative z-10">
+                  <div
+                    className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-md relative"
+                    style={{
+                      background: 'linear-gradient(135deg, #fde68a, #eab308, #b45309)',
+                      color: '#0f172a',
+                      boxShadow: '0 4px 14px rgba(234, 179, 8, 0.45)',
+                    }}
+                  >
+                    <Headphones size={22} className="text-slate-950 drop-shadow-sm" />
+                    <span className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-400 rounded-full border-2 border-slate-900 animate-pulse" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className={`text-sm font-black ${_pTxt}`}>Admin Support</h4>
+                      <span
+                        className="px-2 py-0.5 rounded-full text-[8.5px] font-black uppercase tracking-wider text-slate-950 font-mono shadow-xs"
+                        style={{
+                          background: 'linear-gradient(90deg, #fde68a, #eab308)',
+                        }}
+                      >
+                        Direct 24/7 Help
+                      </span>
+                    </div>
+                    <p className={`text-[11px] mt-0.5 ${_pTxtSub}`}>
+                      Admin se direct chat karein ya query poochein
+                    </p>
+                  </div>
+                </div>
+                <div
+                  className="w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black shadow-md shrink-0 relative z-10 transition-transform group-hover:translate-x-0.5"
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(234, 179, 8, 0.20), rgba(202, 138, 4, 0.25))',
+                    color: _light ? '#854d0e' : '#fde047',
+                    border: '1px solid rgba(234, 179, 8, 0.45)',
+                  }}
+                >
+                  <ChevronRight size={16} />
+                </div>
+              </button>
+            </div>
+          )}
 
           {/* ── RARE MYTHIC LOGOUT CARD (SAB SE LAST ME PROFILE PAGE ME) ── */}
           {(settings?.isLogoutEnabled !== false || user.role === 'ADMIN' || isImpersonating) && (
@@ -15964,6 +16167,10 @@ export const StudentDashboard: React.FC<Props> = ({
   };
 
   const renderBottomNav = (inProjectorOverlay: boolean = false) => {
+    // When Level Roadmap is open, hide bottom navigation completely
+    if (showLevelRoadmapModal) {
+      return null;
+    }
     if (!inProjectorOverlay && (flashcardMcqs || compMcqSession)) {
       return null;
     }
@@ -15976,7 +16183,6 @@ export const StudentDashboard: React.FC<Props> = ({
       showPedroVipExpiryModal ||
       showPedro3DViewer ||
       showCoachingPicker ||
-      showWhatsAppChatModal ||
       Boolean(premiumUpgradeModal) ||
       showStreakPopup ||
       showExpiryPopup ||
@@ -15991,6 +16197,7 @@ export const StudentDashboard: React.FC<Props> = ({
         activeExternalApp ||
         isDocFullscreen ||
         isLandscapeUiHidden ||
+        (showWhatsAppChatModal && isTopBarHidden) ||
         isInternalImmersive ||
         showNstaQuickWheel ||
         (hwActiveHwId ? hwImmersive : false) ||
@@ -16354,12 +16561,90 @@ export const StudentDashboard: React.FC<Props> = ({
               },
             ];
 
-            const visibleTabs = tabs.filter((t) => {
+            const baseStandardTabs = tabs.filter((t) => {
+              if (t.id === 'UPDATES' && !isFeatureUnlockedForUser('PRO_PLUS_PAGE', _userLevel, user.totalScore || 0, user.role)) {
+                return false;
+              }
+              if (t.id === 'COMMUNITY_FEED' && !isFeatureUnlockedForUser('COMMUNITY_OFFICIAL', _userLevel, user.totalScore || 0, user.role)) {
+                return false;
+              }
+              if (t.id === 'COMMUNITY_MCQ' && !isFeatureUnlockedForUser('MCQ_OFFICIAL_HUB', _userLevel, user.totalScore || 0, user.role)) {
+                return false;
+              }
               const access = t.featureId
                 ? getFeatureAccess(t.featureId)
                 : { hasAccess: true, isHidden: false };
               return !access.isHidden;
             });
+
+            // ── DYNAMIC BOTTOM NAV SLOTS (ROADMAP & ADMIN SUPPORT) ──
+            // 1. Roadmap is in bottom nav until a 3rd button unlocks (shouldShowRoadmapInBottomNav).
+            //    When 3rd button arrives, Roadmap leaves bottom nav and goes back to original place (topbar trophy button).
+            // 2. Admin Support is in bottom nav until a 4th button unlocks (shouldShowAdminSupportInBottomNav).
+            //    When 4th button arrives, Admin Support leaves bottom nav and returns to Profile page!
+            const roadmapTab = {
+              id: "ROADMAP" as any,
+              label: "Roadmap",
+              Icon: Trophy,
+              filledOnActive: true,
+              activeColor: "#f59e0b",
+              isActive: showLevelRoadmapModal,
+              onClick: () => {
+                try { stopSpeech(); } catch (_) {}
+                hapticMedium();
+                setShowLevelRoadmapModal(true);
+              },
+            };
+
+            const adminSupportTab = {
+              id: "ADMIN_SUPPORT" as any,
+              label: "Support",
+              Icon: Headphones,
+              filledOnActive: true,
+              activeColor: "#10b981",
+              isActive: !showUpdatesPage && !showStarredPage && showChat && chatMode === 'SUPPORT',
+              onClick: () => {
+                try { stopSpeech(); } catch (_) {}
+                setSpeakingId(null);
+                setFlashcardMcqs(null);
+                setHwActiveHwId(null);
+                setHwImmersive(false);
+                setLucentNoteViewer(null);
+                setLucentImmersive(false);
+                setIsLandscapeUiHidden(false);
+                setIsTopBarHidden(false);
+                if (contentViewStep === "PLAYER") {
+                  setContentViewStep("CHAPTER");
+                }
+                setShowCompareView(false);
+                setShowRevisionHubScreen(false);
+                setShowUpdatesPage(false);
+                setShowMyRoutine(false);
+                setShowDailyEventPage(false);
+                setShowWhatsAppChatModal(false);
+                if (showCommunityStarsPage) {
+                  try { stopProfileStarRead(); } catch (_) {}
+                  setShowCommunityStarsPage(false);
+                }
+                try { stopProfileStarRead(); } catch (_) {}
+                setShowStarredPage(false);
+                hapticStrong();
+                setChatMode('SUPPORT');
+                setShowChat(true);
+              },
+            };
+
+            const homeTab = baseStandardTabs[0];
+            const profileTab = baseStandardTabs[baseStandardTabs.length - 1];
+            const middleTabs = baseStandardTabs.slice(1, -1);
+
+            const visibleTabs = [
+              homeTab,
+              ...middleTabs,
+              ...(shouldShowRoadmapInBottomNav ? [roadmapTab] : []),
+              ...(shouldShowAdminSupportInBottomNav ? [adminSupportTab] : []),
+              profileTab,
+            ].filter(Boolean);
             const totalVisible = Math.max(visibleTabs.length, 1);
             const activeIndex = visibleTabs.findIndex((t) => t.isActive);
             const navActiveColors = Array.isArray((tierTheme as any).navActiveColors) && (tierTheme as any).navActiveColors.length
@@ -16514,6 +16799,19 @@ export const StudentDashboard: React.FC<Props> = ({
       {_isAdminUser && showAdminBoard && (
         <AdminWhiteBoard onClose={() => setShowAdminBoard(false)} />
       )}
+      {/* Central Offline Downloads Hub Modal */}
+      <OfflineDownloadsHub
+        isOpen={showDownloadsHub}
+        onClose={() => setShowDownloadsHub(false)}
+        user={user}
+        isAdmin={_isAdminUser}
+        appLogo={settings?.appLogo}
+        appName={settings?.appShortName || 'NSTA'}
+        onUpgradeClick={() => {
+          setShowDownloadsHub(false);
+          onTabChange('STORE');
+        }}
+      />
       {/* ADMIN SWITCH BUTTON — only visible inside content (Notes/MCQ player or HW notes) */}
       {(user.role === "ADMIN" ||
         user.role === "SUB_ADMIN" ||
@@ -16542,7 +16840,7 @@ export const StudentDashboard: React.FC<Props> = ({
       {/* NEW GLOBAL TOP BAR */}
       <div
         id="top-banner-container"
-        className={`sticky top-0 z-[100] w-full flex flex-col relative transition-all duration-150 ease-in-out overflow-hidden ${isFullscreenMode || Boolean(mathViewerEntry) ? "hidden" : ""} ${(isTopBarHidden || isLandscapeUiHidden || showWhatsAppChatModal || showNstaQuickWheel || activeTab === 'STORE' || activeTab === 'CUSTOM_PAGE' || activeTab === 'PROFILE' || activeTab === 'UNIVERSAL_VIDEO') ? "-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none" : "translate-y-0 opacity-100"}`}
+        className={`sticky top-0 z-[100] w-full flex flex-col relative transition-all duration-150 ease-in-out overflow-hidden ${isFullscreenMode || Boolean(mathViewerEntry) || showLevelRoadmapModal ? "!hidden !h-0 overflow-hidden pointer-events-none" : ""} ${(isTopBarHidden || isLandscapeUiHidden || showWhatsAppChatModal || showNstaQuickWheel || showLevelRoadmapModal || activeTab === 'STORE' || activeTab === 'CUSTOM_PAGE' || activeTab === 'PROFILE' || activeTab === 'UNIVERSAL_VIDEO') ? "-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none" : "translate-y-0 opacity-100"}`}
         style={{ background: activeTopBarGrad }}
       >
         <TopBarEffectsLayer effects={activeTopBarEffects} />
@@ -17218,9 +17516,30 @@ export const StudentDashboard: React.FC<Props> = ({
                       )}
                     </button>
                   )}
+
+                  {/* Level Roadmap Journey Button — Only visible in Top Bar Row 1 when removed from Bottom Nav, icon only & transparent background */}
+                  {!shouldShowRoadmapInBottomNav && (
+                    <button
+                      id="topbar-level-roadmap-btn"
+                      onClick={() => setShowLevelRoadmapModal(true)}
+                      className="relative p-1.5 bg-transparent hover:bg-white/5 border-none shadow-none text-amber-300 shrink-0 active:scale-95 transition-all cursor-pointer"
+                      title="Level Unlock Roadmap — Dekhein kahan kya unlock hone wala hai"
+                    >
+                      <Trophy size={17} className="text-amber-400 hover:text-amber-300 transition-colors shrink-0" />
+                    </button>
+                  )}
                 </>
               );
             })()}
+
+            {/* My Offline Downloads Hub button */}
+            <button
+              onClick={() => setShowDownloadsHub(true)}
+              className="p-1.5 rounded-xl transition-all text-white hover:bg-white/10 active:scale-95 shrink-0"
+              title="My Offline Downloads Hub"
+            >
+              <Download size={17} className="text-white" />
+            </button>
 
             {/* 3-dot menu */}
             <div className="relative shrink-0">
@@ -17376,8 +17695,13 @@ export const StudentDashboard: React.FC<Props> = ({
                         const pendingRewardsCount = (user.inbox || []).filter(m => (m.type === 'REWARD' || m.type === 'GIFT') && !m.isClaimed && (!m.expiresAt || new Date(m.expiresAt).getTime() > Date.now())).length + pendingCreditSub + pendingDiamondSub;
                         const totalMailBadge = unreadCount + unreadNotifCount + _newContentCount + pendingRewardsCount;
                         const pedroTopBarState = PedroEngine.getTopBarVisibility(user);
+                        const isMailboxUnlocked = isFeatureUnlockedForUser('MAILBOX_INBOX', _userLevel, user.totalScore || 0, user.role);
+                        const isScoreHistoryUnlocked = isFeatureUnlockedForUser('SCORE_HISTORY', _userLevel, user.totalScore || 0, user.role);
+                        const isNotesTrackerUnlocked = isFeatureUnlockedForUser('NOTES_FIX_TRACKER', _userLevel, user.totalScore || 0, user.role);
+                        const isPedroUnlocked = isFeatureUnlockedForUser('PEDRO_AI_ASSISTANT', _userLevel, user.totalScore || 0, user.role);
+
                         const items: ListItem[] = [
-                          ...(pedroTopBarState.showMailboxButton ? [{
+                          ...(isMailboxUnlocked ? (pedroTopBarState.showMailboxButton ? [{
                             label: 'Mail Box',
                             right: totalMailBadge > 0 ? `📬 ${totalMailBadge}` : '✉️',
                             action: () => {
@@ -17398,33 +17722,41 @@ export const StudentDashboard: React.FC<Props> = ({
                               setShowInbox(true);
                               setShowDotsMenu(false);
                             },
-                          }]),
-                          {
+                          }]) : []),
+                          ...(isScoreHistoryUnlocked ? [{
                             label: 'Score History',
-                            locked: !_isBasicUser && !_isUltraUser && user.role !== 'ADMIN' && (user.level || getLevelInfo(user.totalScore || 0).level || 1) < 3,
                             action: () => {
-                              const userLvl = user.level || getLevelInfo(user.totalScore || 0).level || 1;
-                              if (!_isBasicUser && !_isUltraUser && user.role !== 'ADMIN' && userLvl < 3) {
-                                showAlert('🔒 Score History Free users ke liye Level 3 par unlock hota hai. Basic aur Ultra members ke liye Level 1 se unlocked hai.', 'INFO');
-                                return;
-                              }
                               setShowScoreHistoryDirect(true); setShowDotsMenu(false);
                             },
-                          },
-                          ...(!redeemAccess.isHidden ? [{
-                            label: 'Redeem Code',
-                            locked: !redeemAccess.hasAccess,
+                          }] : []),
+                          ...(isNotesTrackerUnlocked ? [{
+                            label: 'Notes Fix Tracker 🔍',
                             action: () => {
-                              if (!redeemAccess.hasAccess) { showAlert('🔒 Locked by Admin. Upgrade your plan to access.', 'ERROR'); return; }
-                              onTabChange("REDEEM"); setShowDotsMenu(false);
+                              setShowNotesFixTrackerModal(true);
+                              setShowDotsMenu(false);
                             },
                           }] : []),
+                          {
+                            label: 'Redeem Code 🎟️',
+                            action: () => {
+                              onTabChange("REDEEM");
+                              setShowDotsMenu(false);
+                            },
+                          },
                           {
                             label: 'Theme',
                             isTheme: true,
                             action: handleThemeCycle,
                           },
                           {
+                            label: '📥 My Offline Downloads',
+                            right: 'Vault',
+                            action: () => {
+                              setShowDotsMenu(false);
+                              setShowDownloadsHub(true);
+                            },
+                          },
+                          ...(isPedroUnlocked ? [{
                             label: 'Pedro Guide 🤖',
                             action: () => {
                               setIsPedroHidden(false);
@@ -17439,7 +17771,7 @@ export const StudentDashboard: React.FC<Props> = ({
                               setShowPedro(true);
                               setShowDotsMenu(false);
                             },
-                          },
+                          }] : []),
                         ];
 
                         return (
@@ -17497,35 +17829,41 @@ export const StudentDashboard: React.FC<Props> = ({
             const isLong = fullName.length > 10;
             const overflowPx = isLong ? Math.min(90, (fullName.length - 10) * 7) : 0;
             return (
-              <div
-                id="topbar-row2-greeting"
-                data-student-name={fullName}
-                onClick={() => {
-                  pedroSpeak(`Hey ${fullName}! Aapka NSTA mein swagat hai!`, { rate: 1.08, pitch: 1.15, showBubble: true });
-                }}
-                className="overflow-hidden shrink-0 cursor-pointer active:scale-95 transition-transform"
-                title={`Student: ${fullName} (Tap karke Pedro se suniye)`}
-                style={isLong ? { maskImage: 'linear-gradient(to right, black 78%, transparent 100%)', maxWidth: '95px' } : {}}
-              >
-                <span
-                  className={`text-[11px] sm:text-[12px] font-black text-white leading-tight whitespace-nowrap inline-block${isLong ? ' nst-name-scroll' : ''}`}
-                  style={isLong ? { '--nst-scroll': `-${overflowPx}px` } as React.CSSProperties : {}}
+              <div className="flex items-center gap-1 shrink-0 min-w-0">
+                <div
+                  id="topbar-row2-greeting"
+                  data-student-name={fullName}
+                  onClick={() => {
+                    pedroSpeak(`Hey ${fullName}! Aapka NSTA mein swagat hai!`, { rate: 1.08, pitch: 1.15, showBubble: true });
+                  }}
+                  className="overflow-hidden shrink-0 cursor-pointer active:scale-95 transition-transform"
+                  title={`Student: ${fullName} (Tap karke Pedro se suniye)`}
+                  style={isLong ? { maskImage: 'linear-gradient(to right, black 78%, transparent 100%)', maxWidth: '85px' } : {}}
                 >
-                  Hey, {fullName} 👋
-                </span>
+                  <span
+                    className={`text-[11px] sm:text-[12px] font-black text-white leading-tight whitespace-nowrap inline-block${isLong ? ' nst-name-scroll' : ''}`}
+                    style={isLong ? { '--nst-scroll': `-${overflowPx}px` } as React.CSSProperties : {}}
+                  >
+                    Hey, {fullName} 👋
+                  </span>
+                </div>
               </div>
             );
           })()}
 
-          {/* Middle: Merged XP status bar with glowing Bindu, shimmer & Total XP button */}
-          <TopBarRow2XpBar
-            user={user}
-            settings={settings}
-            activeTab={activeTab}
-            levelAnimOff={levelAnimOff}
-            isExpanded={false}
-            onOpenScorePanel={() => setShowScorePanel(true)}
-          />
+          {/* Middle: Merged XP status bar with glowing Bindu, shimmer & Total XP button (Unlocks at Level 1 (ii)) */}
+          {isFeatureUnlockedForUser('LEVEL_STATUS_BAR', _userLevel, user.totalScore || 0, user.role) ? (
+            <TopBarRow2XpBar
+              user={user}
+              settings={settings}
+              activeTab={activeTab}
+              levelAnimOff={levelAnimOff}
+              isExpanded={false}
+              onOpenScorePanel={() => setShowScorePanel(true)}
+            />
+          ) : (
+            <div className="flex-1" />
+          )}
 
           {/* Right: Rotating button (Store -> Credits -> Diamonds) switching every 3 seconds */}
           <div className="flex items-center shrink-0 overflow-hidden max-w-[104px] opacity-100 scale-100">
@@ -21944,8 +22282,12 @@ export const StudentDashboard: React.FC<Props> = ({
               <div className="flex items-center gap-2">
                 <span className="text-xl">👑</span>
                 <div>
-                  <h3 className="text-sm font-black text-white tracking-wide">{user.name || 'Student'}</h3>
-                  <p className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">Profile Photo</p>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <h3 className="text-sm font-black text-white tracking-wide">{user.name || 'Student'}</h3>
+                    <UserNameTierBadge user={user} size="xs" />
+                    <UserLevelBadge user={user} size="xs" onClick={() => { setShowPhotoFullscreen(false); onTabChange("LEVELS"); }} />
+                  </div>
+                  <p className="text-[10px] text-amber-400 font-bold uppercase tracking-wider mt-0.5">Profile Photo</p>
                 </div>
               </div>
               <button
@@ -22276,20 +22618,32 @@ export const StudentDashboard: React.FC<Props> = ({
           return null;
         }
 
-        // Fullscreen player / doc reading modes / flashcard viewer / math viewer mein button hide rahega
+        // Fullscreen player / doc reading modes / flashcard viewer / math viewer / all MCQ views mein button hide rahega
         if (
           contentViewStep === "PLAYER" ||
           isDocFullscreen ||
           lucentNoteViewer ||
           coachingNotesReaderOpen ||
           hwActiveHwId ||
+          Boolean(homeworkPlayerHwId) ||
           isInternalImmersive ||
           activeExternalApp ||
           Boolean(flashcardMcqs) ||
           Boolean(compMcqSession) ||
           Boolean(mathViewerEntry) ||
           isDomModalOpen ||
-          showStudyModeModal
+          showStudyModeModal ||
+          activeTab === "MCQ" ||
+          activeTab === "MCQ_REVIEW" ||
+          activeTab === "REVISION_V2" ||
+          (showChat && chatMode === "MCQ") ||
+          showRevisionHubScreen ||
+          showMistakePractice ||
+          showCompMcqHub ||
+          showMcqCommunityPopup ||
+          showMcqSearchView ||
+          Boolean(compMcqDraft?.question) ||
+          (selectedSubject && selectedSubject.id === 'mcq')
         ) {
           return null;
         }
@@ -22306,6 +22660,10 @@ export const StudentDashboard: React.FC<Props> = ({
           !showMcqCommunityPopup &&
           !showWhatsAppChatModal;
 
+        if (isHomePage && !isFeatureUnlockedForUser('FEATURE_WHEEL', _userLevel, user.totalScore || 0, user.role)) {
+          return null;
+        }
+
         // Button is active on Home page, Pro page, MCQ page, Community page, Routine page, Revision Hub, NstA Messenger, etc.
         const isBarsHidden = isLandscapeUiHidden || isTopBarHidden || !forceShowBottomNav;
 
@@ -22321,6 +22679,13 @@ export const StudentDashboard: React.FC<Props> = ({
             ? (isChatOrMcq ? 'bottom-[74px]' : 'bottom-[76px]')
             : 'bottom-5 sm:bottom-6';
 
+        // Level Roadmap rule: On home page, hide the NSTA Fab until Feature Wheel is unlocked at Level 1 (iii)
+        const isFeatureWheelUnlocked = isFeatureUnlockedForUser('FEATURE_WHEEL', _userLevel, user.totalScore || 0, user.role);
+        const isPedroUnlocked = isFeatureUnlockedForUser('PEDRO_AI_ASSISTANT', _userLevel, user.totalScore || 0, user.role);
+        if (isHomePage && !isFeatureWheelUnlocked && !isPedroUnlocked) {
+          return null;
+        }
+
         const handleButtonClick = () => {
           if (nstaFabIsLongPressRef.current) {
             nstaFabIsLongPressRef.current = false;
@@ -22330,8 +22695,17 @@ export const StudentDashboard: React.FC<Props> = ({
           // Note: Tap no longer restores/summons Pedro (Pedro is summoned strictly by holding/daba ke rakhna)
 
           if (isHomePage) {
-            // Home page par NstA button tap se feature wheel open hoga
-            setShowNstaQuickWheel(true);
+            // Home page par NstA button tap se feature wheel open hoga (Unlocks at Level 1 (iii))
+            if (!isFeatureUnlockedForUser('FEATURE_WHEEL', _userLevel, user.totalScore || 0, user.role)) {
+              setHomeToast({
+                type: 'CREDIT',
+                message: '🔒 Feature Wheel Level 1 (iii) par unlock hoga! (600 XP)',
+                subMessage: 'Level 1 (iii) par pahunchkar NSTA Quick Wheel access karein.'
+              });
+              setShowLevelRoadmapModal(true);
+            } else {
+              setShowNstaQuickWheel(true);
+            }
           } else {
             // Pro page, MCQ page, Community, Routine, Revision Hub, NstA Messenger sab par:
             // "top baar hide aur button baar hide aur unhide, ek tap karne pe hide dusre pe unhide"
@@ -22348,6 +22722,15 @@ export const StudentDashboard: React.FC<Props> = ({
           nstaFabLongPressTimerRef.current = setTimeout(() => {
             nstaFabIsLongPressRef.current = true;
             try { hapticStrong(); } catch (_) {}
+            if (!isFeatureUnlockedForUser('PEDRO_AI_ASSISTANT', _userLevel, user.totalScore || 0, user.role)) {
+              setHomeToast({
+                type: 'CREDIT',
+                message: '🔒 Pedro AI Assistant Level 3 (v) (6,500 XP) par unlock hoga!',
+                subMessage: 'Level 3 (v) par Pedro unlock hokar aapka smart AI study partner banega.'
+              });
+              setShowLevelRoadmapModal(true);
+              return;
+            }
             setIsPedroHidden(false);
             if (typeof window !== 'undefined') {
               localStorage.removeItem('nst_pedro_hidden');
@@ -22685,7 +23068,10 @@ export const StudentDashboard: React.FC<Props> = ({
               >
                 <Trophy size={11} /> Reward
                 {(() => {
-                  const cnt = (user.inbox || []).filter(m => (m.type === 'REWARD' || m.type === 'GIFT') && !m.isClaimed && (!m.expiresAt || new Date(m.expiresAt).getTime() > Date.now())).length;
+                  const cnt =
+                    (user.inbox || []).filter(m => (m.type === 'REWARD' || m.type === 'GIFT') && !m.isClaimed && (!m.expiresAt || new Date(m.expiresAt).getTime() > Date.now())).length +
+                    (canClaimCreditSubToday(user) ? 1 : 0) +
+                    (canClaimDiamondSubToday(user) ? 1 : 0);
                   return cnt > 0 ? <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${inboxTab === 'REWARDS' ? 'bg-white/20 text-white' : 'bg-red-500 text-white'}`}>{cnt}</span> : null;
                 })()}
               </button>
@@ -22863,18 +23249,128 @@ export const StudentDashboard: React.FC<Props> = ({
                 const pendingRewardMsgs = rawInbox.filter(m => (m.type === 'REWARD' || m.type === 'GIFT') && !m.isClaimed && (!m.expiresAt || new Date(m.expiresAt).getTime() > Date.now()));
                 return (
                   <div className="space-y-3">
-                    {/* Credits balance */}
-                        <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-4 flex items-center justify-between">
-                          <div>
-                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Aapke Credits</p>
-                            <p className="text-2xl font-black text-yellow-400">{(user.credits || 0) + (user.bonusCredits || 0) + (user.giftedCredits || 0)} CR</p>
-                            {(user.bonusCredits || 0) > 0 && <p className="text-[9px] text-emerald-400 font-bold mt-0.5">✅ {user.bonusCredits} Permanent Credits</p>}
-                            {(user.giftedCredits || 0) > 0 && <p className="text-[9px] text-pink-400 font-bold mt-0.5">🎀 {user.giftedCredits} Gift Credits</p>}
+                    {/* Credits & Diamonds balance */}
+                        <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-4 flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-4 flex-wrap">
+                            <div>
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Aapke Credits</p>
+                              <p className="text-2xl font-black text-yellow-400">{(user.credits || 0) + (user.bonusCredits || 0) + (user.giftedCredits || 0)} CR</p>
+                              {(user.bonusCredits || 0) > 0 && <p className="text-[9px] text-emerald-400 font-bold mt-0.5">✅ {user.bonusCredits} Permanent Credits</p>}
+                              {(user.giftedCredits || 0) > 0 && <p className="text-[9px] text-pink-400 font-bold mt-0.5">🎀 {user.giftedCredits} Gift Credits</p>}
+                            </div>
+                            <div className="pl-4 border-l border-slate-700/80">
+                              <p className="text-[10px] font-black text-cyan-400 uppercase tracking-widest mb-1">Aapke Diamonds</p>
+                              <p className="text-2xl font-black text-cyan-300">{(user.diamonds || 0)} 💎</p>
+                            </div>
                           </div>
-                          <button onClick={() => { setShowInbox(false); onTabChange('STORE'); }} className="text-xs font-black bg-gradient-to-r from-indigo-500 to-purple-500 text-white px-4 py-2 rounded-full active:scale-95 transition-all">
+                          <button onClick={() => { setShowInbox(false); onTabChange('STORE'); }} className="text-xs font-black bg-gradient-to-r from-indigo-500 to-purple-500 text-white px-4 py-2 rounded-full active:scale-95 transition-all shrink-0">
                             Store Dekho →
                           </button>
                         </div>
+
+                        {/* Daily Diamond Subscription (Diamond Pass) Claim in Mailbox Rewards */}
+                        {isDiamondSubActive(user) ? (() => {
+                          const dSub = user.diamondSubscription!;
+                          const canClaimDia = canClaimDiamondSubToday(user);
+                          const diaDaysLeft = getDiamondSubDaysRemaining(user);
+                          return (
+                            <div
+                              className="border rounded-2xl p-3.5 sm:p-4 relative overflow-hidden transition-all shadow-sm"
+                              style={{
+                                background: canClaimDia
+                                  ? 'linear-gradient(135deg, #ecfeff, #cffafe)'
+                                  : 'linear-gradient(135deg, #f8fafc, #f1f5f9)',
+                                borderColor: canClaimDia ? '#06b6d4' : '#e2e8f0',
+                                boxShadow: canClaimDia ? '0 4px 14px rgba(6,182,212,0.18)' : 'none',
+                              }}
+                            >
+                              <div className="flex items-center justify-between gap-2 mb-2.5">
+                                <div className="flex items-center gap-2.5">
+                                  <div
+                                    className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 font-black shadow-xs"
+                                    style={{
+                                      background: canClaimDia ? 'linear-gradient(135deg, #06b6d4, #0284c7)' : 'rgba(6,182,212,0.15)',
+                                      color: canClaimDia ? '#fff' : '#0891b2',
+                                    }}
+                                  >
+                                    💎
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="text-[9px] font-black uppercase tracking-wider text-cyan-900 bg-cyan-200/80 px-2 py-0.5 rounded-full">
+                                        DIAMOND SUBSCRIPTION
+                                      </span>
+                                      <span className="text-[10px] font-bold text-slate-500">
+                                        {diaDaysLeft} Din Baki
+                                      </span>
+                                    </div>
+                                    <h4 className="text-xs font-black text-slate-800 mt-0.5">
+                                      {dSub.planName || 'Diamond Subscription Pass'}
+                                    </h4>
+                                  </div>
+                                </div>
+                                <span className="text-xs font-black text-cyan-800 bg-cyan-100/90 border border-cyan-200 px-2.5 py-1 rounded-xl">
+                                  +{dSub.dailyDiamonds} 💎 / din
+                                </span>
+                              </div>
+
+                              <div className="flex items-center justify-between text-[11px] text-slate-600 font-medium mb-3 px-1">
+                                <span>Claimed: <strong className="text-cyan-700 font-black">{dSub.totalClaimedDays || 0} Din</strong></span>
+                                <span>Total: <strong className="text-cyan-700 font-black">{dSub.totalDiamondsClaimed || 0} 💎</strong></span>
+                              </div>
+
+                              {canClaimDia ? (
+                                <button
+                                  onClick={handleClaimDailyDiamondPass}
+                                  disabled={claimingDailyDiamondPass}
+                                  className="w-full py-2.5 rounded-xl font-black text-xs active:scale-95 transition-all flex items-center justify-center gap-2 shadow-md cursor-pointer"
+                                  style={{
+                                    background: 'linear-gradient(135deg, #06b6d4, #2563eb)',
+                                    color: '#fff',
+                                    boxShadow: '0 4px 12px rgba(6,182,212,0.3)',
+                                  }}
+                                >
+                                  <Gift size={14} />
+                                  {claimingDailyDiamondPass ? 'Claim Ho Raha Hai...' : `Aaj Ke +${dSub.dailyDiamonds} Diamonds Claim Karo 💎`}
+                                </button>
+                              ) : (
+                                <div className="w-full py-2 rounded-xl flex items-center justify-center gap-1.5 text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  <Check size={14} />
+                                  <span>Aaj ka Diamond Subscription claim ho gaya! Agle diamonds kal milenge.</span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })() : (
+                          <div className="border border-cyan-200/80 bg-gradient-to-br from-cyan-50/70 to-sky-50/70 rounded-2xl p-3.5 flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="w-9 h-9 rounded-xl bg-cyan-100 text-cyan-700 flex items-center justify-center shrink-0 text-lg shadow-xs">
+                                💎
+                              </div>
+                              <div className="min-w-0">
+                                <span className="text-[9px] font-black uppercase tracking-wider text-cyan-800 bg-cyan-200/70 px-2 py-0.5 rounded-full">
+                                  DIAMOND SUBSCRIPTION
+                                </span>
+                                <h4 className="text-xs font-black text-slate-800 mt-0.5 truncate">
+                                  Roz Daily Diamonds Claim Karein
+                                </h4>
+                                <p className="text-[10px] text-slate-500 truncate">
+                                  Active hone par yahan se roz diamonds claim karein
+                                </p>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                setShowInbox(false);
+                                setStoreInitialTier('DIAMONDS');
+                                onTabChange('STORE');
+                              }}
+                              className="px-3 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white text-[11px] font-black shrink-0 active:scale-95 transition-all shadow-xs cursor-pointer"
+                            >
+                              Get Pass 💎
+                            </button>
+                          </div>
+                        )}
 
                         {/* Daily Credit Pass Claim in Mailbox Rewards */}
                         {isCreditSubActive(user) && (() => {
@@ -23005,6 +23501,8 @@ export const StudentDashboard: React.FC<Props> = ({
                                   {/* Gift badge chips */}
                                   <div className="flex flex-wrap gap-1 mb-2">
                                     {msg.gift?.type === 'CREDITS' && <span className="text-[9px] font-black bg-yellow-100 text-yellow-700 border border-yellow-200 px-2 py-0.5 rounded-full">+{msg.gift.value} Coins</span>}
+                                    {msg.gift?.type === 'DIAMONDS' && <span className="text-[9px] font-black bg-cyan-100 text-cyan-700 border border-cyan-200 px-2 py-0.5 rounded-full">+{msg.gift.value} Diamonds 💎</span>}
+                                    {msg.gift?.type === 'DIAMOND_SUBSCRIPTION' && <span className="text-[9px] font-black bg-cyan-100 text-cyan-800 border border-cyan-300 px-2 py-0.5 rounded-full">💎 Diamond Subscription Pass</span>}
                                     {msg.gift?.type === 'SUBSCRIPTION' && <span className="text-[9px] font-black bg-violet-100 text-violet-700 border border-violet-200 px-2 py-0.5 rounded-full">Subscription Gift</span>}
                                     {msg.gift?.type === 'ANIMATION' && <span className="text-[9px] font-black bg-fuchsia-100 text-fuchsia-700 border border-fuchsia-200 px-2 py-0.5 rounded-full">✨ Animation Effect</span>}
                                     {isCode && <span className="text-[9px] font-black bg-cyan-100 text-cyan-700 border border-cyan-200 px-2 py-0.5 rounded-full">🎟️ Redeem Code</span>}
@@ -23012,8 +23510,9 @@ export const StudentDashboard: React.FC<Props> = ({
                                   </div>
                                   <button onClick={() => claimRewardMessage(msg.id, msg.reward || null, msg.gift || null)} className={`w-full py-2 bg-gradient-to-r ${btnGrad} text-white rounded-xl font-black text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 shadow-sm`}>
                                     {msg.type === 'GIFT' ? <Gift size={12} /> : <Crown size={12} />}
-                                    {msg.type === 'GIFT' ? 'Claim Gift' : 'Claim Reward'}
+                                    {msg.gift?.type === 'DIAMOND_SUBSCRIPTION' ? 'Claim Diamond Subscription 💎' : msg.type === 'GIFT' ? 'Claim Gift' : 'Claim Reward'}
                                     {msg.type === 'GIFT' && msg.gift?.type === 'CREDITS' && <span className="bg-white/20 px-1.5 py-0.5 rounded-full text-[10px]">+{msg.gift.value} CR</span>}
+                                    {msg.type === 'GIFT' && msg.gift?.type === 'DIAMONDS' && <span className="bg-white/20 px-1.5 py-0.5 rounded-full text-[10px]">+{msg.gift.value} 💎</span>}
                                   </button>
                                 </div>
                               </div>
@@ -23511,22 +24010,26 @@ export const StudentDashboard: React.FC<Props> = ({
               onBack={() => {
                 setMathViewerEntry(null);
                 setMathImmersive(false);
+                setMathViewerMode('BOOK');
               }}
+              onModeChange={setMathViewerMode}
               onUpdateUser={handleUserUpdate}
             />
           </div>
-          <DraggableNstaLogoFab
-            isActive={mathImmersive}
-            onToggle={() => setMathImmersive(v => !v)}
-            appLogo={settings?.appLogo}
-            appName={settings?.appShortName || settings?.appName || 'NSTA'}
-            title={mathImmersive ? 'बॉटम व टॉप बार दिखाएं • Screen pe move kar sakte hain' : 'बॉटम व टॉप बार छुपाएं • Screen pe move kar sakte hain'}
-            defaultPosition={{
-              bottom: mathImmersive ? 20 : 92,
-              right: 16,
-            }}
-            zIndex={99999}
-          />
+          {mathViewerMode !== 'MCQ' && (
+            <DraggableNstaLogoFab
+              isActive={mathImmersive}
+              onToggle={() => setMathImmersive(v => !v)}
+              appLogo={settings?.appLogo}
+              appName={settings?.appShortName || settings?.appName || 'NSTA'}
+              title={mathImmersive ? 'बॉटम व टॉप बार दिखाएं • Screen pe move kar sakte hain' : 'बॉटम व टॉप बार छुपाएं • Screen pe move kar sakte hain'}
+              defaultPosition={{
+                bottom: mathImmersive ? 20 : 92,
+                right: 16,
+              }}
+              zIndex={99999}
+            />
+          )}
         </>
       )}
 
@@ -25678,115 +26181,61 @@ RULES:
 
             {/* VIDEO TAB CONTENT */}
             {lucentActiveTab === 'VIDEO' && (currentPage as any)?.videoUrl && (
-              <div className="flex-1 relative bg-black overflow-hidden">
-                <div style={{ position: 'absolute', inset: 0 }}>
-                  <CustomPlayer
-                    videoUrl={(currentPage as any).videoUrl}
-                    onBack={closeLucentViewer}
-                    onBrandingClick={() => setLucentImmersive(v => !v)}
-                    badgePos={settings?.iicNstaBadgePos}
-                    isAdmin={_isAdminUser}
-                    onBadgePosChange={handleBadgePosChange}
-                    badgeLabel={settings?.playerBadgeLabel}
-                    fsButtonLabel={settings?.playerFsButtonLabel}
-                    hideYtLogoBlocker={settings?.hideYtLogoBlocker}
-                  />
-                </div>
+              <div className="flex-1 flex flex-col p-2 sm:p-4 overflow-y-auto">
+                <ModernVideoPlayer
+                  videoUrl={(currentPage as any).videoUrl}
+                  title={currentPage?.topicName || `Page ${currentPage?.pageNo}`}
+                  mediaId={`lucent_vid_${currentPage?.id || currentPage?.pageNo}`}
+                  subject={selectedSubject?.name || 'Study Page'}
+                  appLogo={settings?.appLogo}
+                  appName={settings?.appShortName || 'NSTA'}
+                  user={user}
+                  isAdmin={_isAdminUser}
+                  onBack={closeLucentViewer}
+                  onUpgradeRequired={() => onTabChange('STORE')}
+                />
               </div>
             )}
 
             {/* AUDIO TAB CONTENT */}
             {lucentActiveTab === 'AUDIO' && (currentPage as any)?.audioUrl && (
-              <div className="flex-1 overflow-y-auto px-4 pt-6 flex flex-col gap-4">
-                <div className="rounded-2xl bg-purple-50 border border-purple-200 p-5 flex flex-col items-center gap-4 shadow-sm">
-                  <div className="w-16 h-16 rounded-full bg-purple-600 flex items-center justify-center shadow-lg">
-                    <span className="text-2xl">🎵</span>
-                  </div>
-                  <p className="text-sm font-black text-purple-800 text-center">{currentPage?.topicName || `Page ${currentPage?.pageNo}`}</p>
-                  {(() => {
-                    const url = (currentPage as any).audioUrl as string;
-                    const isDrive = url.includes('drive.google.com');
-                    if (isDrive) {
-                      const driveMatch = url.match(/drive\.google\.com\/file\/d\/([^/?#]+)/);
-                      const embedUrl = driveMatch
-                        ? `https://drive.google.com/file/d/${driveMatch[1]}/preview`
-                        : url;
-                      return (
-                        <div className="w-full relative">
-                          <iframe
-                            src={embedUrl}
-                            className="w-full border-none rounded-xl"
-                            style={{ height: '80px' }}
-                            sandbox="allow-scripts allow-same-origin allow-presentation"
-                            allow="autoplay"
-                            title="Lesson Audio"
-                          />
-                          {/* Drive blocker top-right */}
-                          <div
-                            className="absolute top-0 right-0 bg-purple-800/80 text-white text-[9px] font-bold px-2 py-1 rounded-bl-lg z-10 select-none"
-                            style={{ pointerEvents: 'all', cursor: 'default' }}
-                          >🔒 App</div>
-                        </div>
-                      );
-                    }
-                    return (
-                      <audio
-                        controls
-                        src={url}
-                        className="w-full"
-                        controlsList="nodownload noremoteplayback"
-                      />
-                    );
-                  })()}
-                </div>
-                <p className="text-[11px] text-slate-400 text-center">
-                  🎵 Audio playing from Google Drive — plays within the app
-                </p>
+              <div className="flex-1 flex flex-col items-center justify-center p-4 max-w-xl mx-auto w-full">
+                <ModernAudioPlayer
+                  audioUrl={(currentPage as any).audioUrl}
+                  title={currentPage?.topicName || `Page ${currentPage?.pageNo}`}
+                  subtitle={selectedSubject?.name || 'Study Page Audio'}
+                  mediaId={`lucent_aud_${currentPage?.id || currentPage?.pageNo}`}
+                  appLogo={settings?.appLogo}
+                  appName={settings?.appShortName || 'NSTA'}
+                  user={user}
+                  isAdmin={_isAdminUser}
+                  onBack={closeLucentViewer}
+                  onUpgradeRequired={() => onTabChange('STORE')}
+                />
               </div>
             )}
 
             {/* PDF TAB CONTENT */}
             {lucentActiveTab === 'PDF' && (currentPage as any)?.pdfUrl && (
-              <div className={`flex-1 overflow-hidden flex flex-col ${(lucentImmersive || isLandscape) ? '' : 'pt-2 px-3 gap-2'}`}>
-                <div className={`flex-1 overflow-hidden bg-white relative ${lucentImmersive ? '' : 'rounded-2xl border border-blue-200 shadow-lg'}`}>
-                  <div
-                    style={{
-                      filter: lucentPdfNight === 'night'
-                        ? 'invert(0.9) hue-rotate(180deg) brightness(0.85)'
-                        : lucentPdfNight === 'sepia'
-                        ? 'sepia(0.8) brightness(0.9) contrast(0.9)'
-                        : 'none',
-                      position: 'absolute', inset: 0, width: '100%', height: '100%',
-                    }}
-                  >
-                    <iframe
-                      src={
-                        (currentPage as any).pdfUrl?.includes('drive.google.com')
-                          ? `https://drive.google.com/file/d/${((currentPage as any).pdfUrl.match(/drive\.google\.com\/file\/d\/([^/?#]+)/) || [])[1]}/preview?rm=minimal`
-                          : (currentPage as any).pdfUrl
-                      }
-                      className="w-full h-full border-none"
-                      sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
-                      allow="autoplay"
-                      title="Lesson PDF"
-                    />
-                    {/* Drive blocker top-right corner */}
-                    {(currentPage as any).pdfUrl?.includes('drive.google.com') && (
-                      <div
-                        className="absolute top-0 right-0 bg-blue-800/80 text-white text-[9px] font-bold px-2 py-1 rounded-bl-lg z-10 select-none"
-                        style={{ pointerEvents: 'all', cursor: 'default' }}
-                        title="Stay in the App"
-                      >🔒 App</div>
-                    )}
-                  </div>
-                </div>
+              <div className="flex-1 flex flex-col p-2 sm:p-4 overflow-hidden">
+                <ModernPdfViewer
+                  pdfUrl={(currentPage as any).pdfUrl}
+                  title={currentPage?.topicName || `Page ${currentPage?.pageNo}`}
+                  subtitle={selectedSubject?.name || 'Study Page PDF'}
+                  mediaId={`lucent_pdf_${currentPage?.id || currentPage?.pageNo}`}
+                  appLogo={settings?.appLogo}
+                  appName={settings?.appShortName || 'NSTA'}
+                  user={user}
+                  isAdmin={_isAdminUser}
+                  onBack={closeLucentViewer}
+                  onUpgradeRequired={() => onTabChange('STORE')}
+                />
               </div>
             )}
 
-
           </div>
-          {/* Lucent FAB — hidden in video tab (IIC×NSTA button handles it there) */}
-          {lucentActiveTab !== 'VIDEO' && (
+          {/* Lucent FAB — hidden in video tab and all MCQ/QA/flashcard tabs */}
+          {lucentActiveTab !== 'VIDEO' && lucentActiveTab !== 'MCQ' && lucentActiveTab !== 'MCQS' && lucentActiveTab !== 'QA' && lucentActiveTab !== 'FLASHCARD' && (
             <DraggableNstaLogoFab
               isActive={lucentImmersive}
               onToggle={() => setLucentImmersive(v => !v)}
@@ -28593,14 +29042,20 @@ RULES:
         );
       })()}
 
-      {/* FLOATING APP LOGO BUTTON — Sirf Notes/MCQ content player mein visible. Tapping focus mode toggle karta hai. Draggable. */}
-      {/* Hidden when Lucent viewer is open — Lucent has its own FAB; this button overlaps it and causes accidental top-bar hide */}
+      {/* FLOATING APP LOGO BUTTON — Sirf Notes content player mein visible. Tapping focus mode toggle karta hai. Draggable. */}
+      {/* Hidden when Lucent viewer is open, or in any MCQ mode (playerMode === 'mcq' or subject is MCQ) */}
       {/* Must NOT show on any other page: Pro+, Community, MCQ, Profile, Starred, Routine, etc. */}
       {!activeExternalApp &&
         !hwActiveHwId &&
         contentViewStep === "PLAYER" &&
         !lucentNoteViewer &&
-        !mathViewerEntry && (
+        !mathViewerEntry &&
+        playerMode !== 'mcq' &&
+        activeTab !== 'MCQ' &&
+        activeTab !== 'MCQ_REVIEW' &&
+        !compMcqSession &&
+        !flashcardMcqs &&
+        selectedSubject?.id !== 'mcq' && (
         <DraggableNstaLogoFab
           isActive={isLandscapeUiHidden}
           onToggle={() => {
@@ -29382,7 +29837,7 @@ RULES:
               currentPageTitle={pedroPageMeta.title}
               currentPageIcon={pedroPageMeta.icon}
               customRobotName={settings?.pedroConfig?.robotName}
-              hidden={isPedroHidden || !!mathViewerEntry || (!!lucentNoteViewer && lucentImmersive)}
+              hidden={isPedroHidden || !isFeatureUnlockedForUser('PEDRO_AI_ASSISTANT', _userLevel, user.totalScore || 0, user.role) || !!mathViewerEntry || (!!lucentNoteViewer && lucentImmersive)}
               guidePowerEnabled={settings?.pedroConfig?.guidePowerEnabled !== false && settings?.pedroConfig?.enabled !== false}
               userName={user?.name || (user as any)?.displayName || 'Student'}
               user={user}
@@ -32078,6 +32533,83 @@ Explanation: Yahan explanation...`}</p>
           onUpgrade={() => {
             setPremiumUpgradeModal(null);
             onTabChange('STORE');
+          }}
+        />
+      )}
+
+      {/* ── LEVEL ROADMAP MODAL (WITH CLOUDINARY MEDIA & FULL ROADMAP PLAN) ── */}
+      <LevelRoadmapModal
+        isOpen={showLevelRoadmapModal}
+        onClose={() => setShowLevelRoadmapModal(false)}
+        userLevel={_userLevel}
+        userXp={user.totalScore || 0}
+        userRole={user.role}
+        onOpenAdminManager={(featId) => {
+          try {
+            sessionStorage.setItem('nst_admin_initial_tab', 'ROADMAP_MANAGER');
+            if (featId) {
+              sessionStorage.setItem('nst_admin_roadmap_feature_id', featId);
+            }
+          } catch {}
+          if (onNavigate) {
+            onNavigate('ADMIN_DASHBOARD' as any);
+          }
+        }}
+        onNavigateToFeature={(featId) => {
+          if (featId === 'DOT_MENU_3') {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          } else if (featId === 'REDEEM_CODE') {
+            onTabChange('STORE');
+          } else if (featId === 'NOTES_FIX_BUTTON') {
+            onTabChange('HOME');
+          } else if (featId === 'LEVEL_STATUS_BAR') {
+            setShowScorePanel(true);
+          } else if (featId === 'FEATURE_WHEEL') {
+            setShowNstaQuickWheel(true);
+          } else if (featId === 'MY_ROUTINE_TAB' || featId === 'ROUTINE_SUBJECT_PAGE' || featId === 'MY_SYLLABUS_PAGE') {
+            setShowMyRoutine(true);
+          } else if (featId === 'MAILBOX_INBOX') {
+            setShowInbox(true);
+          } else if (featId === 'REVISION_HUB') {
+            setShowRevisionHubScreen(true);
+          } else if (featId === 'COMMUNITY_OFFICIAL' || featId === 'COMMUNITY_BUG_REPORT' || featId === 'COMMUNITY_DOUBT_PAGE' || featId === 'COMMUNITY_POSTS' || featId === 'NSTA_MESSENGER') {
+            setShowChat(true);
+          } else if (featId === 'PRO_PLUS_PAGE' || featId === 'STUDY_ROOM' || featId === 'EVENTS_PAGE_PRO') {
+            setShowDailyEventPage(true);
+          } else if (featId === 'NOTES_FIX_TRACKER') {
+            setShowNotesFixTrackerModal(true);
+          } else if (featId === 'SCORE_HISTORY') {
+            setShowScoreHistoryDirect(true);
+          } else if (featId === 'PEDRO_AI_ASSISTANT') {
+            setShowPedro(true);
+          } else if (featId === 'CONTENT_DEMAND') {
+            setShowDemandModal(true);
+          } else if (featId === 'MCQ_OFFICIAL_HUB' || featId === 'MCQ_BATTLE') {
+            onTabChange('MCQ');
+          }
+        }}
+      />
+
+      {/* ── NOTES FIX TRACKER MODAL ── */}
+      <NotesFixTrackerModal
+        isOpen={showNotesFixTrackerModal}
+        onClose={() => setShowNotesFixTrackerModal(false)}
+        user={user}
+        userLevel={_userLevel}
+        userXp={user.totalScore || 0}
+        onOpenRoadmap={() => setShowLevelRoadmapModal(true)}
+      />
+
+      {/* ── LEVEL UP CELEBRATION MODAL ── */}
+      {levelUpCelebrationData && (
+        <LevelUpCelebrationModal
+          isOpen={!!levelUpCelebrationData}
+          newLevel={levelUpCelebrationData.newLevel}
+          unlockedFeatures={levelUpCelebrationData.features}
+          onClose={() => setLevelUpCelebrationData(null)}
+          onOpenRoadmap={() => setShowLevelRoadmapModal(true)}
+          onExploreFeature={(featId) => {
+            setShowLevelRoadmapModal(true);
           }}
         />
       )}

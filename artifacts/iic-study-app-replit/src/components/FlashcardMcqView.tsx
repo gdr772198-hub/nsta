@@ -30,7 +30,6 @@ import { deferMcqCreditsFromXp } from '../utils/studyRewards';
 import { McqAnalysisOverlay } from './McqAnalysisOverlay';
 import { hapticCorrect, hapticWrong, hapticLight } from '../utils/haptic';
 import { playSoundClick, playSoundCorrect, playSoundWrong, playSoundVictory, isSoundEnabled, setSoundEnabled } from '../utils/soundEffects';
-import DraggableNstaLogoFab from './DraggableNstaLogoFab';
 
 interface Props {
   questions: MCQItem[];
@@ -1343,21 +1342,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
         </div>
       )}
 
-      {/* Draggable NSTA Logo Floating Button for Flashcard Mode — toggles both top bar & bottom navigation */}
-      {!isProjectorMode && (
-        <DraggableNstaLogoFab
-          isActive={fcFocused}
-          onToggle={() => {
-            try { window.dispatchEvent(new CustomEvent('nst-restore-pedro')); } catch (_) {}
-            setFcFocused(f => !f);
-          }}
-          appLogo={settings?.appLogo}
-          appName={settings?.appShortName || settings?.appName || 'NSTA'}
-          title={fcFocused ? 'बॉटम व टॉप बार दिखाएं • Screen pe move kar sakte hain' : 'बॉटम व टॉप बार छुपाएं • Screen pe move kar sakte hain'}
-          defaultPosition={{ bottom: fcFocused ? 20 : 92, right: 16 }}
-          zIndex={100001}
-        />
-      )}
+
     </div>
 
       {/* ── Projector Mode Overlay (Mature Classroom / TV Presentation Engine) ── */}
@@ -2049,16 +2034,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
               </div>
             )}
 
-            {/* Draggable NSTA Logo Floating Button — moves anywhere on screen, toggles focus mode (hides/shows top bar & bottom bar) */}
-            <DraggableNstaLogoFab
-              isActive={projectorFocused}
-              onToggle={() => setProjectorFocused(f => !f)}
-              appLogo={settings?.appLogo}
-              appName={settings?.appShortName || settings?.appName || 'NSTA'}
-              title={projectorFocused ? 'बॉटम व टॉप बार दिखाएं • Screen pe move kar sakte hain' : 'बॉटम व टॉप बार छुपाएं • Screen pe move kar sakte hain'}
-              defaultPosition={{ bottom: 84, right: 16 }}
-              zIndex={100001}
-            />
+
           </div>,
           document.body
         );

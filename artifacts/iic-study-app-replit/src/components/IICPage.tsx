@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { IICPost, User } from '../types';
 import { Image as ImageIcon, Video, Type, Send, Trash2, Calendar, User as UserIcon, Upload, Link } from 'lucide-react';
 import { CustomAlert, CustomConfirm } from './CustomDialogs';
+import { DirectUploadButton } from './DirectUploadButton';
+import { getOptimizedVideoUrl } from '../services/cloudinaryService';
 
 interface Props {
   user: User;
@@ -184,18 +186,21 @@ export const IICPage: React.FC<Props> = ({ user, onBack }) => {
                   )}
 
                   {postType === 'VIDEO' && (
-                      <div>
-                          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2">
-                             <Link size={16} className="text-slate-500" />
-                             <input 
-                                type="url" 
-                                placeholder="Paste Video URL (YouTube, Vimeo, etc.)"
-                                value={content}
-                                onChange={e => setContent(e.target.value)}
-                                className="w-full bg-transparent outline-none text-sm"
-                             />
+                      <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2 flex-wrap p-3 bg-rose-50/60 rounded-xl border border-rose-200">
+                              <span className="text-xs font-bold text-slate-700">Phone se Video Upload karein:</span>
+                              <DirectUploadButton
+                                  kind="video"
+                                  currentUrl={content}
+                                  onUploaded={(url, file) => {
+                                      setContent(url);
+                                      if (!title) {
+                                          setTitle(file.name.replace(/\.[^/.]+$/, ''));
+                                      }
+                                  }}
+                                  onClear={() => setContent('')}
+                              />
                           </div>
-                          <p className="text-[10px] text-slate-500 mt-1 ml-1">Note: Paste a valid Embed URL or MP4 link.</p>
                       </div>
                   )}
 
@@ -255,13 +260,23 @@ export const IICPage: React.FC<Props> = ({ user, onBack }) => {
 
                       {post.type === 'VIDEO' && (
                           <div className="aspect-video rounded-xl overflow-hidden bg-black">
-                              <iframe 
-                                  src={post.content.replace("watch?v=", "embed/")} 
-                                  title={post.title} 
-                                  className="w-full h-full border-0" 
-                                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-                                  allowFullScreen
-                              ></iframe>
+                              {post.content.includes('cloudinary.com') || /\.(mp4|webm|mov|m4v|mkv)(\?.*)?$/i.test(post.content) ? (
+                                  <video
+                                      src={getOptimizedVideoUrl(post.content)}
+                                      controls
+                                      playsInline
+                                      controlsList="nodownload"
+                                      className="w-full h-full object-contain bg-black"
+                                  />
+                              ) : (
+                                  <iframe 
+                                      src={post.content.replace("watch?v=", "embed/")} 
+                                      title={post.title} 
+                                      className="w-full h-full border-0" 
+                                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                                      allowFullScreen
+                                  ></iframe>
+                              )}
                           </div>
                       )}
                   </div>

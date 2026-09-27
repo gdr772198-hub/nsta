@@ -3288,6 +3288,7 @@ const App: React.FC = () => {
              loadingScreenSlotUnlocks={state.user?.loadingScreenSlotUnlocks}
              loadingScreenUnlocks={state.user?.loadingScreenUnlocks}
              loadingScreenLibrary={state.settings?.adminLoadingScreenLibrary}
+             loadingScreenVideoUrl={state.settings?.loadingScreenVideoEnabled !== false ? state.settings?.loadingScreenVideoUrl : undefined}
             isPreview={isLoadingPreview}
             onBack={() => {
               sessionStorage.removeItem('nst_splash_preview_style');

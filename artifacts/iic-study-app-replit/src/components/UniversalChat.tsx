@@ -65,7 +65,8 @@ export const UniversalChat: React.FC<Props> = ({ user, onClose, isAdmin, targetU
                 : (user.subscriptionLevel === 'BASIC' && user.isPremium) ? 'rgba(37,99,235,0.30)'
                 : 'rgba(14,165,233,0.28)',
           };
-    const isUltraChatUser = (user.subscriptionLevel === 'ULTRA' && user.isPremium) || isAdmin;
+    // Open to ALL users (Free, Basic, Ultra) for community posts & chat
+    const isUltraChatUser = true;
     // Community MCQ posting is now open for ALL users (Free, Basic, Ultra)
     const canSendMcq = isAdmin || allowStudentMcq !== false;
     const isSubscriber = true;

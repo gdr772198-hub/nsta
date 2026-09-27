@@ -581,32 +581,6 @@ export const RevisionHubScreen: React.FC<Props> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Header NSTA Toggle Button */}
-            <button
-              type="button"
-              onClick={handleToggleNavBars}
-              className={`p-1 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 px-2 active:scale-95 ${
-                activeBottomNavVisible
-                  ? 'bg-purple-600 text-white shadow-xs'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
-              }`}
-              title={
-                activeBottomNavVisible
-                  ? "Top bar aur Bottom navigation hide karein • Tap to hide navigation bars"
-                  : "Bottom navigation dikhayein • Tap to show bottom navigation"
-              }
-            >
-              <img
-                src={officialNstaLogo}
-                alt={appName || "NSTA"}
-                className="w-5 h-5 rounded-md object-contain"
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).src = '/branding/nsta-logo.png';
-                }}
-              />
-              <span className="text-[10px] font-black">{appName || 'NSTA'}</span>
-            </button>
-
             {sessionActive && (
               <button
                 type="button"
@@ -1383,63 +1357,6 @@ export const RevisionHubScreen: React.FC<Props> = ({
           isAutoEnabledInitial={false}
         />
       )}
-
-      {/* ── FLOATING NSTA LOGO BUTTON (PERSISTS ON EVERY PAGE OF REVISION HUB) ── */}
-      <div
-        className={`fixed ${
-          activeBottomNavVisible ? 'bottom-[76px]' : 'bottom-4 sm:bottom-6'
-        } right-3 sm:right-6 z-[450] pointer-events-auto flex items-center gap-2 animate-in fade-in duration-300 transition-all`}
-      >
-        <button
-          id="revision-hub-nsta-fab"
-          type="button"
-          onClick={handleToggleNavBars}
-          className="group relative flex items-center justify-center w-14 h-14 sm:w-15 sm:h-15 rounded-full shadow-2xl active:scale-95 transition-all duration-200 hover:scale-105 cursor-pointer p-1"
-          style={{
-            background: 'radial-gradient(circle, #0f172a 0%, #020617 100%)',
-            border: '2.5px solid rgba(251, 191, 36, 0.9)',
-            boxShadow: '0 8px 25px -2px rgba(124, 58, 237, 0.55), 0 0 16px rgba(251, 191, 36, 0.45)',
-          }}
-          title={
-            (showTopBar && activeBottomNavVisible)
-              ? "Top bar aur Bottom navigation hide karein • Tap to hide navigation bars"
-              : (!showTopBar && !activeBottomNavVisible)
-                ? "Navigation bar wapas layein • Tap to restore navigation bars"
-                : "Bottom navigation layein • Tap to show bottom navigation"
-          }
-          aria-label={
-            (showTopBar && activeBottomNavVisible)
-              ? "Hide top and bottom navigation bars"
-              : "Show navigation bars"
-          }
-        >
-          <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center bg-slate-900/90">
-            <img
-              src={officialNstaLogo}
-              alt={appName || "NSTA Logo"}
-              className="w-full h-full object-contain p-0.5 rounded-full drop-shadow-md select-none pointer-events-none"
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).src = '/branding/nsta-logo.png';
-              }}
-            />
-          </div>
-
-          {/* Glowing indicator ping: Emerald when bottom nav is active, Amber when hidden/ready */}
-          <span className="absolute top-0 right-0 flex h-3.5 w-3.5">
-            {activeBottomNavVisible ? (
-              <>
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500 border-2 border-slate-950 shadow" />
-              </>
-            ) : (
-              <>
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-amber-500 border-2 border-slate-950 shadow" />
-              </>
-            )}
-          </span>
-        </button>
-      </div>
     </div>
   );
 };

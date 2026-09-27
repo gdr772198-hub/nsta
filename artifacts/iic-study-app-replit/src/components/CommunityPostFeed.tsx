@@ -36,6 +36,7 @@ import {
   Clock,
   ShieldCheck,
   MessageSquare,
+  Video,
 } from 'lucide-react';
 import { ref, onValue, set, remove, push, update } from 'firebase/database';
 import {
@@ -49,9 +50,12 @@ import {
   reactToSuggestion,
 } from '../firebase';
 import { uploadImageToImgBB } from '../services/imgbbService';
+import { uploadToCloudinary, getOptimizedVideoUrl } from '../services/cloudinaryService';
 import { ImageCropper } from './ImageCropper';
 import { User } from '../types';
 import { useAppTheme } from '../utils/themeContext';
+import { isFeatureUnlockedForUser } from '../constants/levelRoadmapData';
+import { getLevelInfo } from '../utils/levelSystem';
 
 export interface PostComment {
   id: string;
@@ -74,6 +78,7 @@ export interface CommunityPost {
   userTier?: 'FREE' | 'BASIC' | 'ULTRA' | string;
   text: string;
   imageUrl?: string;
+  videoUrl?: string;
   isHd?: boolean;
   language?: string;
   isOfficial?: boolean;
@@ -133,15 +138,25 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
     user.role?.toLowerCase() === 'admin' ||
     user.role?.toLowerCase() === 'subadmin';
 
+  const userLvl = user.level || getLevelInfo(user.totalScore || 0).level || 1;
+  const userXp = user.totalScore || 0;
+  const isBugReportUnlocked = isFeatureUnlockedForUser('COMMUNITY_BUG_REPORT', userLvl, userXp, user.role);
+  const isDoubtUnlocked = isFeatureUnlockedForUser('COMMUNITY_DOUBT_PAGE', userLvl, userXp, user.role);
+  const isPostsUnlocked = isFeatureUnlockedForUser('COMMUNITY_POSTS', userLvl, userXp, user.role);
+
   const [posts, setPosts] = useState<CommunityPost[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [activeFilter, setActiveFilter] = useState<FilterType>(initialFilter || 'ALL');
+  const [activeFilter, setActiveFilter] = useState<FilterType>(initialFilter || (!isPostsUnlocked && user.role !== 'ADMIN' ? 'OFFICIAL' : 'ALL'));
   const [searchQuery, setSearchQuery] = useState('');
 
   // Post Creator State
   const [postText, setPostText] = useState('');
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [selectedVideoFile, setSelectedVideoFile] = useState<File | null>(null);
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
+  const [isUploadingVideo, setIsUploadingVideo] = useState(false);
+  const [videoUploadProgress, setVideoUploadProgress] = useState(0);
   const [isHdQuality, setIsHdQuality] = useState(false);
   const [isOfficialPost, setIsOfficialPost] = useState(false);
   const [postCategory, setPostCategory] = useState<'GENERAL' | 'DOUBT' | 'BUG_REPORT'>('GENERAL');
@@ -180,6 +195,7 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
   const editFileInputRef = useRef<HTMLInputElement>(null);
 
   // Report Modal State
@@ -289,6 +305,31 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
     setIsHdQuality(false);
   };
 
+  const handleVideoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 100 * 1024 * 1024) {
+      showToast('⚠️ Video size maximum 100MB honi chahiye!');
+      return;
+    }
+    setSelectedVideoFile(file);
+    const preview = URL.createObjectURL(file);
+    setVideoPreviewUrl(preview);
+    setShowComposer(true);
+  };
+
+  const handleClearVideo = () => {
+    setSelectedVideoFile(null);
+    if (videoPreviewUrl) {
+      URL.revokeObjectURL(videoPreviewUrl);
+      setVideoPreviewUrl(null);
+    }
+    if (videoInputRef.current) {
+      videoInputRef.current.value = '';
+    }
+    setVideoUploadProgress(0);
+  };
+
   const handleCropPostImageComplete = async (croppedBase64: string) => {
     try {
       const res = await fetch(croppedBase64);
@@ -312,13 +353,14 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
   // Submit Post
   const handleCreatePost = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!postText.trim() && !selectedImageFile) {
-      showToast('⚠️ Kripya kuch text likhein ya photo attach karein!');
+    if (!postText.trim() && !selectedImageFile && !selectedVideoFile) {
+      showToast('⚠️ Kripya kuch text likhein, photo ya video attach karein!');
       return;
     }
 
     setIsSubmitting(true);
     let uploadedImageUrl = '';
+    let uploadedVideoUrl = '';
 
     try {
       if (selectedImageFile) {
@@ -329,6 +371,16 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
           { isHd: isHdQuality }
         );
         setIsUploadingImage(false);
+      }
+
+      if (selectedVideoFile) {
+        setIsUploadingVideo(true);
+        setVideoUploadProgress(1);
+        const cloudRes = await uploadToCloudinary(selectedVideoFile, 'video', (pct) => {
+          setVideoUploadProgress(pct);
+        });
+        uploadedVideoUrl = cloudRes.secure_url || cloudRes.url;
+        setIsUploadingVideo(false);
       }
 
       const postsRef = ref(rtdb, 'community_posts');
@@ -357,6 +409,9 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
       if (uploadedImageUrl && uploadedImageUrl.trim()) {
         newPostData.imageUrl = uploadedImageUrl.trim();
       }
+      if (uploadedVideoUrl && uploadedVideoUrl.trim()) {
+        newPostData.videoUrl = uploadedVideoUrl.trim();
+      }
 
       await set(newPostRef, newPostData);
 
@@ -380,6 +435,7 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
       // Reset Form
       setPostText('');
       handleClearImage();
+      handleClearVideo();
       setIsHdQuality(false);
       setIsOfficialPost(false);
       setPostCategory('GENERAL');
@@ -391,6 +447,7 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
     } finally {
       setIsSubmitting(false);
       setIsUploadingImage(false);
+      setIsUploadingVideo(false);
     }
   };
 
@@ -1003,9 +1060,11 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
             </div>
           </div>
 
-          {activeFilter !== 'NOTES_FIX' && (
+          {activeFilter !== 'NOTES_FIX' && (isPostsUnlocked || user.role === 'ADMIN') && (
             <button
-              onClick={() => setComposerOpen(!isComposerOpen)}
+              onClick={() => {
+                setComposerOpen(!isComposerOpen);
+              }}
               className="h-7 px-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:opacity-95 text-white rounded-lg text-[11px] font-bold shadow-2xs transition-all flex items-center gap-1 cursor-pointer active:scale-95"
             >
               <Sparkles size={12} />
@@ -1074,6 +1133,37 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
                       <div className="absolute inset-0 bg-black/60 rounded-xl flex flex-col items-center justify-center text-white text-[10px] font-bold">
                         <Loader2 size={16} className="animate-spin text-purple-400 mb-1" />
                         <span>Uploading...</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Attached Video Preview */}
+                {videoPreviewUrl && (
+                  <div className="relative mt-2 inline-block group w-56">
+                    <video
+                      src={videoPreviewUrl}
+                      controls
+                      playsInline
+                      className="w-56 h-32 object-cover rounded-xl border border-indigo-400 bg-black shadow-sm"
+                    />
+                    {!isUploadingVideo && (
+                      <button
+                        type="button"
+                        onClick={handleClearVideo}
+                        className="absolute -top-2 -right-2 p-1 bg-rose-600 hover:bg-rose-700 text-white rounded-full shadow-md cursor-pointer transition-transform hover:scale-105"
+                        title="Video Hataayein"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                    {isUploadingVideo && (
+                      <div className="absolute inset-0 bg-black/75 rounded-xl flex flex-col items-center justify-center text-white text-[10px] font-bold p-3">
+                        <Loader2 size={16} className="animate-spin text-sky-400 mb-1" />
+                        <span>Uploading Video... {videoUploadProgress}%</span>
+                        <div className="w-full h-1.5 bg-white/20 rounded-full mt-1.5 overflow-hidden">
+                          <div className="h-full bg-sky-400 transition-all duration-300" style={{ width: `${videoUploadProgress}%` }} />
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1184,6 +1274,17 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
                   <span>{selectedImageFile ? 'Change Photo' : 'Photo Add Karein'}</span>
                 </button>
 
+                <button
+                  type="button"
+                  onClick={() => {
+                    videoInputRef.current?.click();
+                  }}
+                  className="px-2.5 py-1.5 bg-sky-50 hover:bg-sky-100 dark:bg-sky-950/60 dark:hover:bg-sky-900/70 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <Video size={14} className="text-sky-600 dark:text-sky-400" />
+                  <span>{selectedVideoFile ? 'Change Video' : 'Video Add Karein'}</span>
+                </button>
+
                 {/* HD Quality Toggle Button */}
                 {selectedImageFile && (
                   <button
@@ -1228,6 +1329,21 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
                     pointerEvents: 'auto',
                   }}
                 />
+                <input
+                  type="file"
+                  ref={videoInputRef}
+                  accept="video/*"
+                  onChange={handleVideoSelect}
+                  style={{
+                    position: 'fixed',
+                    top: '-1000px',
+                    left: '-1000px',
+                    width: '1px',
+                    height: '1px',
+                    opacity: 0.01,
+                    pointerEvents: 'auto',
+                  }}
+                />
               </div>
 
               <div className="flex items-center gap-2">
@@ -1236,6 +1352,7 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
                   onClick={() => {
                     setPostText('');
                     handleClearImage();
+                    handleClearVideo();
                     setComposerOpen(false);
                   }}
                   className="h-7 px-2.5 text-[11px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-medium cursor-pointer"
@@ -1244,9 +1361,9 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting || (!postText.trim() && !selectedImageFile)}
+                  disabled={isSubmitting || (!postText.trim() && !selectedImageFile && !selectedVideoFile)}
                   className={`h-7 px-3 rounded-lg text-[11px] font-bold text-white shadow-2xs flex items-center gap-1 transition-all cursor-pointer ${
-                    isSubmitting || (!postText.trim() && !selectedImageFile)
+                    isSubmitting || (!postText.trim() && !selectedImageFile && !selectedVideoFile)
                       ? 'bg-purple-400/50 cursor-not-allowed opacity-60'
                       : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:opacity-95 active:scale-95'
                   }`}
@@ -1271,21 +1388,23 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
 
       {/* Filter Chips Bar — Scrollable, slim, sleek professional button sizes (30-40% thinner) */}
       <div className="w-full px-3 py-1.5 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 shrink-0 flex items-center gap-1.5 overflow-x-auto scroll-smooth touch-pan-x flex-nowrap scrollbar-none">
-        {/* 1. All */}
-        <button
-          type="button"
-          onClick={() => setActiveFilter('ALL')}
-          className={`h-7 px-3 shrink-0 flex items-center justify-center text-[11.5px] font-semibold rounded-lg transition-all cursor-pointer select-none whitespace-nowrap shadow-2xs active:scale-95 ${
-            activeFilter === 'ALL'
-              ? 'bg-purple-600 text-white shadow-xs font-bold ring-1 ring-purple-400/50'
-              : 'bg-slate-100 dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:text-slate-950 dark:hover:text-white'
-          }`}
-          title="All Posts"
-        >
-          <span>All</span>
-        </button>
+        {/* 1. All (Unlocks at Level 3 (iv) with posts) */}
+        {(isPostsUnlocked || isAdminOrSubUser) && (
+          <button
+            type="button"
+            onClick={() => setActiveFilter('ALL')}
+            className={`h-7 px-3 shrink-0 flex items-center justify-center text-[11.5px] font-semibold rounded-lg transition-all cursor-pointer select-none whitespace-nowrap shadow-2xs active:scale-95 ${
+              activeFilter === 'ALL'
+                ? 'bg-purple-600 text-white shadow-xs font-bold ring-1 ring-purple-400/50'
+                : 'bg-slate-100 dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:text-slate-950 dark:hover:text-white'
+            }`}
+            title="All Posts"
+          >
+            <span>All</span>
+          </button>
+        )}
 
-        {/* 2. Official */}
+        {/* 2. Official (Always available in Community) */}
         <button
           type="button"
           onClick={() => setActiveFilter('OFFICIAL')}
@@ -1299,47 +1418,53 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
           <span>Official</span>
         </button>
 
-        {/* 3. Bugs Report */}
-        <button
-          type="button"
-          onClick={() => setActiveFilter('BUG_REPORT')}
-          className={`h-7 px-3 shrink-0 flex items-center justify-center text-[11.5px] font-semibold rounded-lg transition-all cursor-pointer select-none whitespace-nowrap shadow-2xs active:scale-95 ${
-            activeFilter === 'BUG_REPORT'
-              ? 'bg-rose-600 text-white shadow-xs font-bold ring-1 ring-rose-400/50'
-              : 'bg-slate-100 dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:text-slate-950 dark:hover:text-white'
-          }`}
-          title="Bugs Report"
-        >
-          <span>Bugs Report</span>
-        </button>
+        {/* 3. Bugs Report (Unlocks at Level 3 (ii)) */}
+        {(isBugReportUnlocked || isAdminOrSubUser) && (
+          <button
+            type="button"
+            onClick={() => setActiveFilter('BUG_REPORT')}
+            className={`h-7 px-3 shrink-0 flex items-center justify-center gap-1 text-[11.5px] font-semibold rounded-lg transition-all cursor-pointer select-none whitespace-nowrap shadow-2xs active:scale-95 ${
+              activeFilter === 'BUG_REPORT'
+                ? 'bg-rose-600 text-white shadow-xs font-bold ring-1 ring-rose-400/50'
+                : 'bg-slate-100 dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:text-slate-950 dark:hover:text-white'
+            }`}
+            title="Bugs Report"
+          >
+            <span>Bugs Report</span>
+          </button>
+        )}
 
-        {/* 4. Doubt */}
-        <button
-          type="button"
-          onClick={() => setActiveFilter('DOUBT')}
-          className={`h-7 px-3 shrink-0 flex items-center justify-center text-[11.5px] font-semibold rounded-lg transition-all cursor-pointer select-none whitespace-nowrap shadow-2xs active:scale-95 ${
-            activeFilter === 'DOUBT'
-              ? 'bg-blue-600 text-white shadow-xs font-bold ring-1 ring-blue-400/50'
-              : 'bg-slate-100 dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:text-slate-950 dark:hover:text-white'
-          }`}
-          title="Doubt Posts"
-        >
-          <span>Doubt</span>
-        </button>
+        {/* 4. Doubt (Unlocks at Level 3 (iii)) */}
+        {(isDoubtUnlocked || isAdminOrSubUser) && (
+          <button
+            type="button"
+            onClick={() => setActiveFilter('DOUBT')}
+            className={`h-7 px-3 shrink-0 flex items-center justify-center gap-1 text-[11.5px] font-semibold rounded-lg transition-all cursor-pointer select-none whitespace-nowrap shadow-2xs active:scale-95 ${
+              activeFilter === 'DOUBT'
+                ? 'bg-blue-600 text-white shadow-xs font-bold ring-1 ring-blue-400/50'
+                : 'bg-slate-100 dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:text-slate-950 dark:hover:text-white'
+            }`}
+            title="Doubt Posts"
+          >
+            <span>Doubt</span>
+          </button>
+        )}
 
-        {/* 5. My Post */}
-        <button
-          type="button"
-          onClick={() => setActiveFilter('MINE')}
-          className={`h-7 px-3 shrink-0 flex items-center justify-center text-[11.5px] font-semibold rounded-lg transition-all cursor-pointer select-none whitespace-nowrap shadow-2xs active:scale-95 ${
-            activeFilter === 'MINE'
-              ? 'bg-emerald-600 text-white shadow-xs font-bold ring-1 ring-emerald-400/50'
-              : 'bg-slate-100 dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:text-slate-950 dark:hover:text-white'
-          }`}
-          title="My Post"
-        >
-          <span>My Post</span>
-        </button>
+        {/* 5. My Post (Unlocks at Level 3 (iv)) */}
+        {(isPostsUnlocked || isAdminOrSubUser) && (
+          <button
+            type="button"
+            onClick={() => setActiveFilter('MINE')}
+            className={`h-7 px-3 shrink-0 flex items-center justify-center gap-1 text-[11.5px] font-semibold rounded-lg transition-all cursor-pointer select-none whitespace-nowrap shadow-2xs active:scale-95 ${
+              activeFilter === 'MINE'
+                ? 'bg-emerald-600 text-white shadow-xs font-bold ring-1 ring-emerald-400/50'
+                : 'bg-slate-100 dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:text-slate-950 dark:hover:text-white'
+            }`}
+            title="My Post"
+          >
+            <span>My Post</span>
+          </button>
+        )}
 
         {/* 6. Review Mode (Admin / SubAdmin Queue) */}
         {isAdminOrSubUser && (
@@ -1826,6 +1951,21 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
                         {post.isHd && <span className="text-emerald-400 text-[9px] font-black mr-0.5">HD</span>}
                         <Maximize2 size={14} />
                       </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Post Body: Video Attachment */}
+                {post.videoUrl && (
+                  <div className="px-3 pb-3">
+                    <div className="relative overflow-hidden rounded-xl bg-black border border-slate-800">
+                      <video
+                        src={getOptimizedVideoUrl(post.videoUrl)}
+                        controls
+                        playsInline
+                        preload="metadata"
+                        className="w-full max-h-96 object-contain"
+                      />
                     </div>
                   </div>
                 )}

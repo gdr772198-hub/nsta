@@ -1,7 +1,10 @@
+import { uploadImageToTelegram } from './telegramStorageService';
+
 /**
  * Cloud Image Upload Service with Auto-Fallback & Optimization
- * Primary Provider: FreeImage.host (High speed direct CDN, no throttling)
- * Secondary Provider: ImgBB
+ * Primary Provider: Telegram Cloud Storage (@nsta_vault_bot - Unlimited Free CDN)
+ * Secondary Provider: FreeImage.host (High speed direct CDN)
+ * Tertiary Provider: ImgBB
  * Offline/Fallback: Compressed Data URL (guarantees upload NEVER fails)
  */
 
@@ -122,7 +125,21 @@ export async function uploadImageToImgBB(
     console.warn('[Cloud Image Service] Pre-compression failed, continuing raw:', err);
   }
 
-  // ── Strategy 1: FreeImage.host Direct CDN ──
+  // ── Strategy 1: Telegram Cloud Storage (@nsta_vault_bot) ──
+  try {
+    const directTelegramUrl = await uploadImageToTelegram(
+      file,
+      name || `nsta_img_${Date.now()}.jpg`,
+      'NSTA App Media'
+    );
+    if (directTelegramUrl && directTelegramUrl.startsWith('http')) {
+      return directTelegramUrl;
+    }
+  } catch (tgErr) {
+    console.warn('[Cloud Image Service] Telegram storage attempt failed, trying FreeImage CDN:', tgErr);
+  }
+
+  // ── Strategy 2: FreeImage.host Direct CDN ──
   try {
     const formData = new FormData();
     formData.append('key', FREEIMAGE_API_KEY);

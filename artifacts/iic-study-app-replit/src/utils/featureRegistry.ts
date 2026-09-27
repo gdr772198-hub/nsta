@@ -35,6 +35,17 @@ export const ALL_FEATURES: Feature[] = [
         description: 'Upload and manage Math Book Pages, Premium Notes, Solutions, and MCQs.'
     },
     {
+        id: 'ROADMAP_MANAGER',
+        label: 'Level Roadmap & Cloudinary Video Manager',
+        group: 'CORE',
+        surfaceLevel: 1,
+        adminVisible: true,
+        adminTab: 'ROADMAP_MANAGER',
+        icon: 'Video',
+        color: 'amber',
+        description: 'Upload short teaser clips via Cloudinary (ox4kpil0) and manage level unlocks.'
+    },
+    {
         id: 'PEDRO_MANAGER',
         label: 'Pedro AI Robot Guide Master',
         group: 'CORE',

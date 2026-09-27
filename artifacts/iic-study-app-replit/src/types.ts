@@ -253,6 +253,8 @@ export interface User {
   // SUBSCRIPTION MANAGEMENT
   subscriptionTier?: 'FREE' | 'WEEKLY' | 'MONTHLY' | '3_MONTHLY' | 'YEARLY' | 'LIFETIME' | 'CUSTOM'; // Added 3_MONTHLY and CUSTOM
   subscriptionLevel?: 'BASIC' | 'ULTRA'; // NEW: Granular level for Real subscribers
+  vipPlusTier?: 'PRO_PLUS' | 'MAX_PLUS'; // VIP+ Elite Tier (PRO+ or MAX+ with Daily Diamonds)
+  dailyVipDiamonds?: number; // Daily diamonds included with VIP+ subscription
   subscriptionEndDate?: string; // ISO Date when subscription expires
   subscriptionPrice?: number; // Price admin set for this user's subscription
   subscriptionSource?: 'PURCHASE' | 'CREDITS' | 'ADMIN' | 'REWARD'; // Method of acquisition
@@ -597,7 +599,10 @@ export interface LoginBonusConfig {
 export interface BroadcastRedeemCode {
     id: string;
     code: string;
-    type: 'CREDITS' | 'CREDIT_SUBSCRIPTION' | 'DIAMONDS' | 'DIAMOND_SUBSCRIPTION' | 'SUBSCRIPTION' | 'DISCOUNT' | 'CONTENT_UNLOCK' | 'TOPBAR_EFFECT_COLOR' | 'TOPBAR_EFFECT_ID' | 'SCORE' | 'SCORE_BOOST' | 'SCORE_LIMIT_BOOST';
+    type: 'CREDITS' | 'CREDIT_SUBSCRIPTION' | 'DIAMONDS' | 'DIAMOND_SUBSCRIPTION' | 'SUBSCRIPTION' | 'VIP_PLUS' | 'DISCOUNT' | 'CONTENT_UNLOCK' | 'TOPBAR_EFFECT_COLOR' | 'TOPBAR_EFFECT_ID' | 'SCORE' | 'SCORE_BOOST' | 'SCORE_LIMIT_BOOST';
+    vipPlusTier?: 'PRO_PLUS' | 'MAX_PLUS'; // For VIP_PLUS type
+    vipPlusDurationDays?: number; // For VIP_PLUS type
+    vipPlusDailyDiamonds?: number; // For VIP_PLUS type
     scoreBoostPercent?: number; // For SCORE_BOOST type — how much % to boost score by
     scoreBoostDurationHours?: number; // How long the boost lasts
     scoreLimitBoostPercent?: number; // For SCORE_LIMIT_BOOST type — temporary daily limit increase %
@@ -840,6 +845,7 @@ export interface SystemSettings {
   notifications?: AppNotification[];
   broadcastRedeemCodes?: BroadcastRedeemCode[];
   loadingScreenVideoUrl?: string; // NEW: Video to show before loading screen
+  loadingScreenVideoEnabled?: boolean; // Toggle for loading screen video
   /** 'default' = current white card login, 'video' = fullscreen looping video bg */
   loginPageStyle?: 'default' | 'video';
   loginVideoUrl?: string;
@@ -1609,7 +1615,10 @@ export interface MCQRewardRule {
 export interface GiftCode {
   id: string;
   code: string;
-  type: 'CREDITS' | 'CREDIT_SUBSCRIPTION' | 'DIAMONDS' | 'DIAMOND_SUBSCRIPTION' | 'SUBSCRIPTION' | 'DISCOUNT' | 'CONTENT_UNLOCK' | 'TOPBAR_EFFECT_COLOR' | 'TOPBAR_EFFECT_ID' | 'SCORE' | 'SCORE_BOOST' | 'SCORE_LIMIT_BOOST' | 'THEME_COLOR'; // New: Type of code
+  type: 'CREDITS' | 'CREDIT_SUBSCRIPTION' | 'DIAMONDS' | 'DIAMOND_SUBSCRIPTION' | 'SUBSCRIPTION' | 'VIP_PLUS' | 'DISCOUNT' | 'CONTENT_UNLOCK' | 'TOPBAR_EFFECT_COLOR' | 'TOPBAR_EFFECT_ID' | 'SCORE' | 'SCORE_BOOST' | 'SCORE_LIMIT_BOOST' | 'THEME_COLOR'; // New: Type of code
+  vipPlusTier?: 'PRO_PLUS' | 'MAX_PLUS'; // For VIP_PLUS type
+  vipPlusDurationDays?: number; // For VIP_PLUS type
+  vipPlusDailyDiamonds?: number; // For VIP_PLUS type
   scoreBoostPercent?: number; // For SCORE_BOOST type
   scoreBoostDurationHours?: number; // Hours the boost lasts
   scoreLimitBoostPercent?: number; // For SCORE_LIMIT_BOOST type — temporary daily limit increase %

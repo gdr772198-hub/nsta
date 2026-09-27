@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import type { User, SystemSettings, Challenge20 } from '../types';
 import { isDailyChallenge20, getChallengeDateKey } from '../utils/challengeGenerator';
+import { isFeatureUnlockedForUser } from '../constants/levelRoadmapData';
+import { getLevelInfo } from '../utils/levelSystem';
 
 interface Props {
   user: User;
@@ -133,6 +135,14 @@ export const UpdatesPage: React.FC<Props> = ({
     return Boolean((user.isPremium || isSub) && hasValidDate);
   }, [user]);
 
+  // Level roadmap unlock checks — features are completely hidden (gayab) until unlocked
+  const userLvl = (user as any)?.level || getLevelInfo(user?.totalScore || 0).level || 1;
+  const userXp = user?.totalScore || 0;
+  const isMessengerUnlocked = isFeatureUnlockedForUser('NSTA_MESSENGER', userLvl, userXp, user?.role);
+  const isStudyRoomUnlocked = isFeatureUnlockedForUser('STUDY_ROOM', userLvl, userXp, user?.role);
+  const isDemandUnlocked = isFeatureUnlockedForUser('CONTENT_DEMAND', userLvl, userXp, user?.role);
+  const isEventsUnlocked = isFeatureUnlockedForUser('EVENTS_PAGE_PRO', userLvl, userXp, user?.role);
+
   // Live countdown timer ticking every 1 second
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -175,6 +185,10 @@ export const UpdatesPage: React.FC<Props> = ({
 
   // Handler for banner & card action buttons
   const handleEventAction = (ev: EventItem) => {
+    if (!isEventsUnlocked && user?.role !== 'ADMIN') {
+      alert('🔒 Events participation Level 5 (ii) (15,000 XP) par chalega! Abhi aap event details aur countdown preview dekh sakte hain.');
+      return;
+    }
     if (ev.actionType === 'THEME_STUDIO') {
       if (onOpenThemeStudio) {
         onOpenThemeStudio();
@@ -845,220 +859,226 @@ export const UpdatesPage: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* ── CARD 2: NSTA MESSENGER ── */}
-          <div
-            id="updates-messenger-card"
-            className="nst-card-animated relative rounded-2xl p-4.5 flex flex-col justify-between active:scale-[0.985] transition-all"
-            style={homeCardStyle}
-          >
-            <div className="space-y-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-xs"
-                    style={{ background: `${themeBorder}18`, color: themeBorder }}
+          {/* ── CARD 2: NSTA MESSENGER (Unlocks at Level 3 (iv)) ── */}
+          {isMessengerUnlocked && (
+            <div
+              id="updates-messenger-card"
+              className="nst-card-animated relative rounded-2xl p-4.5 flex flex-col justify-between active:scale-[0.985] transition-all"
+              style={homeCardStyle}
+            >
+              <div className="space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-xs"
+                      style={{ background: `${themeBorder}18`, color: themeBorder }}
+                    >
+                      <MessageSquare size={22} />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                        <span>Nsta Messenger</span>
+                        {!isPaidUser && <span className="text-xs">🔒</span>}
+                      </h4>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">Classmates chat, doubts & study groups</p>
+                    </div>
+                  </div>
+                  <span
+                    className="px-2.5 py-1 rounded-xl text-[10px] font-black shrink-0 uppercase tracking-wider shadow-2xs"
+                    style={{
+                      background: isPaidUser ? `${themeBorder}18` : 'rgba(239, 68, 68, 0.15)',
+                      color: isPaidUser ? themeBorder : '#ef4444',
+                      border: isPaidUser ? `1px solid ${themeBorder}35` : '1px solid rgba(239, 68, 68, 0.35)',
+                    }}
                   >
-                    <MessageSquare size={22} />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-1.5">
-                      <span>Nsta Messenger</span>
-                      {!isPaidUser && <span className="text-xs">🔒</span>}
-                    </h4>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400">Classmates chat, doubts & study groups</p>
-                  </div>
-                </div>
-                <span
-                  className="px-2.5 py-1 rounded-xl text-[10px] font-black shrink-0 uppercase tracking-wider shadow-2xs"
-                  style={{
-                    background: isPaidUser ? `${themeBorder}18` : 'rgba(239, 68, 68, 0.15)',
-                    color: isPaidUser ? themeBorder : '#ef4444',
-                    border: isPaidUser ? `1px solid ${themeBorder}35` : '1px solid rgba(239, 68, 68, 0.35)',
-                  }}
-                >
-                  {isPaidUser ? 'Instant Chat' : '🔒 Basic+'}
-                </span>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold">
-                <span className="px-2.5 py-1 rounded-lg" style={chipStyle}>
-                  💬 1-on-1 Messages
-                </span>
-                <span className="px-2.5 py-1 rounded-lg" style={chipStyle}>
-                  👨‍🦱 Find Classmates
-                </span>
-                <span className="px-2.5 py-1 rounded-lg" style={chipStyle}>
-                  🔒 PIN Lock
-                </span>
-              </div>
-            </div>
-
-            <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => {
-                  if (!isPaidUser) {
-                    alert('🔒 Nsta Messenger feature Basic aur Ultra members ke liye hai. Plan upgrade karein!');
-                    return;
-                  }
-                  if (onOpenMessenger) onOpenMessenger();
-                }}
-                className="w-full py-2.5 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-98"
-                style={{
-                  background: isPaidUser ? themeBtnGrad : 'linear-gradient(135deg, #64748b, #475569)',
-                  color: '#ffffff',
-                  boxShadow: isPaidUser ? `0 4px 14px ${themePrimary}35` : 'none',
-                }}
-              >
-                {isPaidUser ? null : <Lock size={15} />}
-                <span>{isPaidUser ? 'Open Nsta Messenger →' : '🔒 Open Nsta Messenger (Basic+ Required)'}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* ── CARD 4: STUDY ROOM (GROUP STUDY) ── */}
-          <div
-            id="updates-study-room-card"
-            className="nst-card-animated relative rounded-2xl p-4.5 flex flex-col justify-between active:scale-[0.985] transition-all"
-            style={homeCardStyle}
-          >
-            <div className="space-y-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-xs"
-                    style={{ background: `${themeBorder}18`, color: themeBorder }}
-                  >
-                    <Users size={22} />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-1.5">
-                      <span>Study Room</span>
-                    </h4>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400">Virtual study rooms with peers & focus timer</p>
-                  </div>
-                </div>
-                <span
-                  className="px-2.5 py-1 rounded-xl text-[10px] font-black shrink-0 uppercase tracking-wider shadow-2xs"
-                  style={{
-                    background: `${themeBorder}18`,
-                    color: themeBorder,
-                    border: `1px solid ${themeBorder}35`,
-                  }}
-                >
-                  {isPaidUser ? 'VIP Unlimited' : 'Free: 2 Rooms/Day'}
-                </span>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold">
-                <span className="px-2.5 py-1 rounded-lg" style={chipStyle}>
-                  ⏱️ Pomodoro Timer
-                </span>
-                <span className="px-2.5 py-1 rounded-lg" style={chipStyle}>
-                  👥 Live Classmates
-                </span>
-                <span className="px-2.5 py-1 rounded-lg" style={chipStyle}>
-                  🎧 Silent Study
-                </span>
-                {!isPaidUser && (
-                  <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25">
-                    🎁 Free: 2 Rooms / Day
+                    {isPaidUser ? 'Instant Chat' : '🔒 Basic+'}
                   </span>
-                )}
-              </div>
-            </div>
-
-            <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => {
-                  if (onOpenStudyRoom) onOpenStudyRoom();
-                }}
-                className="w-full py-2.5 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-98"
-                style={{
-                  background: themeBtnGrad,
-                  color: '#ffffff',
-                  boxShadow: `0 4px 14px ${themePrimary}35`,
-                }}
-              >
-                <Users size={15} />
-                <span>{isPaidUser ? 'Join / Create Study Room →' : 'Join / Create Study Room (Free: 2 Rooms/Day) →'}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* ── CARD: CONTENT DEMAND ── */}
-          <div
-            id="updates-content-demand-card"
-            className="nst-card-animated relative rounded-2xl p-4.5 flex flex-col justify-between active:scale-[0.985] transition-all"
-            style={homeCardStyle}
-          >
-            <div className="space-y-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-xs"
-                    style={{ background: `${themeBorder}18`, color: themeBorder }}
-                  >
-                    <Megaphone size={22} />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-1.5">
-                      <span>Content Demand</span>
-                      {!hasContentDemandAccess && <span className="text-xs">🔒</span>}
-                    </h4>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                      Apni pasand ke notes, chapters ya study material ki demand karein
-                    </p>
-                  </div>
                 </div>
-                <span
-                  className="px-2.5 py-1 rounded-xl text-[10px] font-black shrink-0 uppercase tracking-wider shadow-2xs"
+
+                <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold">
+                  <span className="px-2.5 py-1 rounded-lg" style={chipStyle}>
+                    💬 1-on-1 Messages
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg" style={chipStyle}>
+                    👨‍🦱 Find Classmates
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg" style={chipStyle}>
+                    🔒 PIN Lock
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isPaidUser) {
+                      alert('🔒 Nsta Messenger feature Basic aur Ultra members ke liye hai. Plan upgrade karein!');
+                      return;
+                    }
+                    if (onOpenMessenger) onOpenMessenger();
+                  }}
+                  className="w-full py-2.5 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-98"
                   style={{
-                    background: hasContentDemandAccess ? `${themeBorder}18` : 'rgba(239, 68, 68, 0.15)',
-                    color: hasContentDemandAccess ? themeBorder : '#ef4444',
-                    border: hasContentDemandAccess ? `1px solid ${themeBorder}35` : '1px solid rgba(239, 68, 68, 0.35)',
+                    background: isPaidUser ? themeBtnGrad : 'linear-gradient(135deg, #64748b, #475569)',
+                    color: '#ffffff',
+                    boxShadow: isPaidUser ? `0 4px 14px ${themePrimary}35` : 'none',
                   }}
                 >
-                  {hasContentDemandAccess ? 'Demand Hub' : '🔒 Basic+'}
-                </span>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold">
-                <span className="px-2.5 py-1 rounded-lg" style={chipStyle}>
-                  📢 Custom Notes
-                </span>
-                <span className="px-2.5 py-1 rounded-lg" style={chipStyle}>
-                  ⚡ Fast Admin Review
-                </span>
-                <span className="px-2.5 py-1 rounded-lg" style={chipStyle}>
-                  🎯 Specific Topics
-                </span>
+                  {isPaidUser ? null : <Lock size={15} />}
+                  <span>{isPaidUser ? 'Open Nsta Messenger →' : '🔒 Open Nsta Messenger (Basic+ Required)'}</span>
+                </button>
               </div>
             </div>
+          )}
 
-            <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => {
-                  if (!hasContentDemandAccess) {
-                    alert('🔒 Content Demand feature Basic aur Ultra members ke liye hai. Plan upgrade karein!');
-                    return;
-                  }
-                  if (onOpenContentDemand) onOpenContentDemand();
-                }}
-                className="w-full py-2.5 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-98"
-                style={{
-                  background: hasContentDemandAccess ? themeBtnGrad : 'linear-gradient(135deg, #64748b, #475569)',
-                  color: '#ffffff',
-                  boxShadow: hasContentDemandAccess ? `0 4px 14px ${themePrimary}35` : 'none',
-                }}
-              >
-                {hasContentDemandAccess ? null : <Lock size={15} />}
-                <span>{hasContentDemandAccess ? 'Demand Content / Notes →' : '🔒 Demand Content (Basic+ Required)'}</span>
-              </button>
+          {/* ── CARD 4: STUDY ROOM (GROUP STUDY) (Unlocks at Level 3 (v)) ── */}
+          {isStudyRoomUnlocked && (
+            <div
+              id="updates-study-room-card"
+              className="nst-card-animated relative rounded-2xl p-4.5 flex flex-col justify-between active:scale-[0.985] transition-all"
+              style={homeCardStyle}
+            >
+              <div className="space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-xs"
+                      style={{ background: `${themeBorder}18`, color: themeBorder }}
+                    >
+                      <Users size={22} />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                        <span>Study Room</span>
+                      </h4>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">Virtual study rooms with peers & focus timer</p>
+                    </div>
+                  </div>
+                  <span
+                    className="px-2.5 py-1 rounded-xl text-[10px] font-black shrink-0 uppercase tracking-wider shadow-2xs"
+                    style={{
+                      background: `${themeBorder}18`,
+                      color: themeBorder,
+                      border: `1px solid ${themeBorder}35`,
+                    }}
+                  >
+                    {isPaidUser ? 'VIP Unlimited' : 'Free: 2 Rooms/Day'}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold">
+                  <span className="px-2.5 py-1 rounded-lg" style={chipStyle}>
+                    ⏱️ Pomodoro Timer
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg" style={chipStyle}>
+                    👥 Live Classmates
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg" style={chipStyle}>
+                    🎧 Silent Study
+                  </span>
+                  {!isPaidUser && (
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25">
+                      🎁 Free: 2 Rooms / Day
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onOpenStudyRoom) onOpenStudyRoom();
+                  }}
+                  className="w-full py-2.5 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-98"
+                  style={{
+                    background: themeBtnGrad,
+                    color: '#ffffff',
+                    boxShadow: `0 4px 14px ${themePrimary}35`,
+                  }}
+                >
+                  <Users size={15} />
+                  <span>{isPaidUser ? 'Join / Create Study Room →' : 'Join / Create Study Room (Free: 2 Rooms/Day) →'}</span>
+                </button>
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* ── CARD: CONTENT DEMAND (Unlocks at Level 4 (Entry)) ── */}
+          {isDemandUnlocked && (
+            <div
+              id="updates-content-demand-card"
+              className="nst-card-animated relative rounded-2xl p-4.5 flex flex-col justify-between active:scale-[0.985] transition-all"
+              style={homeCardStyle}
+            >
+              <div className="space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-xs"
+                      style={{ background: `${themeBorder}18`, color: themeBorder }}
+                    >
+                      <Megaphone size={22} />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                        <span>Content Demand</span>
+                        {!hasContentDemandAccess && <span className="text-xs">🔒</span>}
+                      </h4>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Apni pasand ke notes, chapters ya study material ki demand karein
+                      </p>
+                    </div>
+                  </div>
+                  <span
+                    className="px-2.5 py-1 rounded-xl text-[10px] font-black shrink-0 uppercase tracking-wider shadow-2xs"
+                    style={{
+                      background: hasContentDemandAccess ? `${themeBorder}18` : 'rgba(239, 68, 68, 0.15)',
+                      color: hasContentDemandAccess ? themeBorder : '#ef4444',
+                      border: hasContentDemandAccess ? `1px solid ${themeBorder}35` : '1px solid rgba(239, 68, 68, 0.35)',
+                    }}
+                  >
+                    {hasContentDemandAccess ? 'Demand Hub' : '🔒 Basic+'}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold">
+                  <span className="px-2.5 py-1 rounded-lg" style={chipStyle}>
+                    📢 Custom Notes
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg" style={chipStyle}>
+                    ⚡ Fast Admin Review
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg" style={chipStyle}>
+                    🎯 Specific Topics
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!hasContentDemandAccess) {
+                      alert('🔒 Content Demand feature Basic aur Ultra members ke liye hai. Plan upgrade karein!');
+                      return;
+                    }
+                    if (onOpenContentDemand) onOpenContentDemand();
+                  }}
+                  className="w-full py-2.5 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-98"
+                  style={{
+                    background: hasContentDemandAccess ? themeBtnGrad : 'linear-gradient(135deg, #64748b, #475569)',
+                    color: '#ffffff',
+                    boxShadow: hasContentDemandAccess ? `0 4px 14px ${themePrimary}35` : 'none',
+                  }}
+                >
+                  {hasContentDemandAccess ? null : <Lock size={15} />}
+                  <span>{hasContentDemandAccess ? 'Demand Content / Notes →' : '🔒 Demand Content (Basic+ Required)'}</span>
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* ── CARD: OFFLINE STORAGE & DOWNLOADS ── */}
           <div
@@ -1438,12 +1458,13 @@ export const UpdatesPage: React.FC<Props> = ({
                       onClick={() => handleEventAction(ev)}
                       className="w-full py-2.5 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-98"
                       style={{
-                        background: themeBtnGrad,
+                        background: isEventsUnlocked || user?.role === 'ADMIN' ? themeBtnGrad : 'linear-gradient(135deg, #475569, #334155)',
                         color: '#ffffff',
-                        boxShadow: `0 4px 14px ${themePrimary}35`,
+                        boxShadow: isEventsUnlocked || user?.role === 'ADMIN' ? `0 4px 14px ${themePrimary}35` : 'none',
                       }}
                     >
-                      <span>{ev.actionText}</span>
+                      {!isEventsUnlocked && user?.role !== 'ADMIN' && <Lock size={13} className="text-amber-400" />}
+                      <span>{isEventsUnlocked || user?.role === 'ADMIN' ? ev.actionText : `🔒 Level 5 (ii) par chalega (${ev.actionText})`}</span>
                       <ArrowRight size={14} />
                     </button>
                   </div>
