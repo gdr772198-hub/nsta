@@ -81,13 +81,18 @@ export async function handleTelegramMiddleware(
   if (pathname === '/api/telegram/health') {
     try {
       const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
-      const tgJson = await tgRes.json();
-      res.statusCode = tgRes.ok && tgJson.ok ? 200 : 502;
+      const rawText = await tgRes.text();
+      let tgJson: any = null;
+      try {
+        tgJson = rawText ? JSON.parse(rawText) : null;
+      } catch {}
+
+      res.statusCode = tgRes.ok && tgJson?.ok ? 200 : 502;
       res.setHeader('Content-Type', 'application/json');
       res.end(
         JSON.stringify({
-          ok: tgJson.ok,
-          bot: tgJson.result,
+          ok: Boolean(tgJson?.ok),
+          bot: tgJson?.result,
           storageChatId: defaultChatId,
           configuredToken: botToken.slice(0, 10) + '...',
         })
@@ -168,6 +173,20 @@ export async function handleTelegramMiddleware(
         fileName = (fileEntry as any).name || (formData.get('fileName') as string) || 'upload';
       }
 
+      // Check Telegram 50MB Bot API limit
+      const MAX_TELEGRAM_BOT_SIZE = 50 * 1024 * 1024;
+      if (fileBlob.size > MAX_TELEGRAM_BOT_SIZE) {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(
+          JSON.stringify({
+            ok: false,
+            error: `File size ${(fileBlob.size / (1024 * 1024)).toFixed(1)}MB hai. Telegram Bot API limit 50MB hai. Kripya 50MB se chhota file chunein.`
+          })
+        );
+        return;
+      }
+
       // Forward to Telegram Bot API sendDocument
       const tgFormData = new FormData();
       tgFormData.append('chat_id', targetChatId);
@@ -175,7 +194,14 @@ export async function handleTelegramMiddleware(
       tgFormData.append('document', fileBlob, fileName);
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout for larger uploads
+      // 5 minutes (300,000ms) timeout to give large video/PDF uploads sufficient time
+      const timeoutId = setTimeout(() => {
+        try {
+          controller.abort(new Error('Telegram API upload timed out after 5 minutes'));
+        } catch {
+          controller.abort();
+        }
+      }, 300000);
 
       const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendDocument`, {
         method: 'POST',
@@ -184,11 +210,21 @@ export async function handleTelegramMiddleware(
       });
       clearTimeout(timeoutId);
 
-      const tgJson = await tgRes.json();
-      if (!tgJson.ok) {
-        res.statusCode = 502;
+      const rawTgText = await tgRes.text();
+      let tgJson: any = null;
+      try {
+        tgJson = rawTgText ? JSON.parse(rawTgText) : null;
+      } catch {}
+
+      if (!tgJson || !tgJson.ok) {
+        res.statusCode = tgRes.ok ? 400 : 502;
         res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ ok: false, error: tgJson.description || 'Telegram Bot API error' }));
+        res.end(
+          JSON.stringify({
+            ok: false,
+            error: tgJson?.description || `Telegram Bot API error (${tgRes.status})`,
+          })
+        );
         return;
       }
 
@@ -207,9 +243,17 @@ export async function handleTelegramMiddleware(
       }
 
       // Resolve file_path from Telegram CDN
-      const pathRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
-      const pathJson = await pathRes.json();
-      const filePath = pathJson.result?.file_path || '';
+      let filePath = '';
+      try {
+        const pathRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
+        const rawPathText = await pathRes.text();
+        const pathJson = rawPathText ? JSON.parse(rawPathText) : null;
+        if (pathJson?.ok && pathJson.result?.file_path) {
+          filePath = pathJson.result.file_path;
+        }
+      } catch (pathErr) {
+        console.warn('[Telegram Proxy] getFile resolution warning:', pathErr);
+      }
 
       const resolvedFileName = doc?.file_name || fileName;
       const proxyUrl = `/api/telegram/file?path=${encodeURIComponent(filePath)}&name=${encodeURIComponent(resolvedFileName)}`;
@@ -234,7 +278,11 @@ export async function handleTelegramMiddleware(
       console.error('[Telegram Storage Proxy] Upload error:', err);
       res.statusCode = 500;
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ ok: false, error: err?.message || 'Server upload processing failed' }));
+      let errMsg = err?.message || 'Server upload processing failed';
+      if (err?.name === 'AbortError' || errMsg.toLowerCase().includes('aborted')) {
+        errMsg = 'Telegram upload time limit exceed ho gaya (slow network). Kripya dobara koshish karein ya chhota file upload karein.';
+      }
+      res.end(JSON.stringify({ ok: false, error: errMsg }));
       return;
     }
   }
@@ -254,11 +302,14 @@ export async function handleTelegramMiddleware(
       }
 
       if (!filePath && fileId) {
-        const pathRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
-        const pathJson = await pathRes.json();
-        if (pathJson.ok && pathJson.result?.file_path) {
-          filePath = pathJson.result.file_path;
-        }
+        try {
+          const pathRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
+          const rawPath = await pathRes.text();
+          const pathJson = rawPath ? JSON.parse(rawPath) : null;
+          if (pathJson?.ok && pathJson.result?.file_path) {
+            filePath = pathJson.result.file_path;
+          }
+        } catch {}
       }
 
       if (!filePath) {

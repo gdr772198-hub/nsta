@@ -115,33 +115,35 @@ export async function uploadImageToImgBB(
 
   // ── Strategy 1: Telegram Cloud Storage (@nsta_vault_bot) via Secure Proxy ──
   try {
-    const inputPayload = base64Data || file;
+    const inputPayload = (file instanceof File || file instanceof Blob) ? file : (base64Data || file);
     const directTelegramUrl = await uploadImageToTelegram(
       inputPayload,
       name || `nsta_img_${Date.now()}.jpg`,
       'NSTA App Media'
     );
-    if (directTelegramUrl) {
-      return directTelegramUrl;
+    if (directTelegramUrl && typeof directTelegramUrl === 'string' && directTelegramUrl.trim()) {
+      return directTelegramUrl.trim();
     }
-  } catch (tgErr) {
-    console.warn('[Image Upload Service] Telegram storage attempt error:', tgErr);
+  } catch (tgErr: any) {
+    console.warn('[Image Upload Service] Telegram storage attempt error:', tgErr?.message || tgErr);
   }
 
-  // ── Strategy 2: In-App Compressed Data URL Fallback (For offline protection) ──
+  // ── Strategy 2: In-App Compressed Data URL Fallback (For offline & network resilience) ──
   try {
-    const fallbackWidth = isHd ? 1920 : 960;
-    const fallbackHeight = isHd ? 1920 : 960;
-    const fallbackQuality = isHd ? 0.88 : 0.70;
+    const fallbackWidth = isHd ? 1280 : 800;
+    const fallbackHeight = isHd ? 1280 : 800;
+    const fallbackQuality = isHd ? 0.82 : 0.72;
     const ultraCompact = await compressImage(file, fallbackWidth, fallbackHeight, fallbackQuality);
     if (ultraCompact) {
       return ultraCompact;
     }
-  } catch {}
+  } catch (compErr) {
+    console.warn('[Image Upload Service] Fallback compression error:', compErr);
+  }
 
   if (base64Data) {
     return base64Data;
   }
 
-  throw new Error('Photo upload nahi ho payi. Kripya dobara koshish karein.');
+  throw new Error('Photo process nahi ho payi. Kripya dobara koshish karein.');
 }

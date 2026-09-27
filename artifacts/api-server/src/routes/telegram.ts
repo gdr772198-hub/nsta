@@ -47,10 +47,15 @@ router.get("/health", async (_req: Request, res: Response) => {
   const defaultChatId = getStorageChatId();
   try {
     const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
-    const tgJson = await tgRes.json();
-    res.status(tgRes.ok && tgJson.ok ? 200 : 502).json({
-      ok: tgJson.ok,
-      bot: tgJson.result,
+    const rawText = await tgRes.text();
+    let tgJson: any = null;
+    try {
+      tgJson = rawText ? JSON.parse(rawText) : null;
+    } catch {}
+
+    res.status(tgRes.ok && tgJson?.ok ? 200 : 502).json({
+      ok: Boolean(tgJson?.ok),
+      bot: tgJson?.result,
       storageChatId: defaultChatId,
     });
   } catch (err: any) {
@@ -130,9 +135,14 @@ router.post("/upload", async (req: Request, res: Response) => {
     });
     clearTimeout(timeoutId);
 
-    const tgJson = await tgRes.json();
-    if (!tgJson.ok) {
-      res.status(502).json({ ok: false, error: tgJson.description || 'Telegram Bot API error' });
+    const rawTgText = await tgRes.text();
+    let tgJson: any = null;
+    try {
+      tgJson = rawTgText ? JSON.parse(rawTgText) : null;
+    } catch {}
+
+    if (!tgJson || !tgJson.ok) {
+      res.status(tgRes.ok ? 400 : 502).json({ ok: false, error: tgJson?.description || `Telegram Bot API error (${tgRes.status})` });
       return;
     }
 
@@ -148,9 +158,15 @@ router.post("/upload", async (req: Request, res: Response) => {
       return;
     }
 
-    const pathRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
-    const pathJson = await pathRes.json();
-    const filePath = pathJson.result?.file_path || '';
+    let filePath = '';
+    try {
+      const pathRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
+      const rawPathText = await pathRes.text();
+      const pathJson = rawPathText ? JSON.parse(rawPathText) : null;
+      if (pathJson?.ok && pathJson.result?.file_path) {
+        filePath = pathJson.result.file_path;
+      }
+    } catch {}
 
     const resolvedFileName = doc?.file_name || fileName;
     const proxyUrl = `/api/telegram/file?path=${encodeURIComponent(filePath)}&name=${encodeURIComponent(resolvedFileName)}`;
@@ -186,11 +202,14 @@ router.get("/file", async (req: Request, res: Response) => {
     }
 
     if (!filePath && fileId) {
-      const pathRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
-      const pathJson = await pathRes.json();
-      if (pathJson.ok && pathJson.result?.file_path) {
-        filePath = pathJson.result.file_path;
-      }
+      try {
+        const pathRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
+        const rawPath = await pathRes.text();
+        const pathJson = rawPath ? JSON.parse(rawPath) : null;
+        if (pathJson?.ok && pathJson.result?.file_path) {
+          filePath = pathJson.result.file_path;
+        }
+      } catch {}
     }
 
     if (!filePath) {

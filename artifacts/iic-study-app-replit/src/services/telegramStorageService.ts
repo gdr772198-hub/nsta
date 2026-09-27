@@ -33,6 +33,7 @@ export interface UploadOptions {
   caption?: string;
   type?: 'image' | 'video' | 'audio' | 'pdf' | 'document';
   chatId?: string;
+  timeoutMs?: number;
   onProgress?: (percent: number) => void;
 }
 
@@ -99,10 +100,15 @@ export function resolveTelegramUrl(rawUrl: string): string {
 export async function checkTelegramStorageHealth(): Promise<{ ok: boolean; message: string }> {
   try {
     const res = await fetch('/api/telegram/health');
-    if (!res.ok) {
+    const rawText = await res.text();
+    let data: any = null;
+    try {
+      data = rawText ? JSON.parse(rawText) : null;
+    } catch {}
+
+    if (!res.ok || !data) {
       return { ok: false, message: `Server returned status ${res.status}` };
     }
-    const data = await res.json();
     return {
       ok: Boolean(data?.ok),
       message: data?.ok ? `Connected to @${data.bot?.username || 'Telegram Bot'}` : data?.error || 'Bot offline',
@@ -145,7 +151,12 @@ export async function uploadToTelegramStorage(
     blob = fileInput;
   }
 
-  if (opts.onProgress) opts.onProgress(15);
+  // Check 50MB Telegram cloud storage limit
+  const MAX_FILE_SIZE = 50 * 1024 * 1024;
+  if (blob.size > MAX_FILE_SIZE) {
+    const sizeMb = (blob.size / (1024 * 1024)).toFixed(1);
+    throw new Error(`File size ${sizeMb}MB hai. Telegram cloud storage limit 50MB hai. Kripya 50MB se chhota video/file upload karein.`);
+  }
 
   const formData = new FormData();
   formData.append('chat_id', targetChatId);
@@ -155,12 +166,93 @@ export async function uploadToTelegramStorage(
   formData.append('fileName', fileName);
   formData.append('document', blob, fileName);
 
+  const isLarge = blob.size > 2 * 1024 * 1024;
+  // 5 minutes (300,000ms) for large files/videos, 2 minutes (120,000ms) for small files
+  const timeoutMs = opts.timeoutMs || (isLarge ? 300000 : 120000);
+
+  // Use XMLHttpRequest in browser for true continuous progress tracking and clean timeouts
+  if (typeof XMLHttpRequest !== 'undefined') {
+    return new Promise<TelegramUploadResult>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.timeout = timeoutMs;
+
+      if (opts.onProgress) {
+        opts.onProgress(5);
+      }
+
+      if (xhr.upload && opts.onProgress) {
+        xhr.upload.onprogress = (evt) => {
+          if (evt.lengthComputable && evt.total > 0) {
+            const pct = Math.min(95, Math.max(5, Math.round((evt.loaded / evt.total) * 95)));
+            opts.onProgress!(pct);
+          }
+        };
+      }
+
+      xhr.onload = () => {
+        let data: any = null;
+        try {
+          data = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+        } catch {}
+
+        if (xhr.status >= 200 && xhr.status < 300 && data && data.ok) {
+          if (opts.onProgress) opts.onProgress(100);
+
+          resolve({
+            url: data.url,
+            fileId: data.fileId,
+            fileName: data.fileName || fileName,
+            fileSize: data.fileSize || blob.size,
+            mimeType: data.mimeType,
+            directUrl: data.directUrl,
+          });
+        } else {
+          let errDetail = data?.error;
+          if (!errDetail) {
+            if (xhr.status === 413) {
+              errDetail = 'File size limit exceed ho gayi (max 50MB). Kripya chhota file chunein.';
+            } else if (xhr.status === 502 || xhr.status === 504) {
+              errDetail = 'Storage server se sampark nahi ho saka. Kripya thodi der baad dobara koshish karein.';
+            } else {
+              errDetail = `Upload fail ho gaya (Status: ${xhr.status})`;
+            }
+          }
+          reject(new Error(errDetail));
+        }
+      };
+
+      xhr.onerror = () => {
+        console.error('[Telegram Storage Service] Network connection error');
+        reject(new Error('Network error: server se connect nahi ho paya. Kripya apna internet connection check karein.'));
+      };
+
+      xhr.ontimeout = () => {
+        console.error(`[Telegram Storage Service] Upload timed out after ${timeoutMs}ms`);
+        reject(new Error(`Upload time limit exceed ho gaya (${Math.round(timeoutMs / 1000)}s). Kripya chhota video chunein ya internet speed check karein.`));
+      };
+
+      xhr.onabort = () => {
+        console.warn('[Telegram Storage Service] Upload aborted');
+        reject(new Error('Upload cancel ho gaya.'));
+      };
+
+      xhr.open('POST', '/api/telegram/upload', true);
+      xhr.send(formData);
+    });
+  }
+
+  // Fallback for non-browser environments: Fetch with AbortController
   const controller = new AbortController();
-  const timeoutMs = 90000; // 90 seconds for large videos or files
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutId = setTimeout(() => {
+    try {
+      controller.abort(new Error(`Upload timed out after ${timeoutMs}ms`));
+    } catch {
+      controller.abort();
+    }
+  }, timeoutMs);
 
   try {
-    if (opts.onProgress) opts.onProgress(35);
+    if (opts.onProgress) opts.onProgress(20);
 
     const res = await fetch('/api/telegram/upload', {
       method: 'POST',
@@ -171,9 +263,24 @@ export async function uploadToTelegramStorage(
 
     if (opts.onProgress) opts.onProgress(85);
 
-    const data = await res.json();
-    if (!res.ok || !data.ok) {
-      throw new Error(data?.error || `Telegram upload failed with status ${res.status}`);
+    const rawText = await res.text();
+    let data: any = null;
+    try {
+      data = rawText ? JSON.parse(rawText) : null;
+    } catch {}
+
+    if (!res.ok || !data || !data.ok) {
+      let errDetail = data?.error;
+      if (!errDetail) {
+        if (res.status === 413) {
+          errDetail = 'File size limit exceed ho gayi (max 50MB). Kripya chhota file chunein.';
+        } else if (res.status === 502 || res.status === 504) {
+          errDetail = 'Storage server temporarily busy hai. Kripya thodi der baad dobara try karein.';
+        } else {
+          errDetail = `Upload server response error (${res.status})`;
+        }
+      }
+      throw new Error(errDetail);
     }
 
     if (opts.onProgress) opts.onProgress(100);
@@ -189,7 +296,11 @@ export async function uploadToTelegramStorage(
   } catch (err: any) {
     clearTimeout(timeoutId);
     console.error('[Telegram Storage Service] Upload failed:', err);
-    throw new Error(err?.message || 'Telegram upload fail ho gaya. Kripya network check karke dobara koshish karein.');
+    let errMsg = err?.message || 'Telegram upload fail ho gaya. Kripya network check karke dobara koshish karein.';
+    if (err?.name === 'AbortError' || errMsg.toLowerCase().includes('aborted')) {
+      errMsg = 'Upload time limit exceed ho gaya (slow network). Kripya dobara try karein ya chhota file upload karein.';
+    }
+    throw new Error(errMsg);
   }
 }
 

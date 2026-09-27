@@ -67,7 +67,15 @@ export const uploadToCloudinary = async (
     };
   } catch (err: any) {
     console.error('[Media Upload via Telegram] Upload failed:', err);
-    throw new Error(err?.message || 'Media upload fail ho gaya. Kripya dobara try karein.');
+    let errMsg = err?.message || 'Media upload fail ho gaya';
+    if (
+      errMsg.includes('Unexpected end of JSON') ||
+      errMsg.includes('Failed to execute') ||
+      errMsg.includes('SyntaxError')
+    ) {
+      errMsg = 'Storage server se response nahi mila. Kripya apna internet connection check karein ya chhota video upload karein.';
+    }
+    throw new Error(errMsg);
   }
 };
 

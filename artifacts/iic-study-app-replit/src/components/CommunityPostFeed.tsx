@@ -49,7 +49,7 @@ import {
   deleteSuggestion,
   reactToSuggestion,
 } from '../firebase';
-import { uploadImageToImgBB } from '../services/imgbbService';
+import { uploadImageToImgBB, compressImage } from '../services/imgbbService';
 import { uploadToCloudinary, getOptimizedVideoUrl } from '../services/cloudinaryService';
 import { ImageCropper } from './ImageCropper';
 import { User } from '../types';
@@ -306,8 +306,9 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
   const handleVideoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 100 * 1024 * 1024) {
-      showToast('⚠️ Video size maximum 100MB honi chahiye!');
+    const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50MB Telegram Cloud storage limit
+    if (file.size > MAX_VIDEO_SIZE) {
+      showToast('⚠️ Video size maximum 50MB tak ho sakti hai (Cloud storage limit 50MB hai)!');
       return;
     }
     setSelectedVideoFile(file);
@@ -363,22 +364,42 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
     try {
       if (selectedImageFile) {
         setIsUploadingImage(true);
-        uploadedImageUrl = await uploadImageToImgBB(
-          selectedImageFile,
-          `post_${user.id}_${Date.now()}`,
-          { isHd: isHdQuality }
-        );
+        try {
+          uploadedImageUrl = await uploadImageToImgBB(
+            selectedImageFile,
+            `post_${user.id}_${Date.now()}`,
+            { isHd: isHdQuality }
+          );
+        } catch (imgErr) {
+          console.warn('[CommunityPostFeed] Telegram image upload failed, falling back to local compressed:', imgErr);
+          try {
+            uploadedImageUrl = await compressImage(selectedImageFile, 960, 960, 0.75);
+          } catch {}
+        }
         setIsUploadingImage(false);
       }
 
       if (selectedVideoFile) {
         setIsUploadingVideo(true);
         setVideoUploadProgress(1);
-        const cloudRes = await uploadToCloudinary(selectedVideoFile, 'video', (pct) => {
-          setVideoUploadProgress(pct);
-        });
-        uploadedVideoUrl = cloudRes.secure_url || cloudRes.url;
-        setIsUploadingVideo(false);
+        try {
+          const cloudRes = await uploadToCloudinary(selectedVideoFile, 'video', (pct) => {
+            setVideoUploadProgress(pct);
+          });
+          uploadedVideoUrl = cloudRes.secure_url || cloudRes.url;
+        } catch (vidErr: any) {
+          let vMsg = vidErr?.message || 'Video upload fail ho gaya';
+          if (
+            vMsg.includes('Unexpected end of JSON') ||
+            vMsg.includes('Failed to execute') ||
+            vMsg.includes('SyntaxError')
+          ) {
+            vMsg = 'Storage server se response nahi mila. Kripya apna internet connection check karein ya chhota video upload karein.';
+          }
+          throw new Error(vMsg);
+        } finally {
+          setIsUploadingVideo(false);
+        }
       }
 
       const postsRef = ref(rtdb, 'community_posts');
@@ -441,7 +462,15 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
       showToast('🎉 Aapka post safaltapoorvak publish ho gaya!');
     } catch (err: any) {
       console.error('[CommunityPostFeed] Post creation failed:', err);
-      showToast(`❌ Post upload fail ho gaya: ${err.message || 'Error'}`);
+      let errMsg = err?.message || 'Error';
+      if (
+        errMsg.includes('Unexpected end of JSON') ||
+        errMsg.includes('Failed to execute') ||
+        errMsg.includes('SyntaxError')
+      ) {
+        errMsg = 'Storage server se response nahi mila. Kripya apna internet connection check karein ya chhota file upload karein.';
+      }
+      showToast(`❌ Post upload fail ho gaya: ${errMsg}`);
     } finally {
       setIsSubmitting(false);
       setIsUploadingImage(false);
@@ -604,10 +633,17 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
     try {
       let uploadedImageUrl = '';
       if (imageFile) {
-        uploadedImageUrl = await uploadImageToImgBB(
-          imageFile,
-          `comment_${user.id}_${Date.now()}`
-        );
+        try {
+          uploadedImageUrl = await uploadImageToImgBB(
+            imageFile,
+            `comment_${user.id}_${Date.now()}`
+          );
+        } catch (cImgErr) {
+          console.warn('[CommunityPostFeed] Comment image upload fallback:', cImgErr);
+          try {
+            uploadedImageUrl = await compressImage(imageFile, 800, 800, 0.72);
+          } catch {}
+        }
       }
 
       const commentsRef = ref(rtdb, `community_posts/${postId}/comments`);
@@ -823,11 +859,18 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
     try {
       let finalImageUrl = editImagePreview;
       if (editImageFile) {
-        finalImageUrl = await uploadImageToImgBB(
-          editImageFile,
-          `edit_${user.id}_${Date.now()}`,
-          { isHd: isEditHd }
-        );
+        try {
+          finalImageUrl = await uploadImageToImgBB(
+            editImageFile,
+            `edit_${user.id}_${Date.now()}`,
+            { isHd: isEditHd }
+          );
+        } catch (eImgErr) {
+          console.warn('[CommunityPostFeed] Edit image upload fallback:', eImgErr);
+          try {
+            finalImageUrl = await compressImage(editImageFile, 960, 960, 0.75);
+          } catch {}
+        }
       }
       const postRef = ref(rtdb, `community_posts/${editingPost.id}`);
       const updates: Record<string, any> = {

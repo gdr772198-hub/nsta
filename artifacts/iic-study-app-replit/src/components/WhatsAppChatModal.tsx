@@ -756,8 +756,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   const handleSelectStatusFile = (e: React.ChangeEvent<HTMLInputElement>, type: 'VIDEO' | 'IMAGE') => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 100 * 1024 * 1024) {
-      showToast('⚠️ Status file maximum 100MB tak ho sakti hai!');
+    if (file.size > 50 * 1024 * 1024) {
+      showToast('⚠️ Status file maximum 50MB tak ho sakti hai (Cloud limit 50MB hai)!');
       return;
     }
     if (statusPreviewUrl) {
@@ -809,8 +809,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   const handleSelectVideoFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 100 * 1024 * 1024) {
-      showToast('⚠️ Video maximum 100MB tak bhej sakte hain!');
+    if (file.size > 50 * 1024 * 1024) {
+      showToast('⚠️ Video maximum 50MB tak bhej sakte hain (Cloud limit 50MB hai)!');
       return;
     }
     if (videoPreviewUrl) {
