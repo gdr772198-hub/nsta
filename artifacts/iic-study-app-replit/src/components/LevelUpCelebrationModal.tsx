@@ -8,7 +8,6 @@ interface LevelUpCelebrationModalProps {
   unlockedFeatures: FeatureUnlockItem[];
   onClose: () => void;
   onExploreFeature?: (featureId: string) => void;
-  onOpenRoadmap?: () => void;
 }
 
 export const LevelUpCelebrationModal: React.FC<LevelUpCelebrationModalProps> = ({
@@ -17,7 +16,6 @@ export const LevelUpCelebrationModal: React.FC<LevelUpCelebrationModalProps> = (
   unlockedFeatures,
   onClose,
   onExploreFeature,
-  onOpenRoadmap,
 }) => {
   if (!isOpen) return null;
 
@@ -98,20 +96,9 @@ export const LevelUpCelebrationModal: React.FC<LevelUpCelebrationModalProps> = (
 
         {/* CTA Buttons */}
         <div className="flex flex-col sm:flex-row items-center gap-2">
-          {onOpenRoadmap && (
-            <button
-              onClick={() => {
-                onClose();
-                onOpenRoadmap();
-              }}
-              className="w-full sm:flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold border border-amber-500/30 transition-all text-xs flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <span>🗺️ Poora Roadmap Dekhein</span>
-            </button>
-          )}
           <button
             onClick={onClose}
-            className="w-full sm:flex-1 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-black tracking-wide shadow-lg shadow-amber-500/25 transition-all text-sm cursor-pointer"
+            className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 font-black tracking-wide shadow-lg shadow-amber-500/25 transition-all text-sm cursor-pointer"
           >
             Shaandar! (Continue)
           </button>

@@ -140,9 +140,8 @@ import { Store } from "./Store";
 import { AppStore } from "./AppStore";
 import { McqHub } from "./McqHub";
 import { DraggableNstaLogoFab } from "./DraggableNstaLogoFab";
-import { LevelRoadmapModal } from "./LevelRoadmapModal";
 import { LevelUpCelebrationModal } from "./LevelUpCelebrationModal";
-import { getFeaturesUnlockedAtLevel, isFeatureUnlockedForLevel, isFeatureUnlockedForUser, ROADMAP_CUSTOM_STORAGE_KEY, getAllRoadmapCustomContent } from "../constants/levelRoadmapData";
+import { getFeaturesUnlockedAtLevel } from "../constants/levelRoadmapData";
 import {
   Globe,
   Gift,
@@ -331,6 +330,7 @@ import { PedroVipExpiryModal } from "./PedroVipExpiryModal";
 import { Pedro3DMascot } from "./Pedro3DMascot";
 import { Pedro3DViewerModal } from "./Pedro3DViewerModal";
 import { ProfileCameraModal } from "./ProfileCameraModal";
+import { uploadImageToTelegram } from "../services/telegramStorageService";
 import { StudentHistoryModal } from "./StudentHistoryModal";
 import { AdminWhiteBoard } from "./AdminWhiteBoard";
 import { generateDailyRoutine } from "../utils/routineGenerator";
@@ -1203,54 +1203,10 @@ export const StudentDashboard: React.FC<Props> = ({
   const EVENT_MIN_LEVELS = { scoreBoost: 5, specialDiscount: 1, globalFreeAccess: 10, creditFree: 8, dailyLimitBoost: 3, themeStudio: 7, creditBonus: 1 } as const;
   const meetsEventLevel = (min: number) => _userLevel >= min;
 
-  // ── REAL-TIME ROADMAP CUSTOMIZATION & LEVEL OVERRIDE SYNC ──
-  const [roadmapRefreshTick, setRoadmapRefreshTick] = useState(0);
-  useEffect(() => {
-    const handleRoadmapUpdate = () => setRoadmapRefreshTick(t => t + 1);
-    window.addEventListener('nsta-roadmap-content-updated', handleRoadmapUpdate);
-
-    let unsubFs: (() => void) | undefined;
-    try {
-      if (db) {
-        unsubFs = onSnapshot(doc(db, 'system_settings', 'roadmap_content'), (snap) => {
-          if (snap.exists()) {
-            const cloudData = snap.data();
-            if (cloudData && typeof cloudData === 'object') {
-              const currentLocal = getAllRoadmapCustomContent();
-              const merged = { ...currentLocal, ...cloudData };
-              localStorage.setItem(ROADMAP_CUSTOM_STORAGE_KEY, JSON.stringify(merged));
-              setRoadmapRefreshTick(t => t + 1);
-            }
-          }
-        }, () => {});
-      }
-    } catch {}
-
-    return () => {
-      window.removeEventListener('nsta-roadmap-content-updated', handleRoadmapUpdate);
-      if (unsubFs) unsubFs();
-    };
-  }, []);
-
-  // ── DYNAMIC BOTTOM NAV & PROFILE ADMIN SUPPORT LOGIC ──
-  // User Rule:
-  // - Initially only Home & Profile exist (2 buttons).
-  // - Until a 3rd button unlocks: Roadmap is shown in Bottom Nav (and hidden from Top Bar).
-  // - When a 3rd button unlocks (count >= 3): Roadmap leaves Bottom Nav and appears in Top Bar (without background).
-  // - Until a 4th button unlocks: Admin Support is shown in Bottom Nav AND hidden from Profile Page.
-  // - When a 4th button unlocks (count >= 4): Admin Support leaves Bottom Nav and returns back to the Profile Page!
-  void roadmapRefreshTick;
-  const isUpdatesUnlocked = isFeatureUnlockedForUser('PRO_PLUS_PAGE', _userLevel, user.totalScore || 0, user.role);
-  const isCommunityUnlocked = isFeatureUnlockedForUser('COMMUNITY_OFFICIAL', _userLevel, user.totalScore || 0, user.role);
-  const isMcqHubUnlocked = isFeatureUnlockedForUser('MCQ_OFFICIAL_HUB', _userLevel, user.totalScore || 0, user.role);
-
-  let standardUnlockedTabsCount = 2; // Home + Profile base buttons
-  if (isUpdatesUnlocked) standardUnlockedTabsCount++;
-  if (isCommunityUnlocked) standardUnlockedTabsCount++;
-  if (isMcqHubUnlocked) standardUnlockedTabsCount++;
-
-  const shouldShowRoadmapInBottomNav = standardUnlockedTabsCount < 3;
-  const shouldShowAdminSupportInBottomNav = standardUnlockedTabsCount < 4;
+  // All tabs are permanently unlocked (Level Roadmap removed)
+  const isUpdatesUnlocked = true;
+  const isCommunityUnlocked = true;
+  const isMcqHubUnlocked = true;
 
   // Active Top Bar Effects (Custom user animation -> Admin configured Top Bar Effects -> Level fallback)
   const activeTopBarEffects = React.useMemo(() => {
@@ -3082,7 +3038,6 @@ export const StudentDashboard: React.FC<Props> = ({
   const [ttsScoreSessionKey, setTtsScoreSessionKey] = useState<string | null>(null);
   const [showFeatureLimitsModal, setShowFeatureLimitsModal] = useState(false);
   const [showLevelLeaderboard, setShowLevelLeaderboard] = useState(false);
-  const [showLevelRoadmapModal, setShowLevelRoadmapModal] = useState(false);
   const [showNotesFixTrackerModal, setShowNotesFixTrackerModal] = useState(false);
   const [levelUpCelebrationData, setLevelUpCelebrationData] = useState<{ newLevel: number; features: any[] } | null>(null);
   const lastRecordedLevelRef = useRef<number>(_userLevel);
@@ -12502,9 +12457,6 @@ export const StudentDashboard: React.FC<Props> = ({
     return groupedItems.map((group, gIdx) => {
       // Filter items that are hidden
       const visibleItems = group.items.filter((item) => {
-        if (item.featureId === 'REQUEST_CONTENT' && !isFeatureUnlockedForUser('CONTENT_DEMAND', _userLevel, user.totalScore || 0, user.role)) {
-          return false;
-        }
         if (item.featureId) {
           const access = getFeatureAccess(item.featureId);
           return !access.isHidden;
@@ -13045,8 +12997,6 @@ export const StudentDashboard: React.FC<Props> = ({
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {/* ── 1. MY ROUTINE CARD (ABOVE REVISION HUB & ANIMATES FIRST) ── */}
                         {isHomeSectionVisible('home_my_routine', settings) && (() => {
-                          const isRoutineUnlocked = isFeatureUnlockedForUser('MY_ROUTINE_TAB', _userLevel, user.totalScore || 0, user.role);
-                          if (!isRoutineUnlocked) return null;
                           const _rtBg  = settings?.homeMyRoutineCardBg || settings?.homeClass612CardBg || (tierTheme as any).cardBg || tierTheme.profileCardBg || '#ffffff';
                           const _rtBdr = settings?.homeMyRoutineCardBorder || settings?.homeClass612CardBorder || tierTheme.primary || '#2563eb';
                           const _rt3D  = _masterAll3D || (settings?.homeClass612Card3D ?? false);
@@ -13084,24 +13034,19 @@ export const StudentDashboard: React.FC<Props> = ({
                                               My Routine
                                             </h4>
                                             <p className="text-[11px] mt-0.5 font-medium leading-tight" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>
-                                              {isRoutineUnlocked ? 'Daily timetable & study target' : 'Unlocks at Level 2 (1000 XP)'}
+                                              Daily timetable & study target
                                             </p>
                                           </div>
                                         </div>
                                         <span
                                           className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0 flex items-center gap-1"
-                                          style={isRoutineUnlocked ? {
+                                          style={{
                                             background: `${_rtBdr}18`,
                                             color: _rtBdr,
                                             border: `1px solid ${_rtBdr}35`
-                                          } : {
-                                            background: 'rgba(245, 158, 11, 0.15)',
-                                            color: '#f59e0b',
-                                            border: '1px solid rgba(245, 158, 11, 0.35)'
                                           }}
                                         >
-                                          {!isRoutineUnlocked && <Lock className="w-2.5 h-2.5" />}
-                                          {isRoutineUnlocked ? 'Daily Planner' : 'Level 2 Unlock'}
+                                          Daily Planner
                                         </span>
                                       </div>
 
@@ -13136,8 +13081,6 @@ export const StudentDashboard: React.FC<Props> = ({
                       const _revBg  = settings?.homeClass612CardBg     || (tierTheme as any).cardBg || tierTheme.profileCardBg || '#ffffff';
                       const _revBdr = settings?.homeClass612CardBorder || tierTheme.primary || '#6366f1';
                       const _rev3D  = _masterAll3D || (settings?.homeClass612Card3D ?? false);
-                      const isRevHubUnlocked = isFeatureUnlockedForUser('REVISION_HUB', _userLevel, user.totalScore || 0, user.role);
-                      if (!isRevHubUnlocked) return null;
                       return (
                         <div id="home-revision-card" className="w-full home-revhub-card-anim flex flex-col">
                           <button
@@ -13172,24 +13115,19 @@ export const StudentDashboard: React.FC<Props> = ({
                                       Revision Hub
                                     </h4>
                                     <p className="text-[11px] mt-0.5 font-medium leading-tight" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>
-                                      {isRevHubUnlocked ? 'Spaced repetition & memory drill' : 'Unlocks at Level 3 (2500 XP)'}
+                                      Spaced repetition & memory drill
                                     </p>
                                   </div>
                                 </div>
                                 <span
                                   className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0 flex items-center gap-1"
-                                  style={isRevHubUnlocked ? {
+                                  style={{
                                     background: `${_revBdr}18`,
                                     color: _revBdr,
                                     border: `1px solid ${_revBdr}35`
-                                  } : {
-                                    background: 'rgba(245, 158, 11, 0.15)',
-                                    color: '#f59e0b',
-                                    border: '1px solid rgba(245, 158, 11, 0.35)'
                                   }}
                                 >
-                                  {!isRevHubUnlocked && <Lock className="w-2.5 h-2.5" />}
-                                  {isRevHubUnlocked ? 'Memory Engine' : 'Level 3 Unlock'}
+                                  Memory Engine
                                 </span>
                               </div>
 
@@ -15753,10 +15691,9 @@ export const StudentDashboard: React.FC<Props> = ({
            </div>
 
           {/* ── ADMIN SUPPORT (SAB SE NICHE PROFILE PAGE ME) ── */}
-          {/* Jab tak 4th button bottom nav me nahi aata, Admin Support bottom nav me rehta hai aur Profile page se hidden rehta hai. 4th button aate hi wapis Profile page par aa jata hai! */}
-          {!shouldShowAdminSupportInBottomNav && (
-            <div className="mx-3 sm:mx-4 mb-8">
-              <button
+          {/* ── ADMIN SUPPORT CARD ON PROFILE PAGE ── */}
+          <div className="mx-3 sm:mx-4 mb-8">
+            <button
                 type="button"
                 onClick={() => {
                   hapticStrong();
@@ -15822,7 +15759,6 @@ export const StudentDashboard: React.FC<Props> = ({
                 </div>
               </button>
             </div>
-          )}
 
           {/* ── RARE MYTHIC LOGOUT CARD (SAB SE LAST ME PROFILE PAGE ME) ── */}
           {(settings?.isLogoutEnabled !== false || user.role === 'ADMIN' || isImpersonating) && (
@@ -16167,10 +16103,6 @@ export const StudentDashboard: React.FC<Props> = ({
   };
 
   const renderBottomNav = (inProjectorOverlay: boolean = false) => {
-    // When Level Roadmap is open, hide bottom navigation completely
-    if (showLevelRoadmapModal) {
-      return null;
-    }
     if (!inProjectorOverlay && (flashcardMcqs || compMcqSession)) {
       return null;
     }
@@ -16562,77 +16494,11 @@ export const StudentDashboard: React.FC<Props> = ({
             ];
 
             const baseStandardTabs = tabs.filter((t) => {
-              if (t.id === 'UPDATES' && !isFeatureUnlockedForUser('PRO_PLUS_PAGE', _userLevel, user.totalScore || 0, user.role)) {
-                return false;
-              }
-              if (t.id === 'COMMUNITY_FEED' && !isFeatureUnlockedForUser('COMMUNITY_OFFICIAL', _userLevel, user.totalScore || 0, user.role)) {
-                return false;
-              }
-              if (t.id === 'COMMUNITY_MCQ' && !isFeatureUnlockedForUser('MCQ_OFFICIAL_HUB', _userLevel, user.totalScore || 0, user.role)) {
-                return false;
-              }
               const access = t.featureId
                 ? getFeatureAccess(t.featureId)
                 : { hasAccess: true, isHidden: false };
               return !access.isHidden;
             });
-
-            // ── DYNAMIC BOTTOM NAV SLOTS (ROADMAP & ADMIN SUPPORT) ──
-            // 1. Roadmap is in bottom nav until a 3rd button unlocks (shouldShowRoadmapInBottomNav).
-            //    When 3rd button arrives, Roadmap leaves bottom nav and goes back to original place (topbar trophy button).
-            // 2. Admin Support is in bottom nav until a 4th button unlocks (shouldShowAdminSupportInBottomNav).
-            //    When 4th button arrives, Admin Support leaves bottom nav and returns to Profile page!
-            const roadmapTab = {
-              id: "ROADMAP" as any,
-              label: "Roadmap",
-              Icon: Trophy,
-              filledOnActive: true,
-              activeColor: "#f59e0b",
-              isActive: showLevelRoadmapModal,
-              onClick: () => {
-                try { stopSpeech(); } catch (_) {}
-                hapticMedium();
-                setShowLevelRoadmapModal(true);
-              },
-            };
-
-            const adminSupportTab = {
-              id: "ADMIN_SUPPORT" as any,
-              label: "Support",
-              Icon: Headphones,
-              filledOnActive: true,
-              activeColor: "#10b981",
-              isActive: !showUpdatesPage && !showStarredPage && showChat && chatMode === 'SUPPORT',
-              onClick: () => {
-                try { stopSpeech(); } catch (_) {}
-                setSpeakingId(null);
-                setFlashcardMcqs(null);
-                setHwActiveHwId(null);
-                setHwImmersive(false);
-                setLucentNoteViewer(null);
-                setLucentImmersive(false);
-                setIsLandscapeUiHidden(false);
-                setIsTopBarHidden(false);
-                if (contentViewStep === "PLAYER") {
-                  setContentViewStep("CHAPTER");
-                }
-                setShowCompareView(false);
-                setShowRevisionHubScreen(false);
-                setShowUpdatesPage(false);
-                setShowMyRoutine(false);
-                setShowDailyEventPage(false);
-                setShowWhatsAppChatModal(false);
-                if (showCommunityStarsPage) {
-                  try { stopProfileStarRead(); } catch (_) {}
-                  setShowCommunityStarsPage(false);
-                }
-                try { stopProfileStarRead(); } catch (_) {}
-                setShowStarredPage(false);
-                hapticStrong();
-                setChatMode('SUPPORT');
-                setShowChat(true);
-              },
-            };
 
             const homeTab = baseStandardTabs[0];
             const profileTab = baseStandardTabs[baseStandardTabs.length - 1];
@@ -16641,8 +16507,6 @@ export const StudentDashboard: React.FC<Props> = ({
             const visibleTabs = [
               homeTab,
               ...middleTabs,
-              ...(shouldShowRoadmapInBottomNav ? [roadmapTab] : []),
-              ...(shouldShowAdminSupportInBottomNav ? [adminSupportTab] : []),
               profileTab,
             ].filter(Boolean);
             const totalVisible = Math.max(visibleTabs.length, 1);
@@ -16840,7 +16704,7 @@ export const StudentDashboard: React.FC<Props> = ({
       {/* NEW GLOBAL TOP BAR */}
       <div
         id="top-banner-container"
-        className={`sticky top-0 z-[100] w-full flex flex-col relative transition-all duration-150 ease-in-out overflow-hidden ${isFullscreenMode || Boolean(mathViewerEntry) || showLevelRoadmapModal ? "!hidden !h-0 overflow-hidden pointer-events-none" : ""} ${(isTopBarHidden || isLandscapeUiHidden || showWhatsAppChatModal || showNstaQuickWheel || showLevelRoadmapModal || activeTab === 'STORE' || activeTab === 'CUSTOM_PAGE' || activeTab === 'PROFILE' || activeTab === 'UNIVERSAL_VIDEO') ? "-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none" : "translate-y-0 opacity-100"}`}
+        className={`sticky top-0 z-[100] w-full flex flex-col relative transition-all duration-150 ease-in-out overflow-hidden ${isFullscreenMode || Boolean(mathViewerEntry) ? "!hidden !h-0 overflow-hidden pointer-events-none" : ""} ${(isTopBarHidden || isLandscapeUiHidden || showWhatsAppChatModal || showNstaQuickWheel || activeTab === 'STORE' || activeTab === 'CUSTOM_PAGE' || activeTab === 'PROFILE' || activeTab === 'UNIVERSAL_VIDEO') ? "-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none" : "translate-y-0 opacity-100"}`}
         style={{ background: activeTopBarGrad }}
       >
         <TopBarEffectsLayer effects={activeTopBarEffects} />
@@ -17516,18 +17380,6 @@ export const StudentDashboard: React.FC<Props> = ({
                       )}
                     </button>
                   )}
-
-                  {/* Level Roadmap Journey Button — Only visible in Top Bar Row 1 when removed from Bottom Nav, icon only & transparent background */}
-                  {!shouldShowRoadmapInBottomNav && (
-                    <button
-                      id="topbar-level-roadmap-btn"
-                      onClick={() => setShowLevelRoadmapModal(true)}
-                      className="relative p-1.5 bg-transparent hover:bg-white/5 border-none shadow-none text-amber-300 shrink-0 active:scale-95 transition-all cursor-pointer"
-                      title="Level Unlock Roadmap — Dekhein kahan kya unlock hone wala hai"
-                    >
-                      <Trophy size={17} className="text-amber-400 hover:text-amber-300 transition-colors shrink-0" />
-                    </button>
-                  )}
                 </>
               );
             })()}
@@ -17695,10 +17547,10 @@ export const StudentDashboard: React.FC<Props> = ({
                         const pendingRewardsCount = (user.inbox || []).filter(m => (m.type === 'REWARD' || m.type === 'GIFT') && !m.isClaimed && (!m.expiresAt || new Date(m.expiresAt).getTime() > Date.now())).length + pendingCreditSub + pendingDiamondSub;
                         const totalMailBadge = unreadCount + unreadNotifCount + _newContentCount + pendingRewardsCount;
                         const pedroTopBarState = PedroEngine.getTopBarVisibility(user);
-                        const isMailboxUnlocked = isFeatureUnlockedForUser('MAILBOX_INBOX', _userLevel, user.totalScore || 0, user.role);
-                        const isScoreHistoryUnlocked = isFeatureUnlockedForUser('SCORE_HISTORY', _userLevel, user.totalScore || 0, user.role);
-                        const isNotesTrackerUnlocked = isFeatureUnlockedForUser('NOTES_FIX_TRACKER', _userLevel, user.totalScore || 0, user.role);
-                        const isPedroUnlocked = isFeatureUnlockedForUser('PEDRO_AI_ASSISTANT', _userLevel, user.totalScore || 0, user.role);
+                        const isMailboxUnlocked = true;
+                        const isScoreHistoryUnlocked = true;
+                        const isNotesTrackerUnlocked = true;
+                        const isPedroUnlocked = true;
 
                         const items: ListItem[] = [
                           ...(isMailboxUnlocked ? (pedroTopBarState.showMailboxButton ? [{
@@ -17851,19 +17703,15 @@ export const StudentDashboard: React.FC<Props> = ({
             );
           })()}
 
-          {/* Middle: Merged XP status bar with glowing Bindu, shimmer & Total XP button (Unlocks at Level 1 (ii)) */}
-          {isFeatureUnlockedForUser('LEVEL_STATUS_BAR', _userLevel, user.totalScore || 0, user.role) ? (
-            <TopBarRow2XpBar
-              user={user}
-              settings={settings}
-              activeTab={activeTab}
-              levelAnimOff={levelAnimOff}
-              isExpanded={false}
-              onOpenScorePanel={() => setShowScorePanel(true)}
-            />
-          ) : (
-            <div className="flex-1" />
-          )}
+          {/* Middle: Merged XP status bar with glowing Bindu, shimmer & Total XP button */}
+          <TopBarRow2XpBar
+            user={user}
+            settings={settings}
+            activeTab={activeTab}
+            levelAnimOff={levelAnimOff}
+            isExpanded={false}
+            onOpenScorePanel={() => setShowScorePanel(true)}
+          />
 
           {/* Right: Rotating button (Store -> Credits -> Diamonds) switching every 3 seconds */}
           <div className="flex items-center shrink-0 overflow-hidden max-w-[104px] opacity-100 scale-100">
@@ -22236,9 +22084,20 @@ export const StudentDashboard: React.FC<Props> = ({
           userName={user.name}
           onSavePhoto={async (photoDataUrl: string) => {
             try {
+              let finalPhotoUrl = photoDataUrl;
+              try {
+                finalPhotoUrl = await uploadImageToTelegram(
+                  photoDataUrl,
+                  `student_${user.id || Date.now()}.jpg`,
+                  'NSTA Student Profile Avatar'
+                );
+              } catch (tgErr) {
+                console.warn('Telegram profile photo upload fallback to dataUrl:', tgErr);
+              }
+
               await handleUserUpdate({
                 ...user,
-                photoURL: photoDataUrl,
+                photoURL: finalPhotoUrl,
                 avatarChoice: 'custom',
               });
               showAlert("Aapki profile photo update ho gayi hai! 📸", "SUCCESS");
@@ -22660,10 +22519,6 @@ export const StudentDashboard: React.FC<Props> = ({
           !showMcqCommunityPopup &&
           !showWhatsAppChatModal;
 
-        if (isHomePage && !isFeatureUnlockedForUser('FEATURE_WHEEL', _userLevel, user.totalScore || 0, user.role)) {
-          return null;
-        }
-
         // Button is active on Home page, Pro page, MCQ page, Community page, Routine page, Revision Hub, NstA Messenger, etc.
         const isBarsHidden = isLandscapeUiHidden || isTopBarHidden || !forceShowBottomNav;
 
@@ -22679,36 +22534,18 @@ export const StudentDashboard: React.FC<Props> = ({
             ? (isChatOrMcq ? 'bottom-[74px]' : 'bottom-[76px]')
             : 'bottom-5 sm:bottom-6';
 
-        // Level Roadmap rule: On home page, hide the NSTA Fab until Feature Wheel is unlocked at Level 1 (iii)
-        const isFeatureWheelUnlocked = isFeatureUnlockedForUser('FEATURE_WHEEL', _userLevel, user.totalScore || 0, user.role);
-        const isPedroUnlocked = isFeatureUnlockedForUser('PEDRO_AI_ASSISTANT', _userLevel, user.totalScore || 0, user.role);
-        if (isHomePage && !isFeatureWheelUnlocked && !isPedroUnlocked) {
-          return null;
-        }
-
         const handleButtonClick = () => {
           if (nstaFabIsLongPressRef.current) {
             nstaFabIsLongPressRef.current = false;
             return;
           }
           try { hapticMedium(); } catch (_) {}
-          // Note: Tap no longer restores/summons Pedro (Pedro is summoned strictly by holding/daba ke rakhna)
 
           if (isHomePage) {
-            // Home page par NstA button tap se feature wheel open hoga (Unlocks at Level 1 (iii))
-            if (!isFeatureUnlockedForUser('FEATURE_WHEEL', _userLevel, user.totalScore || 0, user.role)) {
-              setHomeToast({
-                type: 'CREDIT',
-                message: '🔒 Feature Wheel Level 1 (iii) par unlock hoga! (600 XP)',
-                subMessage: 'Level 1 (iii) par pahunchkar NSTA Quick Wheel access karein.'
-              });
-              setShowLevelRoadmapModal(true);
-            } else {
-              setShowNstaQuickWheel(true);
-            }
+            // Home page par NstA button tap se feature wheel open hoga
+            setShowNstaQuickWheel(true);
           } else {
             // Pro page, MCQ page, Community, Routine, Revision Hub, NstA Messenger sab par:
-            // "top baar hide aur button baar hide aur unhide, ek tap karne pe hide dusre pe unhide"
             toggleImmersiveStudyMode();
           }
         };
@@ -22722,15 +22559,6 @@ export const StudentDashboard: React.FC<Props> = ({
           nstaFabLongPressTimerRef.current = setTimeout(() => {
             nstaFabIsLongPressRef.current = true;
             try { hapticStrong(); } catch (_) {}
-            if (!isFeatureUnlockedForUser('PEDRO_AI_ASSISTANT', _userLevel, user.totalScore || 0, user.role)) {
-              setHomeToast({
-                type: 'CREDIT',
-                message: '🔒 Pedro AI Assistant Level 3 (v) (6,500 XP) par unlock hoga!',
-                subMessage: 'Level 3 (v) par Pedro unlock hokar aapka smart AI study partner banega.'
-              });
-              setShowLevelRoadmapModal(true);
-              return;
-            }
             setIsPedroHidden(false);
             if (typeof window !== 'undefined') {
               localStorage.removeItem('nst_pedro_hidden');
@@ -29837,7 +29665,7 @@ RULES:
               currentPageTitle={pedroPageMeta.title}
               currentPageIcon={pedroPageMeta.icon}
               customRobotName={settings?.pedroConfig?.robotName}
-              hidden={isPedroHidden || !isFeatureUnlockedForUser('PEDRO_AI_ASSISTANT', _userLevel, user.totalScore || 0, user.role) || !!mathViewerEntry || (!!lucentNoteViewer && lucentImmersive)}
+              hidden={isPedroHidden || !!mathViewerEntry || (!!lucentNoteViewer && lucentImmersive)}
               guidePowerEnabled={settings?.pedroConfig?.guidePowerEnabled !== false && settings?.pedroConfig?.enabled !== false}
               userName={user?.name || (user as any)?.displayName || 'Student'}
               user={user}
@@ -32537,59 +32365,6 @@ Explanation: Yahan explanation...`}</p>
         />
       )}
 
-      {/* ── LEVEL ROADMAP MODAL (WITH CLOUDINARY MEDIA & FULL ROADMAP PLAN) ── */}
-      <LevelRoadmapModal
-        isOpen={showLevelRoadmapModal}
-        onClose={() => setShowLevelRoadmapModal(false)}
-        userLevel={_userLevel}
-        userXp={user.totalScore || 0}
-        userRole={user.role}
-        onOpenAdminManager={(featId) => {
-          try {
-            sessionStorage.setItem('nst_admin_initial_tab', 'ROADMAP_MANAGER');
-            if (featId) {
-              sessionStorage.setItem('nst_admin_roadmap_feature_id', featId);
-            }
-          } catch {}
-          if (onNavigate) {
-            onNavigate('ADMIN_DASHBOARD' as any);
-          }
-        }}
-        onNavigateToFeature={(featId) => {
-          if (featId === 'DOT_MENU_3') {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-          } else if (featId === 'REDEEM_CODE') {
-            onTabChange('STORE');
-          } else if (featId === 'NOTES_FIX_BUTTON') {
-            onTabChange('HOME');
-          } else if (featId === 'LEVEL_STATUS_BAR') {
-            setShowScorePanel(true);
-          } else if (featId === 'FEATURE_WHEEL') {
-            setShowNstaQuickWheel(true);
-          } else if (featId === 'MY_ROUTINE_TAB' || featId === 'ROUTINE_SUBJECT_PAGE' || featId === 'MY_SYLLABUS_PAGE') {
-            setShowMyRoutine(true);
-          } else if (featId === 'MAILBOX_INBOX') {
-            setShowInbox(true);
-          } else if (featId === 'REVISION_HUB') {
-            setShowRevisionHubScreen(true);
-          } else if (featId === 'COMMUNITY_OFFICIAL' || featId === 'COMMUNITY_BUG_REPORT' || featId === 'COMMUNITY_DOUBT_PAGE' || featId === 'COMMUNITY_POSTS' || featId === 'NSTA_MESSENGER') {
-            setShowChat(true);
-          } else if (featId === 'PRO_PLUS_PAGE' || featId === 'STUDY_ROOM' || featId === 'EVENTS_PAGE_PRO') {
-            setShowDailyEventPage(true);
-          } else if (featId === 'NOTES_FIX_TRACKER') {
-            setShowNotesFixTrackerModal(true);
-          } else if (featId === 'SCORE_HISTORY') {
-            setShowScoreHistoryDirect(true);
-          } else if (featId === 'PEDRO_AI_ASSISTANT') {
-            setShowPedro(true);
-          } else if (featId === 'CONTENT_DEMAND') {
-            setShowDemandModal(true);
-          } else if (featId === 'MCQ_OFFICIAL_HUB' || featId === 'MCQ_BATTLE') {
-            onTabChange('MCQ');
-          }
-        }}
-      />
-
       {/* ── NOTES FIX TRACKER MODAL ── */}
       <NotesFixTrackerModal
         isOpen={showNotesFixTrackerModal}
@@ -32597,7 +32372,6 @@ Explanation: Yahan explanation...`}</p>
         user={user}
         userLevel={_userLevel}
         userXp={user.totalScore || 0}
-        onOpenRoadmap={() => setShowLevelRoadmapModal(true)}
       />
 
       {/* ── LEVEL UP CELEBRATION MODAL ── */}
@@ -32607,10 +32381,6 @@ Explanation: Yahan explanation...`}</p>
           newLevel={levelUpCelebrationData.newLevel}
           unlockedFeatures={levelUpCelebrationData.features}
           onClose={() => setLevelUpCelebrationData(null)}
-          onOpenRoadmap={() => setShowLevelRoadmapModal(true)}
-          onExploreFeature={(featId) => {
-            setShowLevelRoadmapModal(true);
-          }}
         />
       )}
     </div>

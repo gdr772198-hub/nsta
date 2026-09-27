@@ -4,6 +4,7 @@ import { Image as ImageIcon, Video, Type, Send, Trash2, Calendar, User as UserIc
 import { CustomAlert, CustomConfirm } from './CustomDialogs';
 import { DirectUploadButton } from './DirectUploadButton';
 import { getOptimizedVideoUrl } from '../services/cloudinaryService';
+import { uploadImageToTelegram } from '../services/telegramStorageService';
 
 interface Props {
   user: User;
@@ -32,18 +33,15 @@ export const IICPage: React.FC<Props> = ({ user, onBack }) => {
     }
   }, []);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (file) {
-          if (file.size > 500000) { // Limit to 500KB for LocalStorage safety
-              setAlertConfig({isOpen: true, message: "Image too large! Please choose an image under 500KB."});
-              return;
+          try {
+              const tgUrl = await uploadImageToTelegram(file, `iic_${Date.now()}.jpg`, title || 'IIC Announcement');
+              setImageBase64(tgUrl);
+          } catch (err: any) {
+              setAlertConfig({isOpen: true, message: "Photo upload fail ho gayi: " + (err?.message || "Error")});
           }
-          const reader = new FileReader();
-          reader.onloadend = () => {
-              setImageBase64(reader.result as string);
-          };
-          reader.readAsDataURL(file);
       }
   };
 
@@ -260,7 +258,7 @@ export const IICPage: React.FC<Props> = ({ user, onBack }) => {
 
                       {post.type === 'VIDEO' && (
                           <div className="aspect-video rounded-xl overflow-hidden bg-black">
-                              {post.content.includes('cloudinary.com') || /\.(mp4|webm|mov|m4v|mkv)(\?.*)?$/i.test(post.content) ? (
+                              {post.content.includes('telegram') || post.content.includes('/api/telegram/') || post.content.includes('cloudinary.com') || /\.(mp4|webm|mov|m4v|mkv)(\?.*)?$/i.test(post.content) ? (
                                   <video
                                       src={getOptimizedVideoUrl(post.content)}
                                       controls

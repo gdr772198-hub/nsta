@@ -54,7 +54,6 @@ import { uploadToCloudinary, getOptimizedVideoUrl } from '../services/cloudinary
 import { ImageCropper } from './ImageCropper';
 import { User } from '../types';
 import { useAppTheme } from '../utils/themeContext';
-import { isFeatureUnlockedForUser } from '../constants/levelRoadmapData';
 import { getLevelInfo } from '../utils/levelSystem';
 
 export interface PostComment {
@@ -138,15 +137,14 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
     user.role?.toLowerCase() === 'admin' ||
     user.role?.toLowerCase() === 'subadmin';
 
-  const userLvl = user.level || getLevelInfo(user.totalScore || 0).level || 1;
-  const userXp = user.totalScore || 0;
-  const isBugReportUnlocked = isFeatureUnlockedForUser('COMMUNITY_BUG_REPORT', userLvl, userXp, user.role);
-  const isDoubtUnlocked = isFeatureUnlockedForUser('COMMUNITY_DOUBT_PAGE', userLvl, userXp, user.role);
-  const isPostsUnlocked = isFeatureUnlockedForUser('COMMUNITY_POSTS', userLvl, userXp, user.role);
+  // All community features are permanently unlocked (Level Roadmap removed)
+  const isBugReportUnlocked = true;
+  const isDoubtUnlocked = true;
+  const isPostsUnlocked = true;
 
   const [posts, setPosts] = useState<CommunityPost[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [activeFilter, setActiveFilter] = useState<FilterType>(initialFilter || (!isPostsUnlocked && user.role !== 'ADMIN' ? 'OFFICIAL' : 'ALL'));
+  const [activeFilter, setActiveFilter] = useState<FilterType>(initialFilter || 'ALL');
   const [searchQuery, setSearchQuery] = useState('');
 
   // Post Creator State

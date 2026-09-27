@@ -52,7 +52,6 @@ import { ReferralPrizesManager } from './admin/ReferralPrizesManager';
 import { PlanComparisonManager } from './admin/PlanComparisonManager';
 import { PedroAdminManager } from './admin/PedroAdminManager';
 import { AdminMathManager } from './AdminMathManager';
-import { AdminRoadmapManager } from './admin/AdminRoadmapManager';
 // @ts-ignore
 import JSZip from 'jszip';
 import { Document, Page, pdfjs } from 'react-pdf';
@@ -178,8 +177,7 @@ type AdminTab =
   | 'COACHING_CENTRES' // 🏫 Create/Assign/Subscription — Super Admin
   | 'COMPETITION_MCQ_MANAGER' // MCQ Practice Manager for Competition Books
   | 'MATH_MANAGER' // 📐 Math Master Manager (Book/Notes/Solution/MCQ)
-  | 'PEDRO_MANAGER' // 🤖 Pedro AI Robot Guide Master
-  | 'ROADMAP_MANAGER'; // 🗺️ Cloudinary Video Teaser & Level Roadmap Manager
+  | 'PEDRO_MANAGER'; // 🤖 Pedro AI Robot Guide Master
 
 interface ContentConfig {
     freeLink?: string;
@@ -5063,13 +5061,6 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                   <Building2 size={14} /> Coaching Super Admin
                               </button>
                           )}
-
-                          <button
-                              onClick={() => setActiveTab('ROADMAP_MANAGER')}
-                              className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-[10px] uppercase tracking-widest font-black text-slate-950 bg-gradient-to-b from-amber-400 to-yellow-500 shadow-md shadow-amber-500/25 hover:from-amber-300 hover:to-yellow-400 transition-all cursor-pointer"
-                          >
-                              <Trophy size={14} /> Roadmap Media &amp; HTML/CSS Studio
-                          </button>
                       </div>
                   </div>
               </div>
@@ -22267,22 +22258,6 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                   </div>
               </div>
           </div>
-      )}
-
-      {/* 🗺️ CLOUDINARY VIDEO TEASER & LEVEL ROADMAP MANAGER */}
-      {activeTab === 'ROADMAP_MANAGER' && (
-        <div className="bg-slate-950 p-4 sm:p-6 rounded-3xl shadow-sm border border-slate-800 animate-in slide-in-from-right space-y-4">
-          <div className="flex items-center gap-4 border-b border-white/10 pb-4">
-            <button onClick={() => setActiveTab('DASHBOARD')} className="bg-slate-800 p-2 rounded-full hover:bg-slate-700 text-white">
-              <ArrowLeft size={20} />
-            </button>
-            <div>
-              <h3 className="text-xl font-black text-white">Level Roadmap &amp; Cloudinary Video Manager</h3>
-              <p className="text-xs text-slate-400 mt-0.5">Cloudinary (ox4kpil0) par teaser clips upload karein aur Level features preview set karein</p>
-            </div>
-          </div>
-          <AdminRoadmapManager />
-        </div>
       )}
 
       {/* 🏫 COACHING CENTRES — Create / Assign Admin / Subscription */}

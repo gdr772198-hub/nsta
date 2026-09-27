@@ -6,14 +6,18 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize2,
+  Minimize2,
   Moon,
   Sun,
   Crown,
   Lock,
   ArrowLeft,
   ExternalLink,
+  Smartphone,
+  RotateCcw,
 } from 'lucide-react';
 import { PlayerWatermark } from './PlayerWatermark';
+import { resolveTelegramUrl } from '../services/telegramStorageService';
 import {
   downloadAndSaveOfflineMedia,
   isMediaOffline,
@@ -51,6 +55,7 @@ export const ModernPdfViewer: React.FC<ModernPdfViewerProps> = ({
   const [zoomLevel, setZoomLevel] = useState(100);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [currentViewUrl, setCurrentViewUrl] = useState(pdfUrl);
+  const [is916Mobile, setIs916Mobile] = useState(false);
 
   // Download state
   const [isDownloaded, setIsDownloaded] = useState(false);
@@ -64,7 +69,7 @@ export const ModernPdfViewer: React.FC<ModernPdfViewerProps> = ({
   const userTier = (user?.subscriptionTier || user?.subscriptionLevel || 'FREE').toUpperCase();
   const canDownloadPdf = isAdmin || userTier === 'BASIC' || userTier === 'ULTRA';
 
-  const itemId = mediaId || `pdf_${encodeURIComponent(pdfUrl).slice(0, 32)}`;
+  const itemId = mediaId || `pdf_${encodeURIComponent(pdfUrl || '').slice(0, 32)}`;
 
   useEffect(() => {
     let active = true;
@@ -87,13 +92,15 @@ export const ModernPdfViewer: React.FC<ModernPdfViewerProps> = ({
           }
           setCurrentViewUrl(res.url);
         }
+      } else {
+        if (active) setCurrentViewUrl(pdfUrl);
       }
     })();
 
     return () => {
       active = false;
     };
-  }, [itemId, isOfflinePlayback, user]);
+  }, [itemId, isOfflinePlayback, user, pdfUrl]);
 
   const handleDownload = async () => {
     if (!canDownloadPdf) {
@@ -140,17 +147,31 @@ export const ModernPdfViewer: React.FC<ModernPdfViewerProps> = ({
 
     // Google Drive URL format
     if (url.includes('drive.google.com')) {
-      const match = url.match(/drive\.google\.com\/file\/d\/([^/?#]+)/);
-      if (match) {
+      const match = url.match(/drive\.google\.com\/file\/d\/([^/?#]+)/) || url.match(/[?&]id=([^&#]+)/);
+      if (match && match[1]) {
         return `https://drive.google.com/file/d/${match[1]}/preview?rm=minimal`;
       }
     }
+
+    // Direct PDF URLs (Telegram, Cloudinary, .pdf, external server)
+    const cleanLower = url.toLowerCase();
+    const resolvedUrl = resolveTelegramUrl(url);
+
+    // If it's a Telegram stored PDF, load directly via safe proxy
+    if (resolvedUrl.startsWith('/api/telegram/file') || cleanLower.includes('telegram')) {
+      return resolvedUrl;
+    }
+
+    if (cleanLower.includes('.pdf') || url.includes('/upload/') || url.includes('cloudinary.com')) {
+      return `https://docs.google.com/viewer?url=${encodeURIComponent(url)}&embedded=true`;
+    }
+
     return url;
   };
 
   if (accessBlocked) {
     return (
-      <div className="w-full bg-slate-950 rounded-2xl p-6 text-center text-white border border-rose-900/50 shadow-2xl relative overflow-hidden min-h-[300px] flex flex-col items-center justify-center">
+      <div className="w-full bg-slate-950 rounded-2xl p-6 text-center text-white border border-rose-900/50 shadow-2xl relative overflow-hidden min-h-[350px] flex flex-col items-center justify-center">
         <PlayerWatermark appLogo={appLogo} appName={appName} />
         <div className="w-14 h-14 rounded-full bg-rose-600/20 border border-rose-500/40 flex items-center justify-center mb-3">
           <Lock size={28} className="text-rose-400" />
@@ -170,21 +191,32 @@ export const ModernPdfViewer: React.FC<ModernPdfViewerProps> = ({
   const renderedUrl = formatPdfUrl(currentViewUrl);
 
   return (
-    <div className={`relative w-full rounded-2xl overflow-hidden border shadow-2xl flex flex-col h-[520px] sm:h-[600px] select-none transition-colors ${
-      isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200'
-    }`}>
+    <div
+      className={`relative w-full flex flex-col select-none transition-all duration-300 ${
+        is916Mobile
+          ? 'fixed inset-0 z-[99999] h-[100dvh] w-full rounded-none bg-slate-950'
+          : `rounded-2xl overflow-hidden border shadow-2xl flex-1 min-h-[80vh] h-[85vh] sm:min-h-[720px] ${
+              isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200'
+            }`
+      }`}
+    >
       {/* ── Official Semi-Transparent Logo Watermark ── */}
       <PlayerWatermark appLogo={appLogo} appName={appName} position="top-right" />
 
       {/* Header Toolbar */}
-      <div className={`p-3 flex items-center justify-between border-b transition-colors z-20 pr-24 ${
-        isDarkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-800'
-      }`}>
+      <div
+        className={`p-2.5 sm:p-3 flex items-center justify-between border-b transition-colors z-20 pr-24 ${
+          isDarkMode || is916Mobile
+            ? 'bg-slate-900 border-slate-800 text-white'
+            : 'bg-white border-slate-200 text-slate-800'
+        }`}
+      >
         <div className="flex items-center gap-2 min-w-0">
           {onBack && (
             <button
-              onClick={onBack}
-              className="p-1.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 transition active:scale-90"
+              onClick={is916Mobile ? () => setIs916Mobile(false) : onBack}
+              className="p-1.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-400 hover:text-white transition active:scale-90"
+              title="Go Back"
             >
               <ArrowLeft size={16} />
             </button>
@@ -197,25 +229,41 @@ export const ModernPdfViewer: React.FC<ModernPdfViewerProps> = ({
         </div>
 
         {/* Toolbar Controls */}
-        <div className="flex items-center gap-2">
-          {/* Zoom controls */}
-          <div className="hidden sm:flex items-center gap-1 bg-slate-200 dark:bg-slate-800 px-2 py-1 rounded-lg text-xs font-bold">
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Zoom controls (Compact & works on Mobile) */}
+          <div className="flex items-center gap-0.5 bg-slate-200 dark:bg-slate-800 px-1.5 py-1 rounded-lg text-xs font-bold">
             <button
               onClick={() => setZoomLevel((z) => Math.max(70, z - 15))}
-              className="hover:text-indigo-500 transition"
+              className="hover:text-indigo-500 p-0.5 transition"
               title="Zoom Out"
             >
               <ZoomOut size={13} />
             </button>
-            <span className="font-mono text-[10px] min-w-[32px] text-center">{zoomLevel}%</span>
+            <span className="font-mono text-[10px] min-w-[28px] text-center">{zoomLevel}%</span>
             <button
               onClick={() => setZoomLevel((z) => Math.min(160, z + 15))}
-              className="hover:text-indigo-500 transition"
+              className="hover:text-indigo-500 p-0.5 transition"
               title="Zoom In"
             >
               <ZoomIn size={13} />
             </button>
           </div>
+
+          {/* 9:16 Full Mobile Screen Toggle */}
+          <button
+            onClick={() => setIs916Mobile((prev) => !prev)}
+            className={`p-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition active:scale-95 ${
+              is916Mobile
+                ? 'bg-indigo-600 text-white shadow-md'
+                : 'bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200'
+            }`}
+            title={is916Mobile ? 'Normal View' : '9:16 Mobile Full Screen'}
+          >
+            {is916Mobile ? <Minimize2 size={14} /> : <Smartphone size={14} />}
+            <span className="text-[10px] hidden xs:inline font-black">
+              {is916Mobile ? 'Standard' : '9:16 Full'}
+            </span>
+          </button>
 
           {/* Dark / Light Reader Mode */}
           <button
@@ -225,6 +273,19 @@ export const ModernPdfViewer: React.FC<ModernPdfViewerProps> = ({
           >
             {isDarkMode ? <Sun size={14} className="text-amber-400" /> : <Moon size={14} />}
           </button>
+
+          {/* Open Original PDF in New Tab */}
+          {pdfUrl && (
+            <a
+              href={pdfUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="p-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 hover:text-indigo-400 transition"
+              title="Open Original in New Tab"
+            >
+              <ExternalLink size={14} />
+            </a>
+          )}
 
           {/* In-App Offline Download Button */}
           <div>
@@ -239,22 +300,22 @@ export const ModernPdfViewer: React.FC<ModernPdfViewerProps> = ({
             ) : (
               <button
                 onClick={handleDownload}
-                className={`flex items-center gap-1 text-[10px] font-black px-2.5 py-1 rounded-full transition active:scale-95 shadow ${
+                className={`flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-full transition active:scale-95 shadow ${
                   canDownloadPdf
                     ? 'bg-rose-600 text-white hover:bg-rose-500'
                     : 'bg-amber-500/20 text-amber-600 dark:text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
                 }`}
               >
                 {canDownloadPdf ? <Download size={11} /> : <Crown size={11} />}
-                {canDownloadPdf ? 'Save Offline' : 'Basic / Ultra'}
+                <span className="hidden xs:inline">{canDownloadPdf ? 'Save Offline' : 'Basic/Ultra'}</span>
               </button>
             )}
           </div>
         </div>
       </div>
 
-      {/* Embedded Document Frame */}
-      <div className="flex-1 relative overflow-auto bg-slate-900/5 dark:bg-black flex items-center justify-center">
+      {/* Embedded Document Frame (9:16 Full Height / Fill Container) */}
+      <div className="flex-1 relative overflow-auto bg-slate-900/5 dark:bg-black flex items-center justify-center min-h-[500px]">
         {renderedUrl ? (
           <iframe
             src={renderedUrl}
@@ -263,10 +324,11 @@ export const ModernPdfViewer: React.FC<ModernPdfViewerProps> = ({
               transform: `scale(${zoomLevel / 100})`,
               transformOrigin: 'top center',
               filter: isDarkMode ? 'invert(0.9) hue-rotate(180deg)' : 'none',
+              minHeight: is916Mobile ? 'calc(100dvh - 54px)' : '100%',
             }}
             title={title}
-            sandbox="allow-scripts allow-same-origin allow-forms"
-            allow="autoplay"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            allow="autoplay; fullscreen"
           />
         ) : (
           <div className="text-center p-8 text-slate-400">
@@ -278,3 +340,4 @@ export const ModernPdfViewer: React.FC<ModernPdfViewerProps> = ({
     </div>
   );
 };
+

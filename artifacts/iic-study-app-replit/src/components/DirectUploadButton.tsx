@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Upload, CheckCircle2, Loader2, Film, Music, FileText, Image as ImageIcon, ExternalLink, Trash2 } from 'lucide-react';
-import { uploadToCloudinary, CloudinaryMediaKind } from '../services/cloudinaryService';
-import { uploadToTelegramStorage } from '../services/telegramStorageService';
+import { uploadToTelegramStorage, resolveTelegramUrl } from '../services/telegramStorageService';
+import type { CloudinaryMediaKind } from '../services/cloudinaryService';
 
 interface DirectUploadButtonProps {
   kind: CloudinaryMediaKind;
@@ -22,11 +22,11 @@ const ACCEPT_MAP: Record<CloudinaryMediaKind, string> = {
 };
 
 const DEFAULT_LABEL: Record<CloudinaryMediaKind, string> = {
-  video: '📲 Phone se Video Upload',
-  audio: '📲 Phone se Audio Upload',
-  pdf: '📄 Phone se PDF Upload',
-  image: '📷 Phone se Photo Upload',
-  auto: '📁 Phone se File Upload',
+  video: '📲 Telegram Video Upload',
+  audio: '📲 Telegram Audio Upload',
+  pdf: '📄 Telegram PDF Upload',
+  image: '📷 Telegram Photo Upload',
+  auto: '📁 Telegram File Upload',
 };
 
 const COLOR_MAP: Record<CloudinaryMediaKind, string> = {
@@ -53,7 +53,13 @@ export const DirectUploadButton: React.FC<DirectUploadButtonProps> = (props) => 
   const [justUploaded, setJustUploaded] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const isStoredUrl = !!(currentUrl && (currentUrl.includes('api.telegram.org') || currentUrl.includes('cloudinary.com')));
+  const isStoredUrl = !!(
+    currentUrl &&
+    (currentUrl.includes('telegram') ||
+      currentUrl.includes('/api/telegram/') ||
+      currentUrl.includes('api.telegram.org') ||
+      currentUrl.includes('cloudinary.com'))
+  );
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -65,33 +71,21 @@ export const DirectUploadButton: React.FC<DirectUploadButtonProps> = (props) => 
     setJustUploaded(false);
 
     try {
-      // ── Strategy 1: Telegram Cloud Storage (Free & Direct) ──
-      try {
-        setProgress(35);
-        const tgRes = await uploadToTelegramStorage(file, {
-          fileName: file.name,
-          caption: `NSTA App ${kind.toUpperCase()}: ${file.name}`,
-        });
-        if (tgRes?.url) {
-          setProgress(100);
-          onUploaded(tgRes.url, file);
-          setJustUploaded(true);
-          setTimeout(() => setJustUploaded(false), 4000);
-          return;
-        }
-      } catch (tgErr) {
-        console.warn('[DirectUploadButton] Telegram upload fallback to Cloudinary:', tgErr);
-      }
-
-      // ── Strategy 2: Cloudinary Fallback ──
-      setProgress(50);
-      const res = await uploadToCloudinary(file, kind, (pct) => {
-        setProgress(Math.max(50, Math.round(pct)));
+      // ── Telegram Cloud Storage Upload ──
+      const tgRes = await uploadToTelegramStorage(file, {
+        fileName: file.name,
+        caption: `NSTA App ${kind.toUpperCase()}: ${file.name}`,
+        onProgress: (pct) => setProgress(pct),
       });
-      const finalUrl = res.secure_url || res.url;
-      onUploaded(finalUrl, file);
-      setJustUploaded(true);
-      setTimeout(() => setJustUploaded(false), 4000);
+
+      if (tgRes?.url) {
+        setProgress(100);
+        onUploaded(tgRes.url, file);
+        setJustUploaded(true);
+        setTimeout(() => setJustUploaded(false), 4000);
+      } else {
+        throw new Error('Telegram se link prapt nahi hua.');
+      }
     } catch (err: any) {
       setErrorMsg(err?.message || 'Upload fail ho gaya. Kripya dobara try karein.');
     } finally {
@@ -110,6 +104,8 @@ export const DirectUploadButton: React.FC<DirectUploadButtonProps> = (props) => 
     if (kind === 'image') return <ImageIcon size={compact ? 12 : 14} className="shrink-0" />;
     return <Upload size={compact ? 12 : 14} className="shrink-0" />;
   };
+
+  const testUrl = currentUrl ? resolveTelegramUrl(currentUrl) : '';
 
   return (
     <div className={`inline-flex flex-col gap-1.5 ${className}`}>
@@ -133,9 +129,9 @@ export const DirectUploadButton: React.FC<DirectUploadButtonProps> = (props) => 
           {renderIcon()}
           <span>
             {uploading
-              ? `Uploading ${progress}%...`
+              ? `Telegram Par Upload Ho Raha Hai ${progress}%...`
               : justUploaded
-              ? '✓ Upload Ho Gaya!'
+              ? '✓ Telegram Par Save Ho Gaya!'
               : currentUrl
               ? (label ? label : compact ? '🔄 Badlein' : '🔄 Nayi File Badlein')
               : label || DEFAULT_LABEL[kind]}
@@ -144,14 +140,14 @@ export const DirectUploadButton: React.FC<DirectUploadButtonProps> = (props) => 
 
         {isStoredUrl && !uploading && (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black bg-blue-100 text-blue-800 border border-blue-200">
-            ✓ Cloud Stored
+            ✓ Telegram Cloud Stored
           </span>
         )}
 
         {currentUrl && !uploading && (
           <>
             <a
-              href={currentUrl}
+              href={testUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 transition-colors"

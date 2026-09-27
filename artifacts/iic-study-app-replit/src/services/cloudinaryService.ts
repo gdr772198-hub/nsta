@@ -1,6 +1,7 @@
-import { uploadToTelegramStorage } from './telegramStorageService';
+import { uploadToTelegramStorage, resolveTelegramUrl } from './telegramStorageService';
 
-// Cloudinary upload service with Telegram Storage fallback for high-speed video, audio, and media hosting
+// Telegram Cloud Storage powered Media Service (Drop-in replacement for Cloudinary)
+// Provides unlimited free media hosting for Video, Audio, PDF, and Images
 export interface CloudinaryUploadResult {
   url: string;
   secure_url: string;
@@ -12,15 +13,16 @@ export interface CloudinaryUploadResult {
 }
 
 export const CLOUDINARY_CONFIG = {
-  cloudName: 'ox4kpil0',
-  uploadPreset: 'nsta_uploads',
+  cloudName: 'nsta_telegram_vault',
+  uploadPreset: 'telegram_cloud',
   folder: 'nsta_media',
 };
 
 export type CloudinaryMediaKind = 'video' | 'audio' | 'pdf' | 'image' | 'auto';
 
 /**
- * Uploads a video, audio, PDF, or image file directly to Cloudinary with real-time progress tracking
+ * Universal media upload powered by Telegram Cloud Storage.
+ * Retains Cloudinary API signature for backwards compatibility across all UI components.
  */
 export const uploadToCloudinary = async (
   file: File,
@@ -40,83 +42,40 @@ export const uploadToCloudinary = async (
     mime === 'application/pdf' ||
     name.endsWith('.pdf');
 
-  // Cloudinary uses 'video' endpoint for both video and audio; 'auto' handles PDFs and any other media seamlessly
-  const targetResourceType = isVideoOrAudio ? 'video' : isPdf || resourceType === 'auto' ? 'auto' : 'image';
+  const targetResourceType = isVideoOrAudio ? 'video' : isPdf ? 'pdf' : 'image';
 
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('upload_preset', CLOUDINARY_CONFIG.uploadPreset);
-  formData.append('folder', CLOUDINARY_CONFIG.folder);
+  try {
+    if (onProgress) onProgress(10);
 
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    const endpoint = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CONFIG.cloudName}/${targetResourceType}/upload`;
+    const tgRes = await uploadToTelegramStorage(file, {
+      fileName: file.name,
+      caption: `NSTA ${targetResourceType.toUpperCase()}: ${file.name}`,
+      onProgress: (pct) => {
+        if (onProgress) onProgress(pct);
+      },
+    });
 
-    xhr.open('POST', endpoint);
+    const format = file.name.split('.').pop()?.toLowerCase() || 'bin';
 
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable && onProgress) {
-        const percent = Math.round((event.loaded / event.total) * 100);
-        onProgress(percent);
-      }
+    return {
+      url: tgRes.url,
+      secure_url: tgRes.url,
+      public_id: tgRes.fileId,
+      format,
+      resource_type: targetResourceType,
+      bytes: tgRes.fileSize || file.size,
     };
-
-    const attemptTelegramFallback = async (originalError: any) => {
-      console.warn('[Media Upload] Cloudinary failed, falling back to Telegram Cloud Storage:', originalError);
-      try {
-        if (onProgress) onProgress(40);
-        const tgRes = await uploadToTelegramStorage(file, {
-          fileName: file.name,
-          caption: `NSTA ${resourceType.toUpperCase()} Upload`,
-        });
-        if (onProgress) onProgress(100);
-        resolve({
-          url: tgRes.url,
-          secure_url: tgRes.url,
-          public_id: tgRes.fileId,
-          format: file.name.split('.').pop() || 'media',
-          resource_type: targetResourceType,
-          bytes: tgRes.fileSize || file.size,
-        });
-      } catch (tgErr: any) {
-        console.error('[Media Upload] Telegram fallback also failed:', tgErr);
-        reject(new Error(originalError?.message || 'Media upload failed'));
-      }
-    };
-
-    xhr.onload = () => {
-      try {
-        const response = JSON.parse(xhr.responseText);
-        if (xhr.status >= 200 && xhr.status < 300) {
-          resolve(response as CloudinaryUploadResult);
-        } else {
-          attemptTelegramFallback(new Error(response?.error?.message || `Upload failed with status ${xhr.status}`));
-        }
-      } catch (err) {
-        attemptTelegramFallback(err);
-      }
-    };
-
-    xhr.onerror = () => {
-      attemptTelegramFallback(new Error('Network error occurred during Cloudinary upload'));
-    };
-
-    xhr.ontimeout = () => {
-      attemptTelegramFallback(new Error('Cloudinary upload timed out'));
-    };
-
-    xhr.send(formData);
-  });
+  } catch (err: any) {
+    console.error('[Media Upload via Telegram] Upload failed:', err);
+    throw new Error(err?.message || 'Media upload fail ho gaya. Kripya dobara try karein.');
+  }
 };
 
 /**
- * Generates an optimized Cloudinary video streaming URL with auto compression & mp4 format
+ * Generates safe, optimized streaming URL.
+ * Automatically resolves Telegram URLs to prevent CORS blocks and enable Range seeking.
  */
 export const getOptimizedVideoUrl = (rawUrl: string): string => {
-  if (!rawUrl || !rawUrl.includes('cloudinary.com')) return rawUrl;
-  // Insert f_auto,q_auto for fast mobile streaming
-  if (rawUrl.includes('/upload/')) {
-    return rawUrl.replace('/upload/', '/upload/q_auto,f_auto/');
-  }
-  return rawUrl;
+  if (!rawUrl) return '';
+  return resolveTelegramUrl(rawUrl);
 };

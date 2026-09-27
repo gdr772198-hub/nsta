@@ -53,17 +53,20 @@ export class ErrorBoundary extends Component<Props, State> {
     this.props.onError?.(error, errorInfo);
     const msg = error?.message || error?.toString() || '';
 
-    logErrorToFirebase(error, {
-      type: 'react',
-      componentStack: errorInfo?.componentStack ?? undefined,
-    }).catch(() => {});
-
     const isChunkError =
       msg.includes('ChunkLoadError') ||
       msg.includes('Loading chunk') ||
       msg.includes('Failed to fetch dynamically') ||
       msg.includes('dynamically imported module') ||
       msg.includes('Importing a module script failed');
+
+    // Only log real app errors to Firebase, skip transient network / dev-server chunk load blips
+    if (!isChunkError) {
+      logErrorToFirebase(error, {
+        type: 'react',
+        componentStack: errorInfo?.componentStack ?? undefined,
+      }).catch(() => {});
+    }
 
     // Smart Crash Protection: auto-report crash to Firebase so admin can see it (do not report transient chunk load errors)
     if (this.props.crashTarget && !isChunkError) {

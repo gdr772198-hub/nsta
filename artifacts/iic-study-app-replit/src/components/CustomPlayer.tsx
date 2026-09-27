@@ -153,7 +153,9 @@ export const CustomPlayer: React.FC<CustomPlayerProps> = ({
         else if (cleanUrl.includes('notebooklm')) isNotebookLM = true;
         else if (
             !videoId &&
-            (cleanUrl.includes('cloudinary.com') ||
+            (cleanUrl.includes('telegram') ||
+             cleanUrl.includes('/api/telegram/') ||
+             cleanUrl.includes('cloudinary.com') ||
              /\.(mp4|webm|mov|m4v|mkv|ogg)(\?.*)?$/i.test(cleanUrl) ||
              cleanUrl.startsWith('blob:') ||
              cleanUrl.startsWith('https://'))

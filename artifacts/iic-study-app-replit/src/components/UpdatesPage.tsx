@@ -10,7 +10,6 @@ import {
 } from 'lucide-react';
 import type { User, SystemSettings, Challenge20 } from '../types';
 import { isDailyChallenge20, getChallengeDateKey } from '../utils/challengeGenerator';
-import { isFeatureUnlockedForUser } from '../constants/levelRoadmapData';
 import { getLevelInfo } from '../utils/levelSystem';
 
 interface Props {
@@ -135,13 +134,11 @@ export const UpdatesPage: React.FC<Props> = ({
     return Boolean((user.isPremium || isSub) && hasValidDate);
   }, [user]);
 
-  // Level roadmap unlock checks — features are completely hidden (gayab) until unlocked
-  const userLvl = (user as any)?.level || getLevelInfo(user?.totalScore || 0).level || 1;
-  const userXp = user?.totalScore || 0;
-  const isMessengerUnlocked = isFeatureUnlockedForUser('NSTA_MESSENGER', userLvl, userXp, user?.role);
-  const isStudyRoomUnlocked = isFeatureUnlockedForUser('STUDY_ROOM', userLvl, userXp, user?.role);
-  const isDemandUnlocked = isFeatureUnlockedForUser('CONTENT_DEMAND', userLvl, userXp, user?.role);
-  const isEventsUnlocked = isFeatureUnlockedForUser('EVENTS_PAGE_PRO', userLvl, userXp, user?.role);
+  // All features are permanently unlocked (Level Roadmap removed)
+  const isMessengerUnlocked = true;
+  const isStudyRoomUnlocked = true;
+  const isDemandUnlocked = true;
+  const isEventsUnlocked = true;
 
   // Live countdown timer ticking every 1 second
   useEffect(() => {

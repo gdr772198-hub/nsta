@@ -1617,21 +1617,28 @@ export const LessonView: React.FC<Props> = ({
           );
       }
 
-      const isVideo = isUrl && (
+      const resolvedVideoUrl = content.videoUrl || (isUrl ? contentValue : '');
+      const isVideo = Boolean(
+          content.videoUrl ||
           content.type === 'VIDEO' ||
-          contentValue.includes('youtube.com') ||
-          contentValue.includes('youtu.be') ||
-          contentValue.endsWith('.mp4') ||
-          contentValue.includes('cloudinary.com')
+          content.type === 'VIDEO_LECTURE' ||
+          (isUrl && (
+              contentValue.includes('youtube.com') ||
+              contentValue.includes('youtu.be') ||
+              /\.(mp4|webm|mov|m4v|mkv)(\?.*)?$/i.test(contentValue) ||
+              contentValue.includes('telegram') ||
+              contentValue.includes('/api/telegram/') ||
+              contentValue.includes('cloudinary.com')
+          ))
       );
 
-      if (isVideo) {
+      if (isVideo && resolvedVideoUrl) {
           return (
               <div className="fixed inset-0 z-50 bg-black flex flex-col">
                   {/* ── Modern Video Player with Watermark, Quality Selector & In-App Offline Download ── */}
                   <div className="flex-1 relative flex flex-col justify-center bg-black" onClick={e => e.stopPropagation()}>
                     <ModernVideoPlayer
-                      videoUrl={contentValue}
+                      videoUrl={resolvedVideoUrl}
                       title={content.title}
                       mediaId={`lesson_vid_${content?.id || content?.title}`}
                       subject={chapter?.name || subject?.name}

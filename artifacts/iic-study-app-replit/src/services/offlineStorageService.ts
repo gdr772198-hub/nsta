@@ -6,6 +6,8 @@
  * Offline playback strictly validates subscription status and expiry dates!
  */
 
+import { resolveTelegramUrl } from './telegramStorageService';
+
 export type OfflineMediaKind = 'video' | 'audio' | 'pdf';
 
 export interface OfflineMediaMeta {
@@ -61,8 +63,9 @@ export async function downloadAndSaveOfflineMedia(
   meta: Omit<OfflineMediaMeta, 'sizeBytes' | 'downloadedAt'>,
   onProgress?: (progressPercent: number) => void
 ): Promise<OfflineMediaMeta> {
-  const { originalUrl } = meta;
-  if (!originalUrl) throw new Error('Missing media URL');
+  const rawUrl = meta.originalUrl;
+  if (!rawUrl) throw new Error('Missing media URL');
+  const originalUrl = resolveTelegramUrl(rawUrl);
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();

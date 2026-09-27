@@ -1,19 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  X, CheckCircle2, Clock, MessageSquare, ShieldCheck, 
-  Sparkles, RefreshCw, Award, BookOpen, Lock, ChevronRight 
+  X, CheckCircle2, Clock, 
+  RefreshCw, BookOpen
 } from 'lucide-react';
 import { ref, onValue } from 'firebase/database';
 import { rtdb } from '../firebase';
-import { isFeatureUnlockedForUser } from '../constants/levelRoadmapData';
 
 interface NotesFixTrackerModalProps {
   isOpen: boolean;
   onClose: () => void;
   user: any;
-  userLevel: number;
-  userXp: number;
-  onOpenRoadmap?: () => void;
+  userLevel?: number;
+  userXp?: number;
 }
 
 interface NoteSuggestion {
@@ -35,18 +33,13 @@ export const NotesFixTrackerModal: React.FC<NotesFixTrackerModalProps> = ({
   isOpen,
   onClose,
   user,
-  userLevel,
-  userXp,
-  onOpenRoadmap,
 }) => {
   const [filterTab, setFilterTab] = useState<'MY_REPORTS' | 'ALL_FIXED'>('MY_REPORTS');
   const [loading, setLoading] = useState<boolean>(true);
   const [suggestions, setSuggestions] = useState<NoteSuggestion[]>([]);
 
-  const isUnlocked = isFeatureUnlockedForUser('NOTES_FIX_TRACKER', userLevel, userXp, user?.role);
-
   useEffect(() => {
-    if (!isOpen || !isUnlocked) return;
+    if (!isOpen) return;
     setLoading(true);
 
     const suggestionsRef = ref(rtdb, 'suggestions');
@@ -69,7 +62,7 @@ export const NotesFixTrackerModal: React.FC<NotesFixTrackerModalProps> = ({
     });
 
     return () => unsub();
-  }, [isOpen, isUnlocked]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -125,9 +118,6 @@ export const NotesFixTrackerModal: React.FC<NotesFixTrackerModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base sm:text-lg font-black text-white">Notes Fix Tracker</h2>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                  Level 3 (v) Power
-                </span>
               </div>
               <p className="text-xs text-slate-400 font-medium">Aapki report ki gayi galtiyan & real-time fix status</p>
             </div>
@@ -141,161 +131,99 @@ export const NotesFixTrackerModal: React.FC<NotesFixTrackerModalProps> = ({
         </div>
 
         {/* Content */}
-        {!isUnlocked ? (
-          <div className="p-8 text-center flex flex-col items-center justify-center space-y-4 my-auto">
-            <div className="w-16 h-16 rounded-3xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-              <Lock className="w-8 h-8" />
-            </div>
-            <div className="space-y-1 max-w-md">
-              <h3 className="text-lg font-black text-white">Feature Locked: Level 3 (v)</h3>
-              <p className="text-sm text-slate-300">
-                Notes Fix Tracker <span className="text-amber-400 font-bold">Level 3 (v) (6,500 XP)</span> par unlock hota hai. Is feature se aap dekh sakte hain ki aapki bheji hui report fix hui ya nahi aur kitne students ne use support kiya.
-              </p>
-            </div>
-            {onOpenRoadmap && (
-              <button
-                onClick={() => {
-                  onClose();
-                  onOpenRoadmap();
-                }}
-                className="mt-2 flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-black text-xs transition-all shadow-lg cursor-pointer"
-              >
-                <Sparkles className="w-4 h-4" />
-                Roadmap Me Dekhein
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            )}
+        <div className="flex-1 overflow-y-auto flex flex-col">
+          {/* Filter Tabs */}
+          <div className="px-5 pt-3 pb-2 flex gap-2 border-b border-slate-800 bg-slate-900/50">
+            <button
+              onClick={() => setFilterTab('MY_REPORTS')}
+              className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                filterTab === 'MY_REPORTS'
+                  ? 'bg-amber-500 text-slate-950 shadow-md'
+                  : 'bg-slate-800/80 text-slate-400 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              Meri Bheji Gayi Reports ({myReports.length})
+            </button>
+            <button
+              onClick={() => setFilterTab('ALL_FIXED')}
+              className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                filterTab === 'ALL_FIXED'
+                  ? 'bg-amber-500 text-slate-950 shadow-md'
+                  : 'bg-slate-800/80 text-slate-400 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              Theek Ki Gayi Galtiyan ({fixedNotes.length})
+            </button>
           </div>
-        ) : (
-          <div className="flex-1 overflow-y-auto flex flex-col">
-            {/* Filter Tabs */}
-            <div className="px-5 pt-3 pb-2 flex gap-2 border-b border-slate-800 bg-slate-900/50">
-              <button
-                onClick={() => setFilterTab('MY_REPORTS')}
-                className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                  filterTab === 'MY_REPORTS'
-                    ? 'bg-amber-500 text-slate-950 shadow-md'
-                    : 'bg-slate-800/80 text-slate-400 hover:bg-slate-800 hover:text-white'
-                }`}
-              >
-                <MessageSquare className="w-3.5 h-3.5" />
-                Meri Reports ({myReports.length})
-              </button>
-              <button
-                onClick={() => setFilterTab('ALL_FIXED')}
-                className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                  filterTab === 'ALL_FIXED'
-                    ? 'bg-emerald-500 text-slate-950 shadow-md'
-                    : 'bg-slate-800/80 text-slate-400 hover:bg-slate-800 hover:text-white'
-                }`}
-              >
-                <ShieldCheck className="w-3.5 h-3.5" />
-                Sudhare Gaye Notes ({fixedNotes.length})
-              </button>
-            </div>
 
-            {/* List */}
-            <div className="p-4 sm:p-5 space-y-3 flex-1 overflow-y-auto">
-              {loading ? (
-                <div className="flex flex-col items-center justify-center py-16 text-slate-400 gap-3">
-                  <RefreshCw className="w-6 h-6 animate-spin text-amber-400" />
-                  <span className="text-xs font-semibold">Reports load ho rahi hain...</span>
-                </div>
-              ) : displayedList.length === 0 ? (
-                <div className="text-center py-12 px-4 rounded-2xl bg-slate-800/30 border border-slate-800">
-                  <div className="text-3xl mb-2">📝</div>
-                  <h4 className="text-sm font-bold text-white mb-1">
-                    {filterTab === 'MY_REPORTS' ? 'Aapne abhi tak koi report nahi bheji hai' : 'Abhi koi fixed note uplabdha nahi hai'}
-                  </h4>
-                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                    {filterTab === 'MY_REPORTS'
-                      ? 'Kisi bhi lesson note me galti dikhne par "Report / Fix" button daba kar bhej sakte hain. Yahan aapko live status dikhega.'
-                      : 'Jaise hi admin galtiyon ko theek karenge, yahan list update ho jayegi.'}
-                  </p>
-                </div>
-              ) : (
-                displayedList.map((item) => (
-                  <div
-                    key={item.id}
-                    className="p-4 rounded-2xl bg-slate-800/60 border border-slate-700/60 hover:border-slate-600 transition-all space-y-3"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-2">
-                          <BookOpen className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                          <h4 className="text-sm font-black text-white line-clamp-1">
-                            {item.lessonTitle || 'Lesson Note Report'}
-                          </h4>
-                          {item.pageNo && (
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-700 text-slate-300">
-                              Pg {item.pageNo}
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-3 text-[11px] text-slate-400 font-medium">
-                          <span>By: {item.userName || 'Student'}</span>
-                          {item.reportCount && item.reportCount > 1 && (
-                            <span className="text-amber-400 font-bold flex items-center gap-1">
-                              🔥 {item.reportCount} reports aayi hain
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="shrink-0">{getStatusBadge(item.status)}</div>
-                    </div>
-
-                    {/* Report Text */}
-                    {item.text && (
-                      <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-xs text-slate-200">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">Reported Issue:</span>
-                        <p className="whitespace-pre-line leading-relaxed">{item.text}</p>
-                      </div>
-                    )}
-
-                    {/* Admin Reply / Fix Action */}
-                    {item.adminReply ? (
-                      <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-xs text-emerald-200 space-y-1">
-                        <div className="flex items-center gap-1.5 font-bold text-emerald-300 text-[11px]">
-                          <ShieldCheck className="w-3.5 h-3.5" />
-                          Admin Resolution / Action:
-                        </div>
-                        <p className="leading-relaxed">{item.adminReply}</p>
-                        {item.adminReplyAt && (
-                          <span className="text-[10px] text-emerald-400/70 block">
-                            Resolved on: {new Date(item.adminReplyAt).toLocaleDateString()}
+          {/* List */}
+          <div className="p-4 sm:p-5 flex-1 overflow-y-auto space-y-3">
+            {loading ? (
+              <div className="py-12 flex flex-col items-center justify-center text-slate-400 space-y-2">
+                <RefreshCw className="w-6 h-6 animate-spin text-amber-400" />
+                <span className="text-xs font-bold">Reports load ho rahi hain...</span>
+              </div>
+            ) : displayedList.length === 0 ? (
+              <div className="py-12 text-center text-slate-400 space-y-2">
+                <BookOpen className="w-10 h-10 mx-auto opacity-30 text-slate-500" />
+                <p className="text-sm font-bold">Koi report nahi mili</p>
+                <p className="text-xs text-slate-500">
+                  {filterTab === 'MY_REPORTS' 
+                    ? 'Aapne abhi tak koi error report nahi bheji hai.' 
+                    : 'Abhi koi fixed error list nahi hai.'}
+                </p>
+              </div>
+            ) : (
+              displayedList.map(item => (
+                <div 
+                  key={item.id}
+                  className="p-4 rounded-2xl bg-slate-800/60 border border-slate-700/60 space-y-3 hover:border-slate-600 transition-all"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h4 className="text-xs sm:text-sm font-bold text-white flex items-center gap-2">
+                        <span>{item.lessonTitle || 'Study Note'}</span>
+                        {item.pageNo && (
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-slate-700 text-slate-300 font-normal">
+                            Page {item.pageNo}
                           </span>
                         )}
-                      </div>
-                    ) : item.status === 'fixed' || item.status === 'resolved' ? (
-                      <div className="p-2.5 rounded-xl bg-emerald-950/20 border border-emerald-500/20 text-[11px] font-bold text-emerald-300 flex items-center gap-1.5">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                        Galti sudhar di gayi hai aur chapter content update kar diya gaya hai!
-                      </div>
-                    ) : (
-                      <div className="p-2.5 rounded-xl bg-slate-900/40 border border-slate-800/80 text-[11px] font-medium text-slate-400 flex items-center gap-1.5">
-                        <Clock className="w-3.5 h-3.5 text-amber-400" />
-                        Admin team is review kar rahi hai. Note jald update hoga.
-                      </div>
-                    )}
+                      </h4>
+                      {item.createdAt && (
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          {new Date(item.createdAt).toLocaleDateString('hi-IN', {
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric'
+                          })}
+                        </p>
+                      )}
+                    </div>
+                    {getStatusBadge(item.status)}
                   </div>
-                ))
-              )}
-            </div>
-          </div>
-        )}
 
-        {/* Footer info */}
-        <div className="p-3.5 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between text-xs text-slate-400">
-          <div className="flex items-center gap-1.5">
-            <Award className="w-4 h-4 text-amber-400" />
-            <span>Sahi galti report karne par bonus credits milte hain!</span>
+                  {item.text && (
+                    <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-xs text-slate-200">
+                      <p className="font-semibold text-slate-400 text-[10px] uppercase tracking-wider mb-1">
+                        Reported Problem:
+                      </p>
+                      <p className="leading-relaxed">{item.text}</p>
+                    </div>
+                  )}
+
+                  {item.adminReply && (
+                    <div className="p-3 rounded-xl bg-emerald-950/30 border border-emerald-500/30 text-xs text-emerald-200">
+                      <p className="font-bold text-emerald-400 text-[10px] uppercase tracking-wider mb-1 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                        Admin Feedback & Resolution:
+                      </p>
+                      <p className="leading-relaxed">{item.adminReply}</p>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
           </div>
-          <button
-            onClick={onClose}
-            className="px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs cursor-pointer"
-          >
-            Close
-          </button>
         </div>
       </div>
     </div>

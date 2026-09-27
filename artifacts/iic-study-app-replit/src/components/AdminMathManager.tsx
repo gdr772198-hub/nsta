@@ -1310,7 +1310,7 @@ export const AdminMathManager: React.FC<Props> = ({
                     Photos select karein (Phone Gallery ya Computer se)
                   </p>
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    Har photo ImgBB ke HD server pe save hogi aur page number auto-assign hoga
+                    Har photo Telegram Cloud Storage ke HD vault pe save hogi aur page number auto-assign hoga
                   </p>
                 </div>
                 <input

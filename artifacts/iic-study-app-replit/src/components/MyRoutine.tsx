@@ -25,7 +25,6 @@ import { applyDeduction, getTotalCredits } from '../utils/creditSystem';
 import { CreditConfirmationModal } from './CreditConfirmationModal';
 import { saveUserToLive } from '../firebase';
 import { getLevelInfo } from '../utils/levelSystem';
-import { isFeatureUnlockedForUser } from '../constants/levelRoadmapData';
 import { scheduleRoutineSync, syncRoutineNow } from '../utils/routineFirebaseSync';
 import {
   isRoutineMcqDone, getAutoTrackSnapshot, getRoutineMcqScore,
@@ -3080,11 +3079,6 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, activeBoard, activeC
         </div>
         {/* Tab bar — always visible */}
         {(() => {
-          const userLvl = (user as any)?.level || getLevelInfo(user?.totalScore || 0).level || 1;
-          const userXp = user?.totalScore || 0;
-          const isSubjectsUnlocked = isFeatureUnlockedForUser('ROUTINE_SUBJECT_PAGE', userLvl, userXp, user?.role);
-          const isSyllabusUnlocked = isFeatureUnlockedForUser('MY_SYLLABUS_PAGE', userLvl, userXp, user?.role);
-
           return (
             <div className="mx-4 mb-2 flex rounded-2xl p-1 gap-1" style={{ background: `${theme.primary}12` }}>
               <button
@@ -3094,24 +3088,20 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, activeBoard, activeC
                 style={activeView === 'home' ? { background: '#ffffff', color: theme.primary, border: `1px solid ${theme.primary}25`, boxShadow: `0 2px 8px ${theme.primary}20` } : {}}>
                 🎯 Daily Hub
               </button>
-              {isSubjectsUnlocked && (
-                <button
-                  id="routine-tab-subjects"
-                  onClick={() => setActiveView('subjects')}
-                  className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] font-black transition-all cursor-pointer ${activeView === 'subjects' ? 'shadow-sm' : 'text-slate-500'}`}
-                  style={activeView === 'subjects' ? { background: '#ffffff', color: theme.primary, border: `1px solid ${theme.primary}25`, boxShadow: `0 2px 8px ${theme.primary}20` } : {}}>
-                  📚 Subjects
-                </button>
-              )}
-              {isSyllabusUnlocked && (
-                <button
-                  id="routine-tab-syllabus"
-                  onClick={() => setActiveView('tracking')}
-                  className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] font-black transition-all cursor-pointer ${activeView === 'tracking' ? 'shadow-sm' : 'text-slate-500'}`}
-                  style={activeView === 'tracking' ? { background: '#ffffff', color: theme.primary, border: `1px solid ${theme.primary}25`, boxShadow: `0 2px 8px ${theme.primary}20` } : {}}>
-                  📖 My Syllabus
-                </button>
-              )}
+              <button
+                id="routine-tab-subjects"
+                onClick={() => setActiveView('subjects')}
+                className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] font-black transition-all cursor-pointer ${activeView === 'subjects' ? 'shadow-sm' : 'text-slate-500'}`}
+                style={activeView === 'subjects' ? { background: '#ffffff', color: theme.primary, border: `1px solid ${theme.primary}25`, boxShadow: `0 2px 8px ${theme.primary}20` } : {}}>
+                📚 Subjects
+              </button>
+              <button
+                id="routine-tab-syllabus"
+                onClick={() => setActiveView('tracking')}
+                className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] font-black transition-all cursor-pointer ${activeView === 'tracking' ? 'shadow-sm' : 'text-slate-500'}`}
+                style={activeView === 'tracking' ? { background: '#ffffff', color: theme.primary, border: `1px solid ${theme.primary}25`, boxShadow: `0 2px 8px ${theme.primary}20` } : {}}>
+                📖 My Syllabus
+              </button>
             </div>
           );
         })()}

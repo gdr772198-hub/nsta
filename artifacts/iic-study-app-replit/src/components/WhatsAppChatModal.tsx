@@ -76,6 +76,7 @@ import { applyDeduction, getTotalCredits } from '../utils/creditSystem';
 import { logScoreActivity } from '../utils/scoreSystem';
 import { saveUserToLive, auth } from '../firebase';
 import { uploadImageToImgBB } from '../services/imgbbService';
+import { uploadImageToTelegram } from '../services/telegramStorageService';
 import { uploadToCloudinary, getOptimizedVideoUrl } from '../services/cloudinaryService';
 import { ImageCropper } from './ImageCropper';
 import { ProfileCameraModal } from './ProfileCameraModal';
@@ -390,9 +391,20 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   const [showProfileCameraModal, setShowProfileCameraModal] = useState(false);
 
   const handleSaveProfilePhoto = async (photoDataUrl: string) => {
+    let finalPhotoUrl = photoDataUrl;
+    try {
+      finalPhotoUrl = await uploadImageToTelegram(
+        photoDataUrl,
+        `avatar_${effectiveUserId || user.id || Date.now()}.jpg`,
+        'NSTA Profile Avatar'
+      );
+    } catch (e) {
+      console.warn('Profile photo Telegram upload fallback to dataUrl:', e);
+    }
+
     const updatedUser: User = {
       ...currentUser,
-      photoURL: photoDataUrl,
+      photoURL: finalPhotoUrl,
       avatarChoice: 'custom',
     };
     setCurrentUser(updatedUser);
