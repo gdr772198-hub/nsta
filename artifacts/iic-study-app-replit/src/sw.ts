@@ -50,7 +50,7 @@ const showNstaNotification = (payload: NstaPushPayload) => {
 
   return self.registration.showNotification(title, {
     body,
-    icon: data.icon || payload.notification?.icon || '/icons/icon-192.png',
+    icon: data.icon || data.senderPhoto || payload.notification?.icon || '/favicon.svg',
     badge: '/favicon.svg',
     tag: data.senderId ? `nsta-${type}-${data.senderId}` : `nsta-${type}`,
     renotify: urgent,

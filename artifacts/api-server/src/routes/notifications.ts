@@ -28,6 +28,8 @@ type PushBody = {
   url?: unknown;
   senderId?: unknown;
   senderName?: unknown;
+  senderPhoto?: unknown;
+  icon?: unknown;
   broadcast?: unknown;
 };
 
@@ -159,6 +161,8 @@ async function sendPush(
     url: string;
     senderId?: string;
     senderName?: string;
+    senderPhoto?: string;
+    icon?: string;
     broadcast?: boolean;
   },
 ) {
@@ -188,6 +192,8 @@ async function sendPush(
         url: input.url,
         ...(input.senderId ? { senderId: input.senderId } : {}),
         ...(input.senderName ? { senderName: input.senderName } : {}),
+        ...(input.senderPhoto ? { senderPhoto: input.senderPhoto } : {}),
+        ...(input.icon ? { icon: input.icon } : {}),
       },
       webpush: {
         headers: { Urgency: input.type === "CHAT" || input.type === "FRIEND_REQUEST" ? "high" : "normal", TTL: "86400" },
@@ -207,6 +213,12 @@ router.post("/notifications/push", async (req, res) => {
   const recipientIds = cleanIds(body.recipientIds);
   const senderId = typeof body.senderId === "string" ? body.senderId.trim().slice(0, 120) : undefined;
   const senderName = typeof body.senderName === "string" ? body.senderName.trim().slice(0, 120) : undefined;
+  const senderPhoto = typeof body.senderPhoto === "string" && /^https?:\/\//i.test(body.senderPhoto)
+    ? body.senderPhoto.trim().slice(0, 1000)
+    : undefined;
+  const icon = typeof body.icon === "string" && /^https?:\/\//i.test(body.icon)
+    ? body.icon.trim().slice(0, 1000)
+    : undefined;
   const url = typeof body.url === "string" && body.url.startsWith("/") ? body.url.slice(0, 500) : "/";
   const broadcast = body.broadcast === true;
 
@@ -222,7 +234,18 @@ router.post("/notifications/push", async (req, res) => {
     if (broadcast && caller.admin !== true && caller.role !== "ADMIN" && caller.role !== "SUB_ADMIN") {
       return res.status(403).json({ error: "Only admins can broadcast notifications" });
     }
-    const result = await sendPush(app, { recipientIds, type, title, body: message, url, senderId, senderName, broadcast });
+    const result = await sendPush(app, {
+      recipientIds,
+      type,
+      title,
+      body: message,
+      url,
+      senderId,
+      senderName,
+      senderPhoto,
+      icon: icon || senderPhoto,
+      broadcast,
+    });
     req.log.info({ type, sent: result.sent, failed: result.failed }, "Notification push sent");
     return res.json(result);
   } catch (error) {

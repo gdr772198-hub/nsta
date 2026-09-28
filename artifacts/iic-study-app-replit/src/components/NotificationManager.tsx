@@ -235,6 +235,8 @@ export interface PushNotificationRequest {
   url?: string;
   senderId?: string;
   senderName?: string;
+  senderPhoto?: string;
+  icon?: string;
   broadcast?: boolean;
 }
 
@@ -266,6 +268,7 @@ export const notifyFriendRequestInBackground = async (request: {
   recipientIds: string[];
   senderId: string;
   senderName: string;
+  senderPhoto?: string;
   url?: string;
 }) => {
   if (request.recipientIds.length === 0) return false;
@@ -274,6 +277,8 @@ export const notifyFriendRequestInBackground = async (request: {
     type: 'FRIEND_REQUEST',
     title: '🤝 Friend Request',
     body: `${request.senderName} ne aapko friend request bheji hai! Accept karke baat start karein.`,
+    senderPhoto: request.senderPhoto,
+    icon: request.senderPhoto,
   });
 };
 
@@ -281,15 +286,23 @@ export const notifyDirectMessageInBackground = async (request: {
   recipientIds: string[];
   senderId: string;
   senderName: string;
+  senderPhoto?: string;
   message: string;
+  messageType?: string;
   url?: string;
 }) => sendPushNotification({
   recipientIds: request.recipientIds,
   senderId: request.senderId,
   senderName: request.senderName,
+  senderPhoto: request.senderPhoto,
+  icon: request.senderPhoto,
   type: 'CHAT',
   title: `💬 Naya Message: ${request.senderName}`,
-  body: request.message.slice(0, 180) || 'Aapko ek naya private message mila hai.',
+  body: request.message.slice(0, 180) ||
+    (request.messageType === 'IMAGE' ? 'Aapko ek photo bheji gayi hai.' :
+      request.messageType === 'VIDEO' ? 'Aapko ek video bheja gaya hai.' :
+        request.messageType === 'AUDIO' || request.messageType === 'VOICE' ? 'Aapko ek voice message mila hai.' :
+          'Aapko ek naya private message mila hai.'),
   url: request.url || '/?open=messenger',
 });
 

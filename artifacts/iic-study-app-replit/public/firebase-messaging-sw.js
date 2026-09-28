@@ -28,7 +28,7 @@ messaging.onBackgroundMessage((payload) => {
 
   return self.registration.showNotification(title, {
     body,
-    icon: data.icon || '/icons/icon-192.png',
+    icon: data.icon || data.senderPhoto || '/favicon.svg',
     badge: '/favicon.svg',
     tag: data.senderId ? `nsta-${type}-${data.senderId}` : `nsta-${type}`,
     renotify: urgent,

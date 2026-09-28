@@ -515,6 +515,22 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [selectedContact, setSelectedContact] = useState<ChatContact | null>(targetPeer || null);
   const [selectedGroup, setSelectedGroup] = useState<ChatGroup | null>(null);
+  const selectedContactPushIds = React.useMemo(
+    () => Array.from(new Set([
+      selectedContact?.id,
+      selectedContact?.uid,
+      selectedContact?.email,
+      selectedContact?.displayId,
+      selectedContact?.mobile,
+    ].filter((value): value is string => Boolean(value && value.trim())))),
+    [
+      selectedContact?.id,
+      selectedContact?.uid,
+      selectedContact?.email,
+      selectedContact?.displayId,
+      selectedContact?.mobile,
+    ],
+  );
 
   // Synchronize activeTab if initialTab changes
   useEffect(() => {
@@ -1131,7 +1147,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
           selectedContact.id,
           captionText,
           'VIDEO',
-          { mediaUrl: uploadedVideoUrl }
+          { mediaUrl: uploadedVideoUrl, recipientIds: selectedContactPushIds }
         );
       } else if (selectedGroup) {
         const optimisticMsg: ChatMessage = {
@@ -1366,6 +1382,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
             audioSize: songSize,
             audioDuration: durationSec,
             voiceDuration: durationSec,
+            recipientIds: selectedContactPushIds,
           }
         );
       } else if (selectedGroup) {
@@ -1574,7 +1591,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
           selectedContact.id,
           '🎤 Voice message',
           'VOICE',
-          { mediaUrl: audioUrl, voiceDuration: durationSec }
+          { mediaUrl: audioUrl, voiceDuration: durationSec, recipientIds: selectedContactPushIds }
         );
       } else if (selectedGroup) {
         const optimisticMsg: ChatMessage = {
@@ -3162,7 +3179,10 @@ export const WhatsAppChatModal: React.FC<Props> = ({
         selectedContact.id,
         textToSend,
         'TEXT',
-        currentReply ? { replyTo: currentReply } : undefined
+        {
+          ...(currentReply ? { replyTo: currentReply } : {}),
+          recipientIds: selectedContactPushIds,
+        }
       );
     } else if (selectedGroup) {
       const optimisticMsg: ChatMessage = {
@@ -3322,7 +3342,12 @@ export const WhatsAppChatModal: React.FC<Props> = ({
           selectedContact.id,
           captionText,
           'IMAGE',
-          { mediaUrl: uploadedUrls[0], mediaUrls: uploadedUrls, isHd: isHdQuality }
+          {
+            mediaUrl: uploadedUrls[0],
+            mediaUrls: uploadedUrls,
+            isHd: isHdQuality,
+            recipientIds: selectedContactPushIds,
+          }
         );
       } else if (selectedGroup) {
         const optimisticMsg: ChatMessage = {
@@ -3419,7 +3444,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
         userPhoto,
         selectedContact.id,
         content,
-        msgType as any
+        msgType as any,
+        { recipientIds: selectedContactPushIds }
       );
     } else if (selectedGroup) {
       const optimisticMsg: ChatMessage = {

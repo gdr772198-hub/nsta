@@ -23,6 +23,16 @@ export interface ChatContact {
   mobile?: string;
 }
 
+const getPushRecipientIds = (contact: Partial<ChatContact> | undefined, fallbackId: string): string[] =>
+  Array.from(new Set([
+    fallbackId,
+    contact?.id,
+    contact?.uid,
+    contact?.email,
+    contact?.displayId,
+    contact?.mobile,
+  ].filter((value): value is string => Boolean(value && String(value).trim())).map((value) => String(value).trim())));
+
 export interface ChatMessage {
   id: string;
   senderId: string;
@@ -426,7 +436,18 @@ export const sendPrivateMessage = async (
   peerUserId: string,
   text: string,
   type: ChatMessage['type'] = 'TEXT',
-  extra?: { mediaUrl?: string; mediaUrls?: string[]; voiceDuration?: number; audioTitle?: string; audioSize?: number; audioDuration?: number; doubtSubject?: string; replyTo?: any; isHd?: boolean }
+  extra?: {
+    mediaUrl?: string;
+    mediaUrls?: string[];
+    voiceDuration?: number;
+    audioTitle?: string;
+    audioSize?: number;
+    audioDuration?: number;
+    doubtSubject?: string;
+    replyTo?: any;
+    isHd?: boolean;
+    recipientIds?: string[];
+  }
 ): Promise<ChatMessage> => {
   const convId = getDirectConversationId(myUserId, peerUserId);
   const msgId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -471,12 +492,16 @@ export const sendPrivateMessage = async (
     console.warn('[WhatsApp] RTDB write error:', err);
   }
 
-  if (!peerUserId.startsWith('peer_') && myUserId !== peerUserId && message.text) {
+  if (!peerUserId.startsWith('peer_') && myUserId !== peerUserId) {
     void notifyDirectMessageInBackground({
-      recipientIds: [peerUserId],
+      recipientIds: extra?.recipientIds?.length
+        ? extra.recipientIds
+        : getPushRecipientIds(undefined, peerUserId),
       senderId: myUserId,
       senderName: myUserName || 'NSTA Student',
+      senderPhoto: myPhoto,
       message: message.text,
+      messageType: message.type,
       url: '/?open=messenger',
     });
   }
@@ -1558,6 +1583,7 @@ export const sendFriendRequest = async (
     recipientIds: recipientKeys,
     senderId: fromId,
     senderName: fromUser.name || 'Student',
+    senderPhoto: fromUser.photoURL || '',
     url: '/',
   });
 
