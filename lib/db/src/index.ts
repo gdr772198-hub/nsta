@@ -1,37 +1,16 @@
+import { drizzle } from "drizzle-orm/node-postgres";
+import pg from "pg";
 import * as schema from "./schema";
 
-let pool: any = null;
-let db: any = null;
+const { Pool } = pg;
 
-try {
-  if (process.env.DATABASE_URL) {
-    const { default: pg } = await import("pg");
-    const { drizzle } = await import("drizzle-orm/node-postgres");
-    pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
-    db = drizzle(pool, { schema });
-  } else {
-    throw new Error("DATABASE_URL not set");
-  }
-} catch {
-  console.warn('[AI Studio] Database not connected — using mock');
-  const noOp = {
-    findMany: async () => [],
-    findFirst: async () => null,
-    findUnique: async () => null,
-    create: async (d: any) => d?.data ?? {},
-    update: async (d: any) => d?.data ?? {},
-    delete: async () => ({})
-  };
-  db = new Proxy({}, {
-    get: (_, prop) => prop === 'query'
-      ? new Proxy({}, { get: () => noOp }) : async () => [],
-  });
-  pool = {
-    query: async () => ({ rows: [] }),
-    connect: async () => ({ query: async () => ({ rows: [] }), release: () => {} })
-  };
+if (!process.env.DATABASE_URL) {
+  throw new Error(
+    "DATABASE_URL must be set. Did you forget to provision a database?",
+  );
 }
 
-export { pool, db };
-export * from "./schema";
+export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+export const db = drizzle(pool, { schema });
 
+export * from "./schema";
