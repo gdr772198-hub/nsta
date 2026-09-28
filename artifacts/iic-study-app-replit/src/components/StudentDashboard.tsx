@@ -340,6 +340,8 @@ import { ThemeCustomizer } from "./ThemeCustomizer";
 import AppFeedback from "./AppFeedback";
 import { saveOfflineItem } from "../utils/offlineStorage";
 import { NotificationPrompt } from "./NotificationPrompt";
+import { dispatchSmartNotification } from "./NotificationManager";
+import { subscribeToFriendRequests } from "../services/whatsappChatService";
 import { GroupStudyModal, type GroupStudyPrefilledContext } from "./GroupStudyModal";
 import { LiveSessionIndicator } from "./LiveSessionIndicator";
 import {
@@ -1630,6 +1632,47 @@ export const StudentDashboard: React.FC<Props> = ({
     });
     return () => unsub();
   }, []);
+
+  // --- REAL-TIME FRIEND REQUESTS LISTENER & MOBILE NOTIFICATION ---
+  const [incomingFriendRequestsCount, setIncomingFriendRequestsCount] = useState<number>(0);
+  const knownIncomingReqIdsRef = useRef<Set<string>>(new Set());
+  const isFirstReqCheckRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const unsub = subscribeToFriendRequests(user.id, (reqs) => {
+      const pendingReqs = (reqs || []).filter((r) => r.status === 'PENDING');
+      setIncomingFriendRequestsCount(pendingReqs.length);
+
+      // On initial load, record all existing IDs so we don't spam notifications
+      if (isFirstReqCheckRef.current) {
+        isFirstReqCheckRef.current = false;
+        pendingReqs.forEach((r) => knownIncomingReqIdsRef.current.add(r.id || `${r.fromId}_${r.toId}`));
+        return;
+      }
+
+      // Check for newly arrived friend request
+      pendingReqs.forEach((req) => {
+        const reqKey = req.id || `${req.fromId}_${req.toId}`;
+        if (!knownIncomingReqIdsRef.current.has(reqKey)) {
+          knownIncomingReqIdsRef.current.add(reqKey);
+          const senderName = req.fromName || 'Ek student';
+          // Dispatch system notification & sound/vibration to mobile
+          dispatchSmartNotification({
+            title: '🤝 Nayi Friend Request!',
+            body: `${senderName} ne aapko Nsta Messenger par friend request bheji hai.`,
+            category: 'FRIEND_REQUEST',
+            url: '/',
+            senderId: req.fromId,
+          });
+          // Show toast alert
+          showAlert(`🤝 ${senderName} ne aapko friend request bheji hai!`, 'SUCCESS');
+        }
+      });
+    }, [(user as any).uid, user.displayId, user.mobile, user.email].filter(Boolean));
+
+    return () => unsub();
+  }, [user?.id]);
 
   // --- TEACHER EXPIRY CHECK ---
   const [isTeacherLocked, setIsTeacherLocked] = useState(false);
@@ -16465,6 +16508,7 @@ export const StudentDashboard: React.FC<Props> = ({
                 label: "Community",
                 Icon: MessageSquare,
                 filledOnActive: true,
+                badge: incomingFriendRequestsCount > 0,
                 activeColor: "#10b981",
                 isActive: !showUpdatesPage && showChat && chatMode === 'COMMUNITY',
                 onClick: () => {
@@ -17445,6 +17489,24 @@ export const StudentDashboard: React.FC<Props> = ({
                 </>
               );
             })()}
+
+            {/* Nsta Messenger Direct Button with Friend Request Badge */}
+            <button
+              id="topbar-messenger-btn"
+              onClick={() => {
+                hapticMedium();
+                setShowWhatsAppChatModal(true);
+              }}
+              className="relative p-1.5 rounded-xl transition-all text-white hover:bg-white/10 active:scale-95 shrink-0"
+              title="Nsta Messenger & Friend Requests"
+            >
+              <MessageSquare size={17} className="text-emerald-300 hover:text-white transition-colors" />
+              {incomingFriendRequestsCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-1 rounded-full bg-emerald-500 text-white text-[9px] font-black flex items-center justify-center shadow animate-pulse border border-white/20">
+                  {incomingFriendRequestsCount > 9 ? '9+' : incomingFriendRequestsCount}
+                </span>
+              )}
+            </button>
 
             {/* My Offline Downloads Hub button */}
             <button

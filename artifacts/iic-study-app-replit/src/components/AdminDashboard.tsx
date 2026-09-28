@@ -15,7 +15,8 @@ import { parseMCQText } from '../utils/mcqParser';
 import { saveTopicNotes } from '../utils/revisionTrackerV2';
 import { TOP_BAR_EFFECTS, EFFECT_CATEGORIES, TopBarEffectsLayer } from '../utils/topBarEffects';
 import { generateSecureRandomString, generateSecureRandomId } from '../utils/cryptoUtils';
-import { saveChapterData, bulkSaveLinks, checkFirebaseConnection, saveSystemSettings, subscribeToUsers, getUsersPage, subscribeToRecentUsers, rtdb, saveUserToLive, db, getChapterData, saveCustomSyllabus, deleteCustomSyllabus, subscribeToUniversalAnalysis, saveAiInteraction, saveSecureKeys, getSecureKeys, subscribeToApiUsage, subscribeToDrafts, resetAllContent, recoverContentFromCache, checkRecoveryStatus, backupAllContentToFirebase, restoreContentFromFirebaseBackup, rebuildContentIndex, deleteHomeworkEntry, deleteLucentEntry, subscribeToDemands, updateDemandStatus, subscribeGlobalChat, subscribeSupportChat, deleteGlobalMessage, deleteSupportMessage, subscribeAllSupportThreads, sendGlobalMessage, sendSupportMessage, subscribeToCompareAnalytics, deleteCompareAnalyticsByQuery, addCompreBookNote, deleteCompreBookNote, getCompreBookNotes, updateCompreBookNote, getAppFeedbacks, exportBackupAsJson, importBackupFromJson, subscribeSuggestions, adminReplySuggestion, deleteSuggestion, reactToSuggestion, resolvesuggestion, applyNoteCorrection, applyMcqCorrection, applyMcqFullEdit, saveMcqLesson, fetchMcqLesson, deleteMcqLesson, getUserByMobileOrId } from '../firebase'; // IMPORT FIREBASE
+import { saveChapterData, bulkSaveLinks, checkFirebaseConnection, saveSystemSettings, subscribeToUsers, getUsersPage, subscribeToRecentUsers, rtdb, saveUserToLive, db, getChapterData, saveCustomSyllabus, deleteCustomSyllabus, subscribeToUniversalAnalysis, saveAiInteraction, saveSecureKeys, getSecureKeys, subscribeToApiUsage, subscribeToDrafts, resetAllContent, recoverContentFromCache, checkRecoveryStatus, backupAllContentToFirebase, restoreContentFromFirebaseBackup, rebuildContentIndex, deleteHomeworkEntry, deleteLucentEntry, subscribeToDemands, updateDemandStatus, subscribeGlobalChat, subscribeSupportChat, deleteGlobalMessage, deleteSupportMessage, subscribeAllSupportThreads, sendGlobalMessage, sendSupportMessage, subscribeToCompareAnalytics, deleteCompareAnalyticsByQuery, addCompreBookNote, deleteCompreBookNote, getCompreBookNotes, updateCompreBookNote, getAppFeedbacks, exportBackupAsJson, importBackupFromJson, subscribeSuggestions, adminReplySuggestion, deleteSuggestion, reactToSuggestion, resolvesuggestion, applyNoteCorrection, applyMcqCorrection, applyMcqFullEdit, saveMcqLesson, fetchMcqLesson, deleteMcqLesson, getUserByMobileOrId, VAPID_KEY } from '../firebase'; // IMPORT FIREBASE
+import { getStoredFcmToken, getNotificationPermissionStatus, subscribeUserToPush, dispatchSmartNotification } from './NotificationManager';
 import { subscribeToMaintenance, saveMaintenance, clearMaintenance, markCrashFixed, MaintenanceState, MaintenanceTarget } from '../utils/maintenanceManager';
 import { ref, set, onValue, update, push, get, query as rtdbQueryAdmin, orderByChild as obcAdmin, limitToLast as ltlAdmin } from "firebase/database";
 import { doc, deleteDoc, setDoc, getDocs, collection, writeBatch, deleteField } from "firebase/firestore";
@@ -17972,6 +17973,182 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                         ))}
                       </div>
                     )}
+                  </div>
+                );
+              })()}
+
+              {/* FCM CLOUD MESSAGING & WEB PUSH DIAGNOSTIC */}
+              {(() => {
+                const [diagToken, setDiagToken] = useState<string | null>(() => getStoredFcmToken());
+                const [diagPerm, setDiagPerm] = useState<string>(() => getNotificationPermissionStatus());
+                const [diagLoading, setDiagLoading] = useState(false);
+                const [diagCopied, setDiagCopied] = useState(false);
+                const [diagKeyCopied, setDiagKeyCopied] = useState(false);
+                const [diagTestSent, setDiagTestSent] = useState(false);
+
+                const handleGetToken = async () => {
+                  setDiagLoading(true);
+                  try {
+                    const token = await subscribeUserToPush(user?.id);
+                    setDiagPerm(getNotificationPermissionStatus());
+                    if (token) {
+                      setDiagToken(token);
+                      alert('Success! FCM Device Token generated and saved in Firebase database.');
+                    } else {
+                      alert('Could not get token. Check if browser notification permission is allowed.');
+                    }
+                  } catch (err: any) {
+                    alert('Token request error: ' + (err?.message || err));
+                  } finally {
+                    setDiagLoading(false);
+                  }
+                };
+
+                const copyText = (val: string, isKey = false) => {
+                  try {
+                    navigator.clipboard.writeText(val);
+                    if (isKey) {
+                      setDiagKeyCopied(true);
+                      setTimeout(() => setDiagKeyCopied(false), 2000);
+                    } else {
+                      setDiagCopied(true);
+                      setTimeout(() => setDiagCopied(false), 2000);
+                    }
+                  } catch (_) {}
+                };
+
+                const triggerTestPush = async () => {
+                  setDiagTestSent(true);
+                  await dispatchSmartNotification({
+                    title: '🔔 Test Notification Successful!',
+                    body: 'Aapke device par push notification bilkul sahi kaam kar raha hai!',
+                    category: 'CHAT',
+                    url: '/'
+                  });
+                  setTimeout(() => setDiagTestSent(false), 3000);
+                };
+
+                return (
+                  <div className="bg-slate-900 text-white p-6 rounded-2xl border border-slate-800 mt-6 shadow-xl space-y-5">
+                    <div className="flex items-center justify-between flex-wrap gap-3 border-b border-slate-800 pb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                          <Bell size={20} />
+                        </div>
+                        <div>
+                          <h4 className="font-black text-white text-base flex items-center gap-2">
+                            Firebase Cloud Messaging (FCM Web Push) Diagnostic
+                          </h4>
+                          <p className="text-xs text-slate-400">VAPID Key verify karein, FCM Device Token dekhein aur test notification bhejein</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={triggerTestPush}
+                        className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-bold shadow-lg transition-all flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Sparkles size={14} className="text-amber-300" />
+                        <span>{diagTestSent ? '✓ Notification Triggered!' : 'Send Test Notification to This Device'}</span>
+                      </button>
+                    </div>
+
+                    {/* VAPID Public Key Card */}
+                    <div className="bg-slate-950/70 p-4 rounded-xl border border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                          <Key size={14} className="text-amber-400" /> Active VAPID Public Key (Web Push Certificate)
+                        </span>
+                        <span className="text-[10px] bg-emerald-500/20 text-emerald-400 font-bold px-2 py-0.5 rounded-full border border-emerald-500/30">
+                          Active in Code
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <code className="text-[11px] font-mono bg-slate-900 text-amber-200 px-3 py-2 rounded-lg border border-slate-800 flex-1 truncate select-all">
+                          {VAPID_KEY}
+                        </code>
+                        <button
+                          onClick={() => copyText(VAPID_KEY, true)}
+                          className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg flex items-center gap-1 cursor-pointer transition-colors shrink-0"
+                        >
+                          <Copy size={13} /> {diagKeyCopied ? 'Copied!' : 'Copy Key'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Permission Status & Device FCM Token */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="bg-slate-950/70 p-4 rounded-xl border border-slate-800 space-y-2">
+                        <span className="text-xs font-bold text-slate-300">Browser Notification Permission</span>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`text-xs font-black uppercase px-2.5 py-1 rounded-lg ${
+                            diagPerm === 'granted'
+                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                              : diagPerm === 'denied'
+                              ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                              : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                          }`}>
+                            Status: {diagPerm}
+                          </span>
+                          <button
+                            onClick={handleGetToken}
+                            disabled={diagLoading}
+                            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg cursor-pointer transition-colors"
+                          >
+                            {diagLoading ? 'Generating...' : diagPerm === 'granted' ? 'Refresh Token' : 'Allow & Get Token'}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-950/70 p-4 rounded-xl border border-slate-800 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-300">Device FCM Registration Token</span>
+                          {diagToken && (
+                            <button
+                              onClick={() => copyText(diagToken, false)}
+                              className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 cursor-pointer"
+                            >
+                              <Copy size={11} /> {diagCopied ? 'Copied!' : 'Copy Token for Firebase'}
+                            </button>
+                          )}
+                        </div>
+                        {diagToken ? (
+                          <p className="text-[11px] font-mono text-slate-300 truncate bg-slate-900 px-3 py-2 rounded-lg border border-slate-800 select-all">
+                            {diagToken}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-amber-400/90 italic">
+                            Token not generated yet. Click "Allow &amp; Get Token" to generate.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Step-by-step Troubleshooting Explanation */}
+                    <div className="bg-amber-950/20 border border-amber-500/30 p-4 rounded-xl space-y-3">
+                      <h5 className="text-xs font-black text-amber-300 uppercase tracking-wide flex items-center gap-2">
+                        <HelpCircle size={15} />
+                        Notification kyu nahi aa raha tha? (Explanation &amp; Solution)
+                      </h5>
+                      <div className="text-xs text-slate-300 space-y-2.5 leading-relaxed">
+                        <p>
+                          <strong className="text-amber-200">1. VAPID Key vs FCM Device Token:</strong> Jo key aapne daali hai (<code className="text-[11px] text-amber-300">BIZ9FrX...</code>), wo Web Push Certificate (Public VAPID Key) hai. VAPID key ka kaam sirf user ke browser se device ka unique <strong>FCM Device Token</strong> generate karna hota hai. Sirf key add karne se notification apne aap nahi aate.
+                        </p>
+                        <p>
+                          <strong className="text-amber-200">2. Firebase Console me "Send test message" karte waqt kya daalein:</strong>
+                        </p>
+                        <ol className="list-decimal pl-5 space-y-1 text-slate-300 text-[11px]">
+                          <li>Upar diye gaye <strong className="text-white">"Copy Token for Firebase"</strong> button par click karke apna Device Token copy karein (jo <code className="text-amber-300">d7vX...:APA91b...</code> jaisa hota hai).</li>
+                          <li>Firebase Console kholein ➔ <strong className="text-white">Cloud Messaging</strong> (ya Engage &gt; Messaging).</li>
+                          <li><strong className="text-white">"New campaign"</strong> ➔ <strong className="text-white">"Firebase Notification messages"</strong> par click karein.</li>
+                          <li>Notification Title aur Message text likhein.</li>
+                          <li>Right preview panel me <strong className="text-white">"Send test message"</strong> button dabayein.</li>
+                          <li>Wahan <strong className="text-white">"Add an FCM registration token"</strong> ka input box milega — usme apna copied <strong>FCM Device Token</strong> paste karein (VAPID key mat daalna!).</li>
+                          <li><strong className="text-white">"Test"</strong> button par click karein ➔ Turant aapke browser/mobile screen par notification popup aa jayega!</li>
+                        </ol>
+                        <p className="text-[11px] text-slate-400">
+                          <strong>Note:</strong> Agar app tab open hai, to ab humne foreground handler bhi add kar diya hai taaki open app me bhi alert screen par dikhe.
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 );
               })()}

@@ -100,7 +100,7 @@ import { FreeSubjectLessonPopup } from './components/FreeSubjectLessonPopup';
 import { McqLimitLockedPopup } from './components/McqLimitLockedPopup';
 
 import { StreakLoginPopup } from './components/StreakLoginPopup';
-import { checkEveningStreakReminder } from './components/NotificationManager';
+import { checkEveningStreakReminder, listenToForegroundMessages } from './components/NotificationManager';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { logErrorToFirebase, setErrorLoggerUser } from './utils/errorLogger';
 import { MaintenanceBanner, AdminCrashPopup, MaintenanceScreen } from './components/MaintenanceScreen';
@@ -134,6 +134,20 @@ const App: React.FC = () => {
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 
   useEffect(() => { initPerfMode(); }, []);
+
+  // Listen for foreground push notifications (FCM) so alerts are visible even when app is open
+  useEffect(() => {
+    let unsubscribe: any = null;
+    listenToForegroundMessages((payload) => {
+      console.log('[App] Foreground FCM push received:', payload);
+    }).then(unsub => {
+      unsubscribe = unsub;
+    }).catch(() => {});
+
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, []);
 
   // ── Immortal Storage: 30-din purani history cleanup (app open hone par) ──
   useEffect(() => {

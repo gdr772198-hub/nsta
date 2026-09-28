@@ -11,14 +11,20 @@ export const NotificationPrompt: React.FC<Props> = ({ userId }) => {
     const [enabledSuccess, setEnabledSuccess] = useState(false);
 
     useEffect(() => {
-        // Wait 10 seconds before prompting so user can first explore the app
+        // 1. If permission is already granted, ensure device FCM token is synced to database
+        if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+            subscribeUserToPush(userId).catch(() => {});
+            return;
+        }
+
+        // 2. Prompt gently after 2.5 seconds so mobile users can quickly enable notifications
         const timer = setTimeout(() => {
              if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default' && !localStorage.getItem('nst_push_prompt_dismissed')) {
                  setShowPrompt(true);
              }
-        }, 10000);
+        }, 2500);
         return () => clearTimeout(timer);
-    }, []);
+    }, [userId]);
 
     const handleEnable = async () => {
         try {

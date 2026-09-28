@@ -99,7 +99,17 @@ export const saveFcmToken = async (userId: string, token: string) => {
   }
 };
 
-export const listenToForegroundMessages = async (onMessageReceived: (payload: any) => void) => {
+export const getStoredFcmToken = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('nst_fcm_token');
+};
+
+export const getNotificationPermissionStatus = (): NotificationPermission | 'unsupported' => {
+  if (typeof window === 'undefined' || !('Notification' in window)) return 'unsupported';
+  return Notification.permission;
+};
+
+export const listenToForegroundMessages = async (onMessageReceived?: (payload: any) => void) => {
   try {
     const messaging = await getFirebaseMessaging();
     if (!messaging) return () => {};
@@ -107,7 +117,47 @@ export const listenToForegroundMessages = async (onMessageReceived: (payload: an
     const { onMessage } = await import('firebase/messaging');
     return onMessage(messaging, (payload) => {
       console.log('[NotificationManager] Foreground message received:', payload);
-      onMessageReceived(payload);
+      
+      // 1. Invoke custom callback
+      if (onMessageReceived) {
+        try { onMessageReceived(payload); } catch (_) {}
+      }
+
+      // 2. Automatically display visual alert so user sees it even when app is open!
+      const title = payload.notification?.title || payload.data?.title || 'NSTA Study Alert';
+      const body = payload.notification?.body || payload.data?.body || 'New update received!';
+      const icon = payload.notification?.icon || payload.data?.icon || '/icons/icon-192.png';
+
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        try {
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.ready.then((reg) => {
+              reg.showNotification(title, {
+                body,
+                icon,
+                badge: '/favicon.svg',
+                tag: 'fcm-foreground-' + Date.now(),
+                data: payload.data,
+              });
+            }).catch(() => {
+              try { new Notification(title, { body, icon }); } catch (_) {}
+            });
+          } else {
+            try { new Notification(title, { body, icon }); } catch (_) {}
+          }
+        } catch (_) {}
+      }
+
+      // Also trigger chime & custom event for in-app toasts
+      try {
+        const audio = new Audio('/branding/notification.mp3');
+        audio.volume = 0.5;
+        audio.play().catch(() => {});
+      } catch (_) {}
+
+      window.dispatchEvent(new CustomEvent('nst_foreground_notification', {
+        detail: { title, body, payload }
+      }));
     });
   } catch (e) {
     console.warn('[NotificationManager] listenToForegroundMessages error:', e);
@@ -156,13 +206,25 @@ export const dispatchSmartNotification = async (payload: SmartNotificationPayloa
   // 2. Direct Chat & Friend Request: Instant notification with vibration
   if (category === 'CHAT' || category === 'FRIEND_REQUEST') {
     try {
+      // Audio chime & mobile hardware vibration
+      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        try { navigator.vibrate([200, 100, 200]); } catch (_) {}
+      }
+
+      // Play soft notification sound if available
+      try {
+        const audio = new Audio('/branding/notification.mp3');
+        audio.volume = 0.6;
+        audio.play().catch(() => {});
+      } catch (_) {}
+
       if ('serviceWorker' in navigator) {
         const reg = await navigator.serviceWorker.ready;
         reg.showNotification(title, {
           body,
           icon: '/icons/icon-192.png',
           badge: '/favicon.svg',
-          tag: senderId ? `chat-${senderId}` : 'direct-chat',
+          tag: senderId ? `req-${senderId}` : 'friend-request',
           vibrate: [200, 100, 200],
           renotify: true,
           data: { url, category, senderId }
