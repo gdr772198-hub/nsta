@@ -31,10 +31,16 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-messaging.onBackgroundMessage((payload: {
+type NstaPushPayload = {
   data?: Record<string, string>;
   notification?: { title?: string; body?: string; icon?: string };
-}) => {
+  from?: string;
+  messageId?: string;
+  collapse_key?: string;
+  fcmOptions?: unknown;
+};
+
+const showNstaNotification = (payload: NstaPushPayload) => {
   const data = payload.data || {};
   const title = data.title || payload.notification?.title || 'NSTA Study App';
   const body = data.body || payload.notification?.body || 'New notification received!';
@@ -56,6 +62,33 @@ messaging.onBackgroundMessage((payload: {
       { action: 'dismiss', title: 'Dismiss' },
     ],
   });
+};
+
+// Keep an explicit Push API listener in the PWA worker. This makes push
+// capability discoverable to PWA validators while Firebase handles FCM
+// messages through onBackgroundMessage below.
+self.addEventListener('push', (event: PushEvent) => {
+  if (!event.data) return;
+
+  let payload: NstaPushPayload;
+  try {
+    payload = event.data.json() as NstaPushPayload;
+  } catch {
+    payload = { data: { body: event.data.text() } };
+  }
+
+  // The Firebase Messaging SDK owns FCM delivery. The fallback is only for
+  // ordinary Web Push payloads that arrive through the browser Push API.
+  const isFirebaseMessage = Boolean(
+    payload.from || payload.messageId || payload.collapse_key || payload.fcmOptions,
+  );
+  if (isFirebaseMessage) return;
+
+  event.waitUntil(showNstaNotification(payload));
+});
+
+messaging.onBackgroundMessage((payload: NstaPushPayload) => {
+  return showNstaNotification(payload);
 });
 
 self.addEventListener('notificationclick', (event) => {
