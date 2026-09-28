@@ -142,14 +142,37 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
   return false;
 };
 
+const FCM_SERVICE_WORKER_PATH = '/firebase-messaging-sw.js';
+const FCM_SERVICE_WORKER_SCOPE = '/firebase-messaging/';
+
 const getFcmServiceWorkerRegistration = async (): Promise<ServiceWorkerRegistration> => {
-  // Use the same /sw.js worker that powers the installable PWA. A separate
-  // Firebase-only worker is invisible to PWA validators and can split push
-  // behavior across scopes.
-  const existing = await navigator.serviceWorker.getRegistration();
-  if (existing) return existing;
-  if (navigator.serviceWorker.ready) return navigator.serviceWorker.ready;
-  return navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
+  // Keep FCM on its own scope. Reusing the Workbox PWA registration can leave
+  // getToken attached to the wrong PushSubscription after a PWA update, which
+  // makes foreground alerts appear to work while closed-app delivery stops.
+  const registrations = await navigator.serviceWorker.getRegistrations();
+  const scopedRegistration = registrations.find(
+    (registration) =>
+      registration.scope.endsWith(FCM_SERVICE_WORKER_SCOPE) ||
+      registration.active?.scriptURL.endsWith(FCM_SERVICE_WORKER_PATH),
+  );
+  if (scopedRegistration) return scopedRegistration;
+
+  // Remove the legacy root-scoped FCM registration if an older build created
+  // one. The root scope belongs to the PWA worker.
+  await Promise.all(
+    registrations
+      .filter(
+        (registration) =>
+          registration.active?.scriptURL.endsWith(FCM_SERVICE_WORKER_PATH) &&
+          !registration.scope.endsWith(FCM_SERVICE_WORKER_SCOPE),
+      )
+      .map((registration) => registration.unregister()),
+  );
+
+  return navigator.serviceWorker.register(FCM_SERVICE_WORKER_PATH, {
+    scope: FCM_SERVICE_WORKER_SCOPE,
+    updateViaCache: 'none',
+  });
 };
 
 export const subscribeUserToPush = async (userId?: string): Promise<string | null> => {
@@ -164,7 +187,7 @@ export const subscribeUserToPush = async (userId?: string): Promise<string | nul
       return null;
     }
 
-    // Firebase Messaging now uses the main Workbox+FCM PWA worker.
+    // Firebase Messaging uses its dedicated worker, separate from the PWA worker.
     const swReg = await getFcmServiceWorkerRegistration();
 
     const messaging = await getFirebaseMessaging();
@@ -201,12 +224,16 @@ export const subscribeUserToPush = async (userId?: string): Promise<string | nul
 export const saveFcmToken = async (userId: string, token: string) => {
   if (!userId || !token) return;
   try {
+    const safeUserId = String(userId).replace(/[.#$[\]/]/g, '_');
+
     // Save in RTDB
-    const tokenRef = ref(rtdb, `users/${userId}/fcmToken`);
-    await set(tokenRef, token).catch(() => {});
+    await Promise.all([
+      set(ref(rtdb, `users/${safeUserId}/fcmToken`), token),
+      set(ref(rtdb, `users/${safeUserId}/notificationTokenUpdatedAt`), new Date().toISOString()),
+    ]).catch(() => {});
 
     // Save in user's token list for broadcast pushes
-    const broadcastRef = ref(rtdb, `fcm_tokens/${userId}`);
+    const broadcastRef = ref(rtdb, `fcm_tokens/${safeUserId}`);
     await set(broadcastRef, {
       token,
       updatedAt: new Date().toISOString(),
@@ -215,7 +242,7 @@ export const saveFcmToken = async (userId: string, token: string) => {
     }).catch(() => {});
 
     // Save in Firestore
-    const userDoc = doc(db, 'users', userId);
+    const userDoc = doc(db, 'users', safeUserId);
     await updateDoc(userDoc, { fcmToken: token }).catch(() => {});
   } catch (e) {
     console.warn('[NotificationManager] Token save non-fatal error:', e);

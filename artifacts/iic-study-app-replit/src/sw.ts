@@ -16,21 +16,6 @@ precacheAndRoute(self.__WB_MANIFEST);
 self.skipWaiting();
 clientsClaim();
 
-importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js');
-
-firebase.initializeApp({
-  apiKey: 'AIzaSyBEDKZVPgwOPCccjWdKSShfvSqC3REDa0c',
-  authDomain: 'iic-nst.firebaseapp.com',
-  databaseURL: 'https://iic-nst-default-rtdb.firebaseio.com',
-  projectId: 'iic-nst',
-  storageBucket: 'iic-nst.firebasestorage.app',
-  messagingSenderId: '984309241322',
-  appId: '1:984309241322:web:4dae35987732d630e64e93',
-});
-
-const messaging = firebase.messaging();
-
 type NstaPushPayload = {
   data?: Record<string, string>;
   notification?: { title?: string; body?: string; icon?: string };
@@ -48,7 +33,7 @@ const showNstaNotification = (payload: NstaPushPayload) => {
   const url = data.url || '/';
   const urgent = type === 'CHAT' || type === 'FRIEND_REQUEST' || type === 'DIRECT_MESSAGE';
 
-  return self.registration.showNotification(title, {
+  const options = {
     body,
     icon: data.icon || data.senderPhoto || payload.notification?.icon || '/favicon.svg',
     badge: '/favicon.svg',
@@ -61,7 +46,12 @@ const showNstaNotification = (payload: NstaPushPayload) => {
       { action: 'open', title: 'Open App' },
       { action: 'dismiss', title: 'Dismiss' },
     ],
-  });
+  } as NotificationOptions & {
+    renotify?: boolean;
+    vibrate?: number[];
+  };
+
+  return self.registration.showNotification(title, options);
 };
 
 // Keep an explicit Push API listener in the PWA worker. This makes push
@@ -85,10 +75,6 @@ self.addEventListener('push', (event: PushEvent) => {
   if (isFirebaseMessage) return;
 
   event.waitUntil(showNstaNotification(payload));
-});
-
-messaging.onBackgroundMessage((payload: NstaPushPayload) => {
-  return showNstaNotification(payload);
 });
 
 self.addEventListener('notificationclick', (event) => {

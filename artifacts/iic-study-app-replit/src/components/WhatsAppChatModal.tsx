@@ -2134,11 +2134,26 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     return allMyUserIdsKey ? allMyUserIdsKey.split(',') : [];
   }, [allMyUserIdsKey]);
 
-  // Check if a message was authored by the current user across all user aliases
+  // Message ownership must use stable account identifiers only. Email, mobile,
+  // and display aliases are used for friend-request fan-out, but treating them
+  // as message authors can make a friend's incoming message look like ours
+  // when an old/incorrect profile record shares one of those values.
+  const messageOwnerIds = React.useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [effectiveUserId, user?.id, (user as any)?.uid, currentUid]
+            .filter(Boolean)
+            .map((id) => String(id).trim()),
+        ),
+      ),
+    [effectiveUserId, user?.id, (user as any)?.uid, currentUid],
+  );
+
+  // Check if a message was authored by the current account.
   const isMsgSentByMe = (msg?: ChatMessage | null): boolean => {
     if (!msg) return false;
-    if (isSameUser(msg.senderId, effectiveUserId) || isSameUser(msg.senderId, user?.id)) return true;
-    return allMyUserIds.some((id) => isSameUser(msg.senderId, id));
+    return messageOwnerIds.some((id) => isSameUser(msg.senderId, id));
   };
 
   // 1. Subscribe to confirmed friends
