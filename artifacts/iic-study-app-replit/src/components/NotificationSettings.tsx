@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Bell, BellOff, Check, Clock, Settings, X } from 'lucide-react';
 import {
   hydrateNotificationPreferences,
@@ -12,13 +13,15 @@ import {
 
 interface Props {
   userId: string;
+  placement?: 'floating' | 'topbar';
 }
 
-export const NotificationSettings: React.FC<Props> = ({ userId }) => {
+export const NotificationSettings: React.FC<Props> = ({ userId, placement = 'floating' }) => {
   const [open, setOpen] = useState(false);
   const [preferences, setPreferences] = useState<NotificationPreferences>(() => loadNotificationPreferences(userId));
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const isTopbar = placement === 'topbar';
 
   useEffect(() => {
     let active = true;
@@ -51,14 +54,18 @@ export const NotificationSettings: React.FC<Props> = ({ userId }) => {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-28 right-3 z-40 flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-700 shadow-lg transition hover:scale-105 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+        className={isTopbar
+          ? "relative p-1.5 rounded-xl transition-all text-white hover:bg-white/10 active:scale-95 shrink-0"
+          : "fixed bottom-28 right-3 z-40 flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-700 shadow-lg transition hover:scale-105 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"}
         aria-label="Notification settings"
         title="Notification settings"
       >
-        {preferences.enabled ? <Bell size={17} /> : <BellOff size={17} />}
+        {preferences.enabled
+          ? <Bell size={17} className={isTopbar ? "text-amber-200" : undefined} />
+          : <BellOff size={17} className={isTopbar ? "text-slate-300" : undefined} />}
       </button>
 
-      {open && (
+      {open && typeof document !== 'undefined' && createPortal(
         <div className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/50 p-3 sm:items-center">
           <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-5 shadow-2xl dark:bg-slate-900">
             <div className="mb-5 flex items-start justify-between gap-4">
@@ -139,7 +146,8 @@ export const NotificationSettings: React.FC<Props> = ({ userId }) => {
               {saving ? 'Saving...' : saved ? 'Saved' : 'Save notification settings'}
             </button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );

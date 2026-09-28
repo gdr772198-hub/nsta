@@ -16783,7 +16783,6 @@ export const StudentDashboard: React.FC<Props> = ({
   <ThemeProvider theme={_extendedTheme}>
     <div data-tier={tierTheme.tier} className="min-h-[100dvh] pb-0" style={{ background: _appBg }}>
       <NotificationPrompt userId={user.id} />
-      <NotificationSettings userId={user.id} />
       {/* Admin WhiteBoard floating panel — fixed z-[9999], visible in ALL modes */}
       {_isAdminUser && showAdminBoard && (
         <AdminWhiteBoard onClose={() => setShowAdminBoard(false)} />
@@ -16887,7 +16886,7 @@ export const StudentDashboard: React.FC<Props> = ({
             </button>
           </div>
 
-          {/* RIGHT: event + streak + mail + 5 connection dots + 3-dot menu */}
+          {/* RIGHT: event + streak + mail + notifications + 5 connection dots + 3-dot menu */}
           <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
             {/* Event badge — shows BEFORE streak; auto-hides when no active/upcoming events */}
             {(() => {
@@ -17506,23 +17505,8 @@ export const StudentDashboard: React.FC<Props> = ({
               );
             })()}
 
-            {/* Nsta Messenger Direct Button with Friend Request Badge */}
-            <button
-              id="topbar-messenger-btn"
-              onClick={() => {
-                hapticMedium();
-                setShowWhatsAppChatModal(true);
-              }}
-              className="relative p-1.5 rounded-xl transition-all text-white hover:bg-white/10 active:scale-95 shrink-0"
-              title="Nsta Messenger & Friend Requests"
-            >
-              <MessageSquare size={17} className="text-emerald-300 hover:text-white transition-colors" />
-              {incomingFriendRequestsCount > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-1 rounded-full bg-emerald-500 text-white text-[9px] font-black flex items-center justify-center shadow animate-pulse border border-white/20">
-                  {incomingFriendRequestsCount > 9 ? '9+' : incomingFriendRequestsCount}
-                </span>
-              )}
-            </button>
+            {/* Notification settings — moved into the top bar */}
+            <NotificationSettings userId={user.id} placement="topbar" />
 
             {/* My Offline Downloads Hub button */}
             <button
