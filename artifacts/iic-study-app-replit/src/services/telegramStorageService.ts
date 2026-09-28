@@ -18,6 +18,12 @@
 
 export const DEFAULT_STORAGE_CHAT_ID = '7849468653'; // Verified Telegram chat ID
 export const DEFAULT_BOT_TOKEN = '8938213127:AAEjjjXmxjOuqpo5PP2TgorWOa17uYeD-Dw';
+export const DEFAULT_STORAGE_BOT_TOKEN = '8938213127:AAEjjjXmxjOuqpo5PP2TgorWOa17uYeD-Dw';
+
+// Chat Bot & Channel (Nsta Messenger & Community)
+export const DEFAULT_CHAT_CHANNEL_ID = '-1004290996442'; // Nsta messanger channel
+export const DEFAULT_CHAT_BOT_TOKEN = '8932524192:AAGVxYSuKPZX6sOQFkXz0U7ESVQ2NcHmJZw'; // @PothiaAppBot
+export const TELEGRAM_CHAT_INVITE_LINK = 'https://t.me/+p0aIY7YWgGxhYzk1';
 const STORAGE_CHAT_KEY = 'nst_telegram_storage_chat_id';
 
 export interface TelegramUploadResult {
@@ -503,3 +509,56 @@ export async function uploadVideoToTelegram(
   });
   return result.url;
 }
+
+/**
+ * Sends a message to the Telegram Chat Channel
+ */
+export async function sendTelegramChatMessage(
+  text: string,
+  options?: { chatId?: string; replyToMessageId?: number; parseMode?: string }
+): Promise<{ ok: boolean; result?: any; error?: string }> {
+  try {
+    const res = await fetch('/api/telegram/sendMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        chat_id: options?.chatId || DEFAULT_CHAT_CHANNEL_ID,
+        reply_to_message_id: options?.replyToMessageId,
+        parse_mode: options?.parseMode || 'HTML',
+      }),
+    });
+    return await res.json();
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Failed to send Telegram message' };
+  }
+}
+
+/**
+ * Syncs a new Community post to the Telegram Channel
+ */
+export async function sendTelegramCommunityPost(post: {
+  authorName: string;
+  authorRole?: string;
+  text?: string;
+  category?: string;
+  imageUrl?: string;
+  videoUrl?: string;
+}): Promise<void> {
+  try {
+    const roleBadge = post.authorRole ? ` [${post.authorRole}]` : '';
+    const categoryBadge = post.category ? `📌 <b>#${post.category.replace(/\s+/g, '_')}</b>\n` : '';
+    const mediaBadge = post.imageUrl
+      ? `\n🖼️ <a href="${post.imageUrl}">View Attached Image</a>`
+      : post.videoUrl
+      ? `\n🎥 <a href="${post.videoUrl}">Watch Attached Video</a>`
+      : '';
+
+    const formattedMessage = `📢 <b>NSTA Community Post</b>\n👤 <b>${post.authorName}${roleBadge}</b>\n${categoryBadge}\n${post.text || '(Shared Media)'}${mediaBadge}`;
+
+    await sendTelegramChatMessage(formattedMessage);
+  } catch (err) {
+    console.warn('[Telegram Community Sync] Notice:', err);
+  }
+}
+

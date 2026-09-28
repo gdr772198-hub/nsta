@@ -2,14 +2,20 @@ import type { Plugin } from 'vite';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 
-const DEFAULT_BOT_TOKEN = '8938213127:AAEjjjXmxjOuqpo5PP2TgorWOa17uYeD-Dw';
+// 1. Storage Bot: Used for PDFs, videos, audio recordings & study vault
+const DEFAULT_STORAGE_BOT_TOKEN = '8938213127:AAEjjjXmxjOuqpo5PP2TgorWOa17uYeD-Dw';
 const DEFAULT_STORAGE_CHAT_ID = '7849468653';
 
-function getBotToken(): string {
+// 2. Chat Bot & Channel: Used for NSTA Messenger & Community Chat sync
+const DEFAULT_CHAT_BOT_TOKEN = '8932524192:AAGVxYSuKPZX6sOQFkXz0U7ESVQ2NcHmJZw';
+const DEFAULT_CHAT_CHANNEL_ID = '-1004290996442';
+
+function getStorageBotToken(): string {
   return (
+    process.env.TELEGRAM_STORAGE_BOT_TOKEN?.trim() ||
     process.env.TELEGRAM_BOT_TOKEN?.trim() ||
     process.env.VITE_TELEGRAM_BOT_TOKEN?.trim() ||
-    DEFAULT_BOT_TOKEN
+    DEFAULT_STORAGE_BOT_TOKEN
   );
 }
 
@@ -18,6 +24,20 @@ function getStorageChatId(): string {
     process.env.TELEGRAM_STORAGE_CHAT_ID?.trim() ||
     process.env.VITE_TELEGRAM_STORAGE_CHAT_ID?.trim() ||
     DEFAULT_STORAGE_CHAT_ID
+  );
+}
+
+function getChatBotToken(): string {
+  return (
+    process.env.TELEGRAM_CHAT_BOT_TOKEN?.trim() ||
+    DEFAULT_CHAT_BOT_TOKEN
+  );
+}
+
+function getChatChannelId(): string {
+  return (
+    process.env.TELEGRAM_CHAT_CHANNEL_ID?.trim() ||
+    DEFAULT_CHAT_CHANNEL_ID
   );
 }
 
@@ -74,27 +94,37 @@ export async function handleTelegramMiddleware(
   const parsedUrl = new URL(rawUrl, 'http://localhost');
   const pathname = parsedUrl.pathname;
 
-  const botToken = getBotToken();
-  const defaultChatId = getStorageChatId();
+  const storageBotToken = getStorageBotToken();
+  const storageChatId = getStorageChatId();
+  const chatBotToken = getChatBotToken();
+  const chatChannelId = getChatChannelId();
 
   // 1. Healthcheck: GET /api/telegram/health
   if (pathname === '/api/telegram/health') {
     try {
-      const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
-      const rawText = await tgRes.text();
-      let tgJson: any = null;
-      try {
-        tgJson = rawText ? JSON.parse(rawText) : null;
-      } catch {}
+      const [storageRes, chatRes] = await Promise.allSettled([
+        fetch(`https://api.telegram.org/bot${storageBotToken}/getMe`).then((r) => r.json()),
+        fetch(`https://api.telegram.org/bot${chatBotToken}/getMe`).then((r) => r.json()),
+      ]);
 
-      res.statusCode = tgRes.ok && tgJson?.ok ? 200 : 502;
+      const storageJson = storageRes.status === 'fulfilled' ? storageRes.value : null;
+      const chatJson = chatRes.status === 'fulfilled' ? chatRes.value : null;
+
+      res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
       res.end(
         JSON.stringify({
-          ok: Boolean(tgJson?.ok),
-          bot: tgJson?.result,
-          storageChatId: defaultChatId,
-          configuredToken: botToken.slice(0, 10) + '...',
+          ok: Boolean(storageJson?.ok || chatJson?.ok),
+          storageBot: {
+            ok: Boolean(storageJson?.ok),
+            bot: storageJson?.result,
+            chatId: storageChatId,
+          },
+          chatBot: {
+            ok: Boolean(chatJson?.ok),
+            bot: chatJson?.result,
+            channelId: chatChannelId,
+          },
         })
       );
       return;
@@ -102,6 +132,93 @@ export async function handleTelegramMiddleware(
       res.statusCode = 500;
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ ok: false, error: err?.message || 'Health check failed' }));
+      return;
+    }
+  }
+
+  // 1b. Channel Info: GET /api/telegram/channelInfo
+  if (pathname === '/api/telegram/channelInfo') {
+    try {
+      const targetChatId = parsedUrl.searchParams.get('chat_id') || chatChannelId;
+      const tgRes = await fetch(`https://api.telegram.org/bot${chatBotToken}/getChat?chat_id=${encodeURIComponent(targetChatId)}`);
+      const tgJson = await tgRes.json();
+      res.statusCode = tgRes.ok && tgJson?.ok ? 200 : 502;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(tgJson));
+      return;
+    } catch (err: any) {
+      res.statusCode = 500;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ ok: false, error: err?.message || 'Failed to fetch channel info' }));
+      return;
+    }
+  }
+
+  // 1c. Send Message: POST /api/telegram/sendMessage
+  if (pathname === '/api/telegram/sendMessage') {
+    try {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) {
+        chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+      }
+      const bodyStr = Buffer.concat(chunks).toString('utf8');
+      const body = JSON.parse(bodyStr || '{}');
+
+      const targetChatId = body.chatId || body.chat_id || chatChannelId;
+      const messageText = body.text || '';
+      const parseMode = body.parse_mode || body.parseMode || 'HTML';
+
+      if (!messageText) {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ ok: false, error: 'Message text is required' }));
+        return;
+      }
+
+      const tgPayload: Record<string, any> = {
+        chat_id: targetChatId,
+        text: messageText,
+        parse_mode: parseMode,
+      };
+      if (body.reply_to_message_id) {
+        tgPayload.reply_to_message_id = body.reply_to_message_id;
+      }
+
+      const tgRes = await fetch(`https://api.telegram.org/bot${chatBotToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(tgPayload),
+      });
+
+      const tgJson = await tgRes.json();
+      res.statusCode = tgRes.ok && tgJson?.ok ? 200 : 400;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(tgJson));
+      return;
+    } catch (err: any) {
+      res.statusCode = 500;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ ok: false, error: err?.message || 'Failed to send message to Telegram' }));
+      return;
+    }
+  }
+
+  // 1d. Get Updates / Messages: GET /api/telegram/messages
+  if (pathname === '/api/telegram/messages' || pathname === '/api/telegram/updates') {
+    try {
+      const limit = parsedUrl.searchParams.get('limit') || '50';
+      const offset = parsedUrl.searchParams.get('offset') || '-50';
+      const tgRes = await fetch(`https://api.telegram.org/bot${chatBotToken}/getUpdates?offset=${offset}&limit=${limit}&allowed_updates=${encodeURIComponent(JSON.stringify(['message', 'channel_post']))}`);
+      const tgJson = await tgRes.json();
+
+      res.statusCode = tgRes.ok && tgJson?.ok ? 200 : 502;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(tgJson));
+      return;
+    } catch (err: any) {
+      res.statusCode = 500;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ ok: false, error: err?.message || 'Failed to fetch updates from Telegram' }));
       return;
     }
   }
@@ -116,10 +233,11 @@ export async function handleTelegramMiddleware(
     }
     try {
       const contentType = req.headers['content-type'] || '';
-      let targetChatId = defaultChatId;
+      let targetChatId = storageChatId;
       let caption = '';
       let fileBlob: Blob | null = null;
       let fileName = 'file';
+      let uploadBotToken = storageBotToken;
 
       if (contentType.includes('application/json')) {
         // Handle JSON payload with base64 data / dataURL
@@ -133,6 +251,9 @@ export async function handleTelegramMiddleware(
         if (json.chatId) targetChatId = String(json.chatId);
         if (json.caption) caption = String(json.caption);
         if (json.fileName) fileName = String(json.fileName);
+        if (json.bot === 'chat' || targetChatId === chatChannelId) {
+          uploadBotToken = chatBotToken;
+        }
 
         const dataStr: string = json.data || json.file || '';
         if (!dataStr) {
@@ -160,6 +281,9 @@ export async function handleTelegramMiddleware(
         if (formData.get('chat_id')) targetChatId = String(formData.get('chat_id'));
         if (formData.get('chatId')) targetChatId = String(formData.get('chatId'));
         if (formData.get('caption')) caption = String(formData.get('caption'));
+        if (formData.get('bot') === 'chat' || targetChatId === chatChannelId) {
+          uploadBotToken = chatBotToken;
+        }
 
         const fileEntry =
           formData.get('document') ||
@@ -209,7 +333,7 @@ export async function handleTelegramMiddleware(
         }
       }, 300000);
 
-      const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendDocument`, {
+      const tgRes = await fetch(`https://api.telegram.org/bot${uploadBotToken}/sendDocument`, {
         method: 'POST',
         body: tgFormData,
         signal: controller.signal,
@@ -251,7 +375,7 @@ export async function handleTelegramMiddleware(
       // Resolve file_path from Telegram CDN
       let filePath = '';
       try {
-        const pathRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
+        const pathRes = await fetch(`https://api.telegram.org/bot${uploadBotToken}/getFile?file_id=${fileId}`);
         const rawPathText = await pathRes.text();
         const pathJson = rawPathText ? JSON.parse(rawPathText) : null;
         if (pathJson?.ok && pathJson.result?.file_path) {
@@ -263,7 +387,7 @@ export async function handleTelegramMiddleware(
 
       const resolvedFileName = doc?.file_name || fileName;
       const proxyUrl = `/api/telegram/file?path=${encodeURIComponent(filePath)}&name=${encodeURIComponent(resolvedFileName)}`;
-      const directUrl = filePath ? `https://api.telegram.org/file/bot${botToken}/${filePath}` : '';
+      const directUrl = filePath ? `https://api.telegram.org/file/bot${uploadBotToken}/${filePath}` : '';
 
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
@@ -309,9 +433,14 @@ export async function handleTelegramMiddleware(
 
       if (!filePath && fileId) {
         try {
-          const pathRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
-          const rawPath = await pathRes.text();
-          const pathJson = rawPath ? JSON.parse(rawPath) : null;
+          let pathRes = await fetch(`https://api.telegram.org/bot${storageBotToken}/getFile?file_id=${fileId}`);
+          let rawPath = await pathRes.text();
+          let pathJson = rawPath ? JSON.parse(rawPath) : null;
+          if (!pathJson?.ok) {
+            pathRes = await fetch(`https://api.telegram.org/bot${chatBotToken}/getFile?file_id=${fileId}`);
+            rawPath = await pathRes.text();
+            pathJson = rawPath ? JSON.parse(rawPath) : null;
+          }
           if (pathJson?.ok && pathJson.result?.file_path) {
             filePath = pathJson.result.file_path;
           }
@@ -325,16 +454,24 @@ export async function handleTelegramMiddleware(
         return;
       }
 
-      const telegramCdnUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
-
       const headersToForward: Record<string, string> = {};
       if (req.headers.range) {
         headersToForward['Range'] = req.headers.range as string;
       }
 
-      const tgFileRes = await fetch(telegramCdnUrl, {
+      // Try storage bot first, fallback to chat bot if not found
+      let tgFileRes = await fetch(`https://api.telegram.org/file/bot${storageBotToken}/${filePath}`, {
         headers: headersToForward,
       });
+
+      if (!tgFileRes.ok && tgFileRes.status !== 206) {
+        const altFileRes = await fetch(`https://api.telegram.org/file/bot${chatBotToken}/${filePath}`, {
+          headers: headersToForward,
+        });
+        if (altFileRes.ok || altFileRes.status === 206) {
+          tgFileRes = altFileRes;
+        }
+      }
 
       if (!tgFileRes.ok && tgFileRes.status !== 206) {
         res.statusCode = tgFileRes.status;
@@ -371,7 +508,7 @@ export async function handleTelegramMiddleware(
       }
       return;
     } catch (err: any) {
-      console.error('[Telegram Storage Proxy] File stream error:', err);
+      console.error('[Telegram File Proxy] Streaming error:', err);
       res.statusCode = 500;
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ ok: false, error: err?.message || 'File streaming failed' }));

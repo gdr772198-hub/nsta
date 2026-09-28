@@ -486,3 +486,27 @@ body:has(.iic-modal-overlay) [data-nsta-fab] {
   visibility: hidden !important;
 }
 
+/* ── Video Player Fullscreen: Hides Top Bar AND Bottom Navigation Completely ── */
+body.nsta-video-fullscreen-active #top-banner-container,
+body.nsta-video-fullscreen-active [data-iic-topbar],
+body.nsta-video-fullscreen-active .iic-top-bar,
+body.nsta-video-fullscreen-active [data-iic-bottom-nav],
+body.nsta-video-fullscreen-active .iic-bottom-nav,
+body.nsta-video-fullscreen-active [data-iic-float-logo],
+body.nsta-video-fullscreen-active #nsta-floating-trigger,
+body.nsta-video-fullscreen-active [data-nsta-fab],
+html.nsta-video-fullscreen-active #top-banner-container,
+html.nsta-video-fullscreen-active [data-iic-bottom-nav],
+html.nsta-video-fullscreen-active .iic-bottom-nav,
+html.nsta-video-fullscreen-active #nsta-floating-trigger {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  overflow: hidden !important;
+}
+
+

@@ -1,5 +1,16 @@
 import React, { useState, useRef } from 'react';
-import { Upload, CheckCircle2, Loader2, Film, Music, FileText, Image as ImageIcon, ExternalLink, Trash2 } from 'lucide-react';
+import {
+  Upload,
+  CheckCircle2,
+  Loader2,
+  Film,
+  Music,
+  FileText,
+  Image as ImageIcon,
+  ExternalLink,
+  Trash2,
+  Cloud,
+} from 'lucide-react';
 import { uploadToTelegramStorage, resolveTelegramUrl } from '../services/telegramStorageService';
 import type { CloudinaryMediaKind } from '../services/cloudinaryService';
 
@@ -21,12 +32,13 @@ const ACCEPT_MAP: Record<CloudinaryMediaKind, string> = {
   auto: 'video/*,audio/*,application/pdf,image/*,.mp4,.mp3,.pdf',
 };
 
+// Cloud-neutral labels - hides underlying storage service completely
 const DEFAULT_LABEL: Record<CloudinaryMediaKind, string> = {
-  video: '📲 Telegram Video Upload',
-  audio: '📲 Telegram Audio Upload',
-  pdf: '📄 Telegram PDF Upload',
-  image: '📷 Telegram Photo Upload',
-  auto: '📁 Telegram File Upload',
+  video: '🎬 Upload Video',
+  audio: '🎵 Upload Audio',
+  pdf: '📄 Upload PDF Document',
+  image: '📷 Upload Photo',
+  auto: '📁 Upload File',
 };
 
 const COLOR_MAP: Record<CloudinaryMediaKind, string> = {
@@ -58,7 +70,9 @@ export const DirectUploadButton: React.FC<DirectUploadButtonProps> = (props) => 
     (currentUrl.includes('telegram') ||
       currentUrl.includes('/api/telegram/') ||
       currentUrl.includes('api.telegram.org') ||
-      currentUrl.includes('cloudinary.com'))
+      currentUrl.includes('cloudinary.com') ||
+      currentUrl.startsWith('http://') ||
+      currentUrl.startsWith('https://'))
   );
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -71,10 +85,9 @@ export const DirectUploadButton: React.FC<DirectUploadButtonProps> = (props) => 
     setJustUploaded(false);
 
     try {
-      // ── Telegram Cloud Storage Upload ──
       const tgRes = await uploadToTelegramStorage(file, {
         fileName: file.name,
-        caption: `NSTA App ${kind.toUpperCase()}: ${file.name}`,
+        caption: `App Content ${kind.toUpperCase()}: ${file.name}`,
         onProgress: (pct) => setProgress(pct),
       });
 
@@ -84,7 +97,7 @@ export const DirectUploadButton: React.FC<DirectUploadButtonProps> = (props) => 
         setJustUploaded(true);
         setTimeout(() => setJustUploaded(false), 4000);
       } else {
-        throw new Error('Telegram se link prapt nahi hua.');
+        throw new Error('Upload server se link prapt nahi hua.');
       }
     } catch (err: any) {
       setErrorMsg(err?.message || 'Upload fail ho gaya. Kripya dobara try karein.');
@@ -129,18 +142,19 @@ export const DirectUploadButton: React.FC<DirectUploadButtonProps> = (props) => 
           {renderIcon()}
           <span>
             {uploading
-              ? `Telegram Par Upload Ho Raha Hai ${progress}%...`
+              ? `Upload Ho Raha Hai ${progress}%...`
               : justUploaded
-              ? '✓ Telegram Par Save Ho Gaya!'
+              ? '✓ Safal Upload Ho Gaya!'
               : currentUrl
-              ? (label ? label : compact ? '🔄 Badlein' : '🔄 Nayi File Badlein')
+              ? (label ? label : compact ? '🔄 File Badlein' : '🔄 Nayi File Badlein')
               : label || DEFAULT_LABEL[kind]}
           </span>
         </button>
 
         {isStoredUrl && !uploading && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black bg-blue-100 text-blue-800 border border-blue-200">
-            ✓ Telegram Cloud Stored
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-100 text-emerald-800 border border-emerald-200">
+            <Cloud size={10} className="text-emerald-600" />
+            <span>Cloud Stored</span>
           </span>
         )}
 
@@ -151,9 +165,9 @@ export const DirectUploadButton: React.FC<DirectUploadButtonProps> = (props) => 
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 transition-colors"
-              title="Open/Test this file in a new tab"
+              title="Preview / Open this file"
             >
-              <ExternalLink size={10} /> Test / Dekhein
+              <ExternalLink size={10} /> Preview / Dekhein
             </a>
             {onClear && (
               <button

@@ -76,7 +76,7 @@ import { applyDeduction, getTotalCredits } from '../utils/creditSystem';
 import { logScoreActivity } from '../utils/scoreSystem';
 import { saveUserToLive, auth } from '../firebase';
 import { uploadImageToImgBB } from '../services/imgbbService';
-import { uploadImageToTelegram } from '../services/telegramStorageService';
+import { uploadImageToTelegram, uploadToTelegramStorage, resolveTelegramUrl } from '../services/telegramStorageService';
 import { uploadToCloudinary, getOptimizedVideoUrl } from '../services/cloudinaryService';
 import { ImageCropper } from './ImageCropper';
 import { ProfileCameraModal } from './ProfileCameraModal';
@@ -622,6 +622,16 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   // Playing voice message state (for listening to previous voice notes)
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
 
+  // Audio Voice Recording & Message States (Nsta Messenger)
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [voiceRecordingSeconds, setVoiceRecordingSeconds] = useState(0);
+  const [isUploadingVoice, setIsUploadingVoice] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const voiceTimerRef = useRef<any>(null);
+  const audioFileInputRef = useRef<HTMLInputElement | null>(null);
+  const activeVoiceAudioRef = useRef<HTMLAudioElement | null>(null);
+
   // Quick 1-tap friend request sending state
   const [sendingReqIds, setSendingReqIds] = useState<Set<string>>(new Set());
 
@@ -924,6 +934,242 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     } finally {
       setIsUploadingChatVideo(false);
     }
+  };
+
+  // ─── AUDIO VOICE RECORDING & MESSAGING (NSTA MESSENGER) ───────────────────
+  const startVoiceRecording = async () => {
+    try {
+      if (totalDailyMsgLimit !== Infinity && dailyMessagesSent >= totalDailyMsgLimit) {
+        setShowMessageLimitModal(true);
+        return;
+      }
+      if (selectedContact && isUserBlocked(selectedContact.id)) {
+        showToast('Aapne is user ko block kiya hua hai. Pehle unblock karein.');
+        return;
+      }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showToast('Microphone recording available nahi hai. Audio file chunein.');
+        audioFileInputRef.current?.click();
+        return;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const mimeType = (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm;codecs=opus'))
+        ? 'audio/webm;codecs=opus'
+        : (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/mp4'))
+        ? 'audio/mp4'
+        : 'audio/webm';
+
+      const recorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported(mimeType) ? mimeType : undefined });
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+      };
+
+      recorder.start(200);
+      setIsRecordingVoice(true);
+      setVoiceRecordingSeconds(0);
+      if (voiceTimerRef.current) clearInterval(voiceTimerRef.current);
+      voiceTimerRef.current = setInterval(() => {
+        setVoiceRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch (err: any) {
+      console.warn('Microphone permission error:', err);
+      showToast('Microphone access nahi mil paya. Audio file select karein.');
+      audioFileInputRef.current?.click();
+    }
+  };
+
+  const cancelVoiceRecording = () => {
+    if (voiceTimerRef.current) clearInterval(voiceTimerRef.current);
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try { mediaRecorderRef.current.stop(); } catch {}
+    }
+    setIsRecordingVoice(false);
+    setVoiceRecordingSeconds(0);
+    audioChunksRef.current = [];
+  };
+
+  const stopAndSendVoiceRecording = () => {
+    if (voiceTimerRef.current) clearInterval(voiceTimerRef.current);
+    const durationSec = voiceRecordingSeconds;
+    setIsRecordingVoice(false);
+    setVoiceRecordingSeconds(0);
+
+    if (!mediaRecorderRef.current) return;
+    const recorder = mediaRecorderRef.current;
+
+    recorder.onstop = async () => {
+      try {
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: recorder.mimeType || 'audio/webm',
+        });
+        audioChunksRef.current = [];
+        if (audioBlob.size < 100) return;
+
+        const ext = (recorder.mimeType && recorder.mimeType.includes('mp4')) ? 'mp4' : 'webm';
+        const audioFile = new File([audioBlob], `voice_${Date.now()}.${ext}`, {
+          type: audioBlob.type || 'audio/webm',
+        });
+
+        await handleSendAudioMessage(audioFile, Math.max(1, durationSec));
+      } catch (e: any) {
+        console.error('Audio recording upload error:', e);
+        showToast('Voice message upload fail ho gaya.');
+      }
+    };
+
+    if (recorder.state !== 'inactive') {
+      try { recorder.stop(); } catch {}
+    }
+  };
+
+  const handleSendAudioMessage = async (file: File, durationSec: number) => {
+    if (totalDailyMsgLimit !== Infinity && dailyMessagesSent >= totalDailyMsgLimit) {
+      setShowMessageLimitModal(true);
+      return;
+    }
+    if (selectedContact && isUserBlocked(selectedContact.id)) {
+      showToast('Aapne is user ko block kiya hua hai. Pehle unblock karein.');
+      return;
+    }
+
+    setIsUploadingVoice(true);
+    try {
+      const res = await uploadToTelegramStorage(file, {
+        type: 'audio',
+        fileName: file.name,
+      });
+      const audioUrl = res?.url;
+      if (!audioUrl) throw new Error('Audio link generate nahi ho saki.');
+
+      const userPhoto = user.photoURL || (user as any).avatarUrl;
+
+      if (totalDailyMsgLimit !== Infinity) {
+        const today = getTodayStr();
+        const nextSent = dailyMessagesSent + 1;
+        setDailyMessagesSent(nextSent);
+        try {
+          localStorage.setItem(`nsta_daily_msg_${user.id}_${today}`, String(nextSent));
+        } catch {}
+      }
+
+      if (selectedContact) {
+        const optimisticMsg: ChatMessage = {
+          id: `local_aud_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          senderId: effectiveUserId,
+          senderName: user.name || 'Student',
+          ...(userPhoto ? { senderPhoto: userPhoto } : {}),
+          text: '🎤 Voice message',
+          timestamp: Date.now(),
+          type: 'VOICE',
+          mediaUrl: audioUrl,
+          voiceDuration: durationSec,
+          status: 'SENT',
+          seen: false,
+          delivered: false,
+          readByRecipient: false,
+        };
+        setMessages((prev) => [
+          ...prev.filter((m) => !isMessageDeletedForUser(effectiveUserId, m)),
+          optimisticMsg,
+        ]);
+
+        await sendPrivateMessage(
+          effectiveUserId,
+          user.name || 'Student',
+          userPhoto,
+          selectedContact.id,
+          '🎤 Voice message',
+          'VOICE',
+          { mediaUrl: audioUrl, voiceDuration: durationSec }
+        );
+      } else if (selectedGroup) {
+        const optimisticMsg: ChatMessage = {
+          id: `local_grp_aud_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          senderId: effectiveUserId,
+          senderName: user.name || 'Student',
+          ...(userPhoto ? { senderPhoto: userPhoto } : {}),
+          text: '🎤 Voice message',
+          timestamp: Date.now(),
+          type: 'VOICE',
+          mediaUrl: audioUrl,
+          voiceDuration: durationSec,
+          status: 'SENT',
+          seen: false,
+          delivered: false,
+        };
+        setMessages((prev) => [
+          ...prev.filter((m) => !isMessageDeletedForUser(effectiveUserId, m)),
+          optimisticMsg,
+        ]);
+
+        await sendGroupMessage(
+          selectedGroup.id,
+          effectiveUserId,
+          user.name || 'Student',
+          userPhoto,
+          '🎤 Voice message',
+          'VOICE',
+          { mediaUrl: audioUrl, voiceDuration: durationSec }
+        );
+      }
+      showToast('🎤 Voice message bhej diya gaya!');
+    } catch (err: any) {
+      console.error('Audio message send error:', err);
+      showToast('Voice message bhejne me samasya aayi.');
+    } finally {
+      setIsUploadingVoice(false);
+    }
+  };
+
+  const handleToggleVoicePlayback = (msg: ChatMessage) => {
+    if (playingVoiceId === msg.id) {
+      if (activeVoiceAudioRef.current) {
+        activeVoiceAudioRef.current.pause();
+      }
+      setPlayingVoiceId(null);
+      return;
+    }
+
+    if (activeVoiceAudioRef.current) {
+      activeVoiceAudioRef.current.pause();
+      activeVoiceAudioRef.current = null;
+    }
+
+    const rawUrl = msg.mediaUrl || '';
+    if (!rawUrl) {
+      // Mock preview toggle if no real audio URL attached
+      setPlayingVoiceId(msg.id);
+      setTimeout(() => setPlayingVoiceId(null), (msg.voiceDuration || 5) * 1000);
+      return;
+    }
+
+    const playUrl = resolveTelegramUrl(rawUrl);
+    const audio = new Audio(playUrl);
+    activeVoiceAudioRef.current = audio;
+    setPlayingVoiceId(msg.id);
+
+    audio.play().catch((err) => {
+      console.warn('Voice playback failed:', err);
+      setPlayingVoiceId(null);
+    });
+
+    audio.onended = () => {
+      setPlayingVoiceId(null);
+    };
+
+    audio.onerror = () => {
+      setPlayingVoiceId(null);
+    };
   };
 
   // Maintain stable object URLs for all selected photos in batch (prevents broken thumbnails and preview blanks)
@@ -2526,11 +2772,21 @@ export const WhatsAppChatModal: React.FC<Props> = ({
           `Photo ${i + 1} of ${selectedImagesToSend.length} ${isHdQuality ? '(HD Quality)' : ''} bhej rahe hain...`
         );
         const file = selectedImagesToSend[i];
-        const uploadedUrl = await uploadImageToImgBB(
-          file,
-          `nsta_chat_${effectiveUserId}_${Date.now()}_${i}`,
-          { isHd: isHdQuality }
-        );
+        let uploadedUrl = '';
+        try {
+          uploadedUrl = await uploadImageToTelegram(
+            file,
+            `nsta_chat_${effectiveUserId}_${Date.now()}_${i}.jpg`,
+            `Nsta Messenger Photo from ${user.name || 'Student'}`
+          );
+        } catch (tgErr) {
+          console.warn('[Nsta Messenger] Telegram photo upload fallback:', tgErr);
+          uploadedUrl = await uploadImageToImgBB(
+            file,
+            `nsta_chat_${effectiveUserId}_${Date.now()}_${i}`,
+            { isHd: isHdQuality }
+          );
+        }
         if (uploadedUrl) {
           uploadedUrls.push(uploadedUrl);
         }
@@ -3446,6 +3702,17 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                   </span>
                 </button>
 
+                <a
+                  href="https://t.me/+p0aIY7YWgGxhYzk1"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-1.5 py-0.5 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-400/40 text-sky-200 text-[9px] font-bold flex items-center gap-1 transition-all"
+                  title="Open Telegram Channel (Nsta messanger)"
+                >
+                  <Send size={10} className="text-sky-300 -rotate-12" />
+                  <span className="hidden sm:inline">Telegram</span>
+                </a>
+
                 <div className="relative">
                   <button
                     type="button"
@@ -3457,6 +3724,16 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                   </button>
                   {showMainMenu && (
                     <div className="absolute right-0 top-full mt-1 w-52 bg-slate-900/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-purple-500/30 py-1.5 z-50 animate-in fade-in zoom-in-95">
+                      <a
+                        href="https://t.me/+p0aIY7YWgGxhYzk1"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => setShowMainMenu(false)}
+                        className="w-full px-3 py-2 text-left text-xs font-semibold text-sky-300 hover:bg-sky-900/40 flex items-center gap-2 border-b border-purple-500/20"
+                      >
+                        <Send size={14} className="text-sky-400 -rotate-12" />
+                        <span>Telegram Channel (Manage)</span>
+                      </a>
                       <button
                         onClick={() => {
                           setShowMainMenu(false);
@@ -6090,12 +6367,11 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                       ) : msg.type === 'VOICE' ? (
                         <div className="flex items-center gap-3 py-1 min-w-[180px]">
                           <button
-                            onClick={() => {
-                              setPlayingVoiceId(playingVoiceId === msg.id ? null : msg.id);
-                            }}
-                            className={`w-9 h-9 rounded-full flex items-center justify-center text-white shadow-sm flex-shrink-0 ${
-                              isMe ? 'bg-white/20' : 'bg-purple-600'
+                            onClick={() => handleToggleVoicePlayback(msg)}
+                            className={`w-9 h-9 rounded-full flex items-center justify-center text-white shadow-sm flex-shrink-0 cursor-pointer active:scale-95 transition ${
+                              isMe ? 'bg-white/20 hover:bg-white/30' : 'bg-purple-600 hover:bg-purple-500'
                             }`}
+                            title={playingVoiceId === msg.id ? 'Pause voice message' : 'Play voice message'}
                           >
                             {playingVoiceId === msg.id ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
                           </button>
@@ -6629,6 +6905,42 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                     tabIndex={-1}
                     onChange={handleSelectVideoFile}
                   />
+
+                  {/* Dedicated Voice Message / Mic Button */}
+                  <button
+                    type="button"
+                    id="nsta-chat-mic-button"
+                    onClick={isRecordingVoice ? stopAndSendVoiceRecording : startVoiceRecording}
+                    disabled={isUploadingVoice}
+                    className={`p-2 transition-colors cursor-pointer flex items-center justify-center rounded-lg active:scale-95 select-none ${
+                      isRecordingVoice
+                        ? 'text-rose-600 dark:text-rose-400 bg-rose-500/10 animate-pulse'
+                        : isUploadingVoice
+                        ? 'text-purple-400 animate-spin'
+                        : 'text-slate-500 hover:text-rose-600 dark:hover:text-rose-400'
+                    }`}
+                    title={isRecordingVoice ? 'Recording rok kar bhejein' : 'Audio Message Record Karein (Hold ya Tap)'}
+                    aria-label="Send Audio Message"
+                  >
+                    {isUploadingVoice ? <Loader2 size={20} /> : <Mic size={20} />}
+                  </button>
+
+                  {/* Hidden Audio File Picker (Alternative to record) */}
+                  <input
+                    ref={audioFileInputRef}
+                    type="file"
+                    accept="audio/*"
+                    className="sr-only"
+                    tabIndex={-1}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) {
+                        handleSendAudioMessage(f, 15);
+                      }
+                      e.target.value = '';
+                    }}
+                  />
+
                   {/* File Selection Dialog (Gallery / Camera on Mobile) */}
                   <input
                     id="nsta-chat-image-input"
@@ -6672,38 +6984,72 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                     }}
                   />
 
-                  <div className="flex-1 relative">
-                    <input
-                      ref={chatInputRef}
-                      type="text"
-                      value={inputText}
-                      onChange={(e) => setInputText(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleSendMessage();
-                      }}
-                      placeholder={
-                        replyingTo
-                          ? `Replying to ${isSameUser(replyingTo.senderId, effectiveUserId) ? 'yourself' : replyingTo.senderName}...`
-                          : selectedGroup
-                          ? `Message ${selectedGroup.name}...`
-                          : `Message ${selectedContact?.name.split(' ')[0]}...`
-                      }
-                      className="w-full bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 rounded-2xl px-4 py-2 text-xs md:text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
-                    />
-                  </div>
+                  {isRecordingVoice ? (
+                    <div className="flex-1 flex items-center justify-between px-3 py-1.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-2xl animate-pulse">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-ping" />
+                        <span className="text-xs font-bold text-rose-600 dark:text-rose-300">
+                          Recording... {Math.floor(voiceRecordingSeconds / 60)}:
+                          {voiceRecordingSeconds % 60 < 10
+                            ? `0${voiceRecordingSeconds % 60}`
+                            : voiceRecordingSeconds % 60}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={cancelVoiceRecording}
+                          className="p-1 text-slate-500 hover:text-rose-600 transition active:scale-90"
+                          title="Cancel Recording"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={stopAndSendVoiceRecording}
+                          className="px-2.5 py-1 rounded-full bg-rose-600 text-white hover:bg-rose-700 transition active:scale-95 text-xs font-bold flex items-center gap-1 shadow"
+                          title="Send Voice Message"
+                        >
+                          <Send size={13} /> Send
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex-1 relative">
+                        <input
+                          ref={chatInputRef}
+                          type="text"
+                          value={inputText}
+                          onChange={(e) => setInputText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSendMessage();
+                          }}
+                          placeholder={
+                            replyingTo
+                              ? `Replying to ${isSameUser(replyingTo.senderId, effectiveUserId) ? 'yourself' : replyingTo.senderName}...`
+                              : selectedGroup
+                              ? `Message ${selectedGroup.name}...`
+                              : `Message ${selectedContact?.name.split(' ')[0]}...`
+                          }
+                          className="w-full bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 rounded-2xl px-4 py-2 text-xs md:text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
+                        />
+                      </div>
 
-                  <button
-                    onClick={handleSendMessage}
-                    disabled={!inputText.trim()}
-                    className={`w-10 h-10 rounded-full flex items-center justify-center shadow-md transition-all flex-shrink-0 ${
-                      inputText.trim()
-                        ? 'bg-gradient-to-r from-rose-500 via-purple-600 to-indigo-600 hover:opacity-95 text-white active:scale-95 cursor-pointer'
-                        : 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed opacity-50'
-                    }`}
-                    title="Send"
-                  >
-                    <Send size={18} className="ml-0.5" />
-                  </button>
+                      <button
+                        onClick={handleSendMessage}
+                        disabled={!inputText.trim()}
+                        className={`w-10 h-10 rounded-full flex items-center justify-center shadow-md transition-all flex-shrink-0 ${
+                          inputText.trim()
+                            ? 'bg-gradient-to-r from-rose-500 via-purple-600 to-indigo-600 hover:opacity-95 text-white active:scale-95 cursor-pointer'
+                            : 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed opacity-50'
+                        }`}
+                        title="Send"
+                      >
+                        <Send size={18} className="ml-0.5" />
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             </div>

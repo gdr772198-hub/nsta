@@ -5020,6 +5020,20 @@ export const StudentDashboard: React.FC<Props> = ({
     });
   }, []);
 
+  // Listen for video player fullscreen event to hide or restore BOTH top bar and bottom nav
+  useEffect(() => {
+    const handleVideoFs = (e: any) => {
+      const isFs = Boolean(e?.detail?.isFullscreen);
+      setIsTopBarHidden(isFs);
+      setForceShowBottomNav(!isFs);
+      setIsLandscapeUiHidden(isFs);
+    };
+    window.addEventListener('nsta-video-fullscreen', handleVideoFs);
+    return () => {
+      window.removeEventListener('nsta-video-fullscreen', handleVideoFs);
+    };
+  }, []);
+
   const nstaFabLongPressTimerRef = useRef<any>(null);
   const nstaFabIsLongPressRef = useRef<boolean>(false);
 
@@ -16711,20 +16725,17 @@ export const StudentDashboard: React.FC<Props> = ({
 
         {/* Main Header Row */}
         <div className="relative z-10 flex items-center justify-between w-full px-2.5 sm:px-3 pt-2.5 pb-1.5 gap-1.5">
-          {/* LEFT: logo + app name (tap triggers NSTA assembly animation) + verified badge */}
+          {/* LEFT: logo + app name (tap hides top bar and bottom navigation) + verified badge */}
           <div className="flex items-center gap-1.5 shrink-0 min-w-0">
             <button
               type="button"
               id="nsta-header-brand-btn"
               onClick={() => {
                 hapticMedium();
-                onTabChange('HOME');
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-                setShowHomeAssemblyAnim(true);
-                window.dispatchEvent(new CustomEvent('nst-restore-pedro'));
-                setShowPedro(true);
+                // User requirement: NstA logo tap hides both top bar and bottom navigation
+                toggleImmersiveStudyMode(true);
               }}
-              title="Replay NSTA Animation"
+              title="Top bar aur Bottom navigation hide karein"
               className="flex items-center gap-1.5 active:scale-95 transition-transform cursor-pointer group shrink-0 relative"
             >
               <div className="relative shrink-0">
@@ -22468,6 +22479,7 @@ export const StudentDashboard: React.FC<Props> = ({
       <MiniPlayer
         track={currentAudioTrack}
         onClose={() => setCurrentAudioTrack(null)}
+        isBottomNavHidden={isTopBarHidden || isLandscapeUiHidden || !forceShowBottomNav}
       />
 
       {/* ── FLOATING NSTA LOGO BUTTON (Opens Feature Wheel on Home | Toggles Top/Bottom Bar on all other pages including NstA Messenger) ── */}
@@ -22541,7 +22553,10 @@ export const StudentDashboard: React.FC<Props> = ({
           }
           try { hapticMedium(); } catch (_) {}
 
-          if (isHomePage) {
+          if (isBarsHidden) {
+            // Agar bars chhupe hue hain toh tap karne par wapas visible ho jayenge
+            toggleImmersiveStudyMode(false);
+          } else if (isHomePage) {
             // Home page par NstA button tap se feature wheel open hoga
             setShowNstaQuickWheel(true);
           } else {

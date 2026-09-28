@@ -464,15 +464,8 @@ export const sendPrivateMessage = async (
     console.warn('[WhatsApp] RTDB write error:', err);
   }
 
-  // 3. Firestore Dual-Sync Backup (Permanent record in Cloud Firestore)
-  try {
-    if (db) {
-      const fsDoc = doc(db, 'whatsapp_direct', convId, 'messages', msgId);
-      setDoc(fsDoc, payload, { merge: true }).catch(() => {});
-    }
-  } catch (err) {
-    // Non-blocking background sync
-  }
+  // 3. Firestore completely bypass (Zero Firestore Write - saves 20,000 write quota)
+  // Chat runs 100% on RTDB + LocalStorage + Telegram Vault
 
   // 4. Automated friendly peer response if chatting with bot or seeded contact
   if (peerUserId.startsWith('peer_')) {
@@ -539,15 +532,8 @@ export const sendGroupMessage = async (
     console.warn('[WhatsApp] RTDB group write fallback:', err);
   }
 
-  // 3. Firestore Dual-Sync Backup
-  try {
-    if (db) {
-      const fsDoc = doc(db, 'whatsapp_groups', groupId, 'messages', msgId);
-      setDoc(fsDoc, payload, { merge: true }).catch(() => {});
-    }
-  } catch (err) {
-    // Non-blocking background sync
-  }
+  // 3. Firestore completely bypass (Zero Firestore Write - saves 20,000 write quota)
+  // Group chat runs 100% on RTDB + LocalStorage + Telegram Vault
 
   return message;
 };
@@ -653,33 +639,10 @@ export const subscribeToDirectMessages = (
     () => {}
   );
 
-  // 2. Cloud Firestore real-time listener (Ensures permanent sync across devices)
-  let unsubFirestore: (() => void) | undefined;
-  try {
-    if (db) {
-      const fsQuery = query(collection(db, 'whatsapp_direct', convId, 'messages'), limit(100));
-      unsubFirestore = onSnapshot(
-        fsQuery,
-        (snap) => {
-          if (!snap.empty) {
-            const fsList: ChatMessage[] = [];
-            snap.forEach((docSnap) => {
-              fsList.push(docSnap.data() as ChatMessage);
-            });
-            mergeAndEmit(fsList);
-          }
-        },
-        (err) => {
-          console.warn('[WhatsApp] Firestore direct sync error:', err);
-        }
-      );
-    }
-  } catch {}
-
+  // Firestore listener disabled to ensure 0 Firestore read quota consumption
   return () => {
     unsubRtdb();
     unsubDeleted();
-    if (unsubFirestore) unsubFirestore();
   };
 };
 
@@ -783,32 +746,10 @@ export const subscribeToGroupMessages = (
     () => {}
   );
 
-  let unsubFirestore: (() => void) | undefined;
-  try {
-    if (db) {
-      const fsQuery = query(collection(db, 'whatsapp_groups', groupId, 'messages'), limit(100));
-      unsubFirestore = onSnapshot(
-        fsQuery,
-        (snap) => {
-          if (!snap.empty) {
-            const fsList: ChatMessage[] = [];
-            snap.forEach((docSnap) => {
-              fsList.push(docSnap.data() as ChatMessage);
-            });
-            mergeAndEmit(fsList);
-          }
-        },
-        (err) => {
-          console.warn('[WhatsApp] Firestore group sync error:', err);
-        }
-      );
-    }
-  } catch {}
-
+  // Firestore listener disabled to ensure 0 Firestore read quota consumption
   return () => {
     unsubRtdb();
     unsubDeleted();
-    if (unsubFirestore) unsubFirestore();
   };
 };
 
@@ -2913,16 +2854,7 @@ export const deleteChatMessage = async (
       }
     }
 
-    // 5. Update Firestore document with tombstone so Firestore clients also drop it
-    try {
-      if (db) {
-        const col = isGroup ? 'whatsapp_groups' : 'whatsapp_direct';
-        const fsDoc = doc(db, col, contextId, 'messages', msgId);
-        await setDoc(fsDoc, tombstone, { merge: true }).catch(() => {});
-      }
-    } catch (e) {
-      console.warn('[WhatsApp] Firestore tombstone fallback:', e);
-    }
+    // 5. RTDB + Local tombstone is sufficient (Bypassing Firestore to save write quota)
   }
 };
 

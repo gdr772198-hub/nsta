@@ -3,15 +3,41 @@ import { Readable } from "node:stream";
 
 const router: IRouter = Router();
 
-const DEFAULT_BOT_TOKEN = '8938213127:AAEjjjXmxjOuqpo5PP2TgorWOa17uYeD-Dw';
+// 1. Storage Bot: Used for PDFs, videos, audio recordings & study vault
+const DEFAULT_STORAGE_BOT_TOKEN = '8938213127:AAEjjjXmxjOuqpo5PP2TgorWOa17uYeD-Dw';
 const DEFAULT_STORAGE_CHAT_ID = '7849468653';
 
-function getBotToken(): string {
-  return process.env.TELEGRAM_BOT_TOKEN?.trim() || DEFAULT_BOT_TOKEN;
+// 2. Chat Bot & Channel: Used for NSTA Messenger & Community Chat sync
+const DEFAULT_CHAT_BOT_TOKEN = '8932524192:AAGVxYSuKPZX6sOQFkXz0U7ESVQ2NcHmJZw';
+const DEFAULT_CHAT_CHANNEL_ID = '-1004290996442';
+
+function getStorageBotToken(): string {
+  return (
+    process.env.TELEGRAM_STORAGE_BOT_TOKEN?.trim() ||
+    process.env.TELEGRAM_BOT_TOKEN?.trim() ||
+    DEFAULT_STORAGE_BOT_TOKEN
+  );
 }
 
 function getStorageChatId(): string {
-  return process.env.TELEGRAM_STORAGE_CHAT_ID?.trim() || DEFAULT_STORAGE_CHAT_ID;
+  return (
+    process.env.TELEGRAM_STORAGE_CHAT_ID?.trim() ||
+    DEFAULT_STORAGE_CHAT_ID
+  );
+}
+
+function getChatBotToken(): string {
+  return (
+    process.env.TELEGRAM_CHAT_BOT_TOKEN?.trim() ||
+    DEFAULT_CHAT_BOT_TOKEN
+  );
+}
+
+function getChatChannelId(): string {
+  return (
+    process.env.TELEGRAM_CHAT_CHANNEL_ID?.trim() ||
+    DEFAULT_CHAT_CHANNEL_ID
+  );
 }
 
 const MIME_MAP: Record<string, string> = {
@@ -42,42 +68,129 @@ function guessMimeType(filePath: string, defaultType = 'application/octet-stream
   return MIME_MAP[ext] || defaultType;
 }
 
+// 1. Healthcheck: GET /api/telegram/health
 router.get("/health", async (_req: Request, res: Response) => {
-  const botToken = getBotToken();
-  const defaultChatId = getStorageChatId();
-  try {
-    const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
-    const rawText = await tgRes.text();
-    let tgJson: any = null;
-    try {
-      tgJson = rawText ? JSON.parse(rawText) : null;
-    } catch {}
+  const storageBotToken = getStorageBotToken();
+  const storageChatId = getStorageChatId();
+  const chatBotToken = getChatBotToken();
+  const chatChannelId = getChatChannelId();
 
-    res.status(tgRes.ok && tgJson?.ok ? 200 : 502).json({
-      ok: Boolean(tgJson?.ok),
-      bot: tgJson?.result,
-      storageChatId: defaultChatId,
+  try {
+    const [storageRes, chatRes] = await Promise.allSettled([
+      fetch(`https://api.telegram.org/bot${storageBotToken}/getMe`).then((r) => r.json()),
+      fetch(`https://api.telegram.org/bot${chatBotToken}/getMe`).then((r) => r.json()),
+    ]);
+
+    const storageJson = storageRes.status === 'fulfilled' ? storageRes.value : null;
+    const chatJson = chatRes.status === 'fulfilled' ? chatRes.value : null;
+
+    res.status(200).json({
+      ok: Boolean(storageJson?.ok || chatJson?.ok),
+      storageBot: {
+        ok: Boolean(storageJson?.ok),
+        bot: storageJson?.result,
+        chatId: storageChatId,
+      },
+      chatBot: {
+        ok: Boolean(chatJson?.ok),
+        bot: chatJson?.result,
+        channelId: chatChannelId,
+      },
     });
   } catch (err: any) {
     res.status(500).json({ ok: false, error: err?.message || 'Health check failed' });
   }
 });
 
-router.post("/upload", async (req: Request, res: Response) => {
-  const botToken = getBotToken();
-  const defaultChatId = getStorageChatId();
+// 1b. Channel Info: GET /api/telegram/channelInfo
+router.get("/channelInfo", async (req: Request, res: Response) => {
+  const chatBotToken = getChatBotToken();
+  const chatChannelId = getChatChannelId();
+  const targetChatId = (req.query.chat_id as string) || chatChannelId;
 
   try {
-    let targetChatId = defaultChatId;
+    const tgRes = await fetch(`https://api.telegram.org/bot${chatBotToken}/getChat?chat_id=${encodeURIComponent(targetChatId)}`);
+    const tgJson = await tgRes.json();
+    res.status(tgRes.ok && tgJson?.ok ? 200 : 502).json(tgJson);
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err?.message || 'Failed to fetch channel info' });
+  }
+});
+
+// 1c. Send Message: POST /api/telegram/sendMessage
+router.post("/sendMessage", async (req: Request, res: Response) => {
+  const chatBotToken = getChatBotToken();
+  const chatChannelId = getChatChannelId();
+
+  try {
+    const body = req.body || {};
+    const targetChatId = body.chatId || body.chat_id || chatChannelId;
+    const messageText = body.text || '';
+    const parseMode = body.parse_mode || body.parseMode || 'HTML';
+
+    if (!messageText) {
+      res.status(400).json({ ok: false, error: 'Message text is required' });
+      return;
+    }
+
+    const tgPayload: Record<string, any> = {
+      chat_id: targetChatId,
+      text: messageText,
+      parse_mode: parseMode,
+    };
+    if (body.reply_to_message_id) {
+      tgPayload.reply_to_message_id = body.reply_to_message_id;
+    }
+
+    const tgRes = await fetch(`https://api.telegram.org/bot${chatBotToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(tgPayload),
+    });
+
+    const tgJson = await tgRes.json();
+    res.status(tgRes.ok && tgJson?.ok ? 200 : 400).json(tgJson);
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err?.message || 'Failed to send message to Telegram' });
+  }
+});
+
+// 1d. Get Updates / Messages: GET /api/telegram/messages
+router.get("/messages", async (req: Request, res: Response) => {
+  const chatBotToken = getChatBotToken();
+  try {
+    const limit = (req.query.limit as string) || '50';
+    const offset = (req.query.offset as string) || '-50';
+    const tgRes = await fetch(`https://api.telegram.org/bot${chatBotToken}/getUpdates?offset=${offset}&limit=${limit}&allowed_updates=${encodeURIComponent(JSON.stringify(['message', 'channel_post']))}`);
+    const tgJson = await tgRes.json();
+    res.status(tgRes.ok && tgJson?.ok ? 200 : 502).json(tgJson);
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err?.message || 'Failed to fetch updates from Telegram' });
+  }
+});
+
+// 2. Upload: POST /api/telegram/upload
+router.post("/upload", async (req: Request, res: Response) => {
+  const storageBotToken = getStorageBotToken();
+  const storageChatId = getStorageChatId();
+  const chatBotToken = getChatBotToken();
+  const chatChannelId = getChatChannelId();
+
+  try {
+    let targetChatId = storageChatId;
     let caption = '';
     let fileBlob: Blob | null = null;
     let fileName = 'file';
+    let uploadBotToken = storageBotToken;
 
     if (req.is('application/json')) {
       const json = req.body || {};
       if (json.chatId) targetChatId = String(json.chatId);
       if (json.caption) caption = String(json.caption);
       if (json.fileName) fileName = String(json.fileName);
+      if (json.bot === 'chat' || targetChatId === chatChannelId) {
+        uploadBotToken = chatBotToken;
+      }
 
       const dataStr: string = json.data || json.file || '';
       if (!dataStr) {
@@ -103,6 +216,9 @@ router.post("/upload", async (req: Request, res: Response) => {
       if (formData.get('chat_id')) targetChatId = String(formData.get('chat_id'));
       if (formData.get('chatId')) targetChatId = String(formData.get('chatId'));
       if (formData.get('caption')) caption = String(formData.get('caption'));
+      if (formData.get('bot') === 'chat' || targetChatId === chatChannelId) {
+        uploadBotToken = chatBotToken;
+      }
 
       const fileEntry =
         formData.get('document') ||
@@ -126,9 +242,9 @@ router.post("/upload", async (req: Request, res: Response) => {
     tgFormData.append('document', fileBlob, fileName);
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
+    const timeoutId = setTimeout(() => controller.abort(), 300000);
 
-    const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendDocument`, {
+    const tgRes = await fetch(`https://api.telegram.org/bot${uploadBotToken}/sendDocument`, {
       method: 'POST',
       body: tgFormData,
       signal: controller.signal,
@@ -160,7 +276,7 @@ router.post("/upload", async (req: Request, res: Response) => {
 
     let filePath = '';
     try {
-      const pathRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
+      const pathRes = await fetch(`https://api.telegram.org/bot${uploadBotToken}/getFile?file_id=${fileId}`);
       const rawPathText = await pathRes.text();
       const pathJson = rawPathText ? JSON.parse(rawPathText) : null;
       if (pathJson?.ok && pathJson.result?.file_path) {
@@ -170,7 +286,7 @@ router.post("/upload", async (req: Request, res: Response) => {
 
     const resolvedFileName = doc?.file_name || fileName;
     const proxyUrl = `/api/telegram/file?path=${encodeURIComponent(filePath)}&name=${encodeURIComponent(resolvedFileName)}`;
-    const directUrl = filePath ? `https://api.telegram.org/file/bot${botToken}/${filePath}` : '';
+    const directUrl = filePath ? `https://api.telegram.org/file/bot${uploadBotToken}/${filePath}` : '';
 
     res.status(200).json({
       ok: true,
@@ -187,8 +303,11 @@ router.post("/upload", async (req: Request, res: Response) => {
   }
 });
 
+// 3. File streaming proxy: GET /api/telegram/file
 router.get("/file", async (req: Request, res: Response) => {
-  const botToken = getBotToken();
+  const storageBotToken = getStorageBotToken();
+  const chatBotToken = getChatBotToken();
+
   try {
     let filePath = (req.query.path as string) || '';
     const fileId = (req.query.file_id as string) || '';
@@ -203,9 +322,14 @@ router.get("/file", async (req: Request, res: Response) => {
 
     if (!filePath && fileId) {
       try {
-        const pathRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
-        const rawPath = await pathRes.text();
-        const pathJson = rawPath ? JSON.parse(rawPath) : null;
+        let pathRes = await fetch(`https://api.telegram.org/bot${storageBotToken}/getFile?file_id=${fileId}`);
+        let rawPath = await pathRes.text();
+        let pathJson = rawPath ? JSON.parse(rawPath) : null;
+        if (!pathJson?.ok) {
+          pathRes = await fetch(`https://api.telegram.org/bot${chatBotToken}/getFile?file_id=${fileId}`);
+          rawPath = await pathRes.text();
+          pathJson = rawPath ? JSON.parse(rawPath) : null;
+        }
         if (pathJson?.ok && pathJson.result?.file_path) {
           filePath = pathJson.result.file_path;
         }
@@ -217,15 +341,24 @@ router.get("/file", async (req: Request, res: Response) => {
       return;
     }
 
-    const telegramCdnUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
     const headersToForward: Record<string, string> = {};
     if (req.headers.range) {
       headersToForward['Range'] = req.headers.range as string;
     }
 
-    const tgFileRes = await fetch(telegramCdnUrl, {
+    // Try storage bot first, fallback to chat bot if not found
+    let tgFileRes = await fetch(`https://api.telegram.org/file/bot${storageBotToken}/${filePath}`, {
       headers: headersToForward,
     });
+
+    if (!tgFileRes.ok && tgFileRes.status !== 206) {
+      const altFileRes = await fetch(`https://api.telegram.org/file/bot${chatBotToken}/${filePath}`, {
+        headers: headersToForward,
+      });
+      if (altFileRes.ok || altFileRes.status === 206) {
+        tgFileRes = altFileRes;
+      }
+    }
 
     if (!tgFileRes.ok && tgFileRes.status !== 206) {
       res.status(tgFileRes.status).json({ ok: false, error: `Telegram CDN returned status ${tgFileRes.status}` });

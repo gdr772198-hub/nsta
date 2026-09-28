@@ -51,6 +51,7 @@ import {
 } from '../firebase';
 import { uploadImageToImgBB, compressImage } from '../services/imgbbService';
 import { uploadToCloudinary, getOptimizedVideoUrl } from '../services/cloudinaryService';
+import { sendTelegramCommunityPost } from '../services/telegramStorageService';
 import { ImageCropper } from './ImageCropper';
 import { User } from '../types';
 import { useAppTheme } from '../utils/themeContext';
@@ -433,6 +434,16 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
       }
 
       await set(newPostRef, newPostData);
+
+      // Broadcast to Telegram Channel with 0 Firestore read/writes
+      sendTelegramCommunityPost({
+        userName: user.name || 'Anonymous Student',
+        userRole: user.role || 'STUDENT',
+        category: postCategory,
+        text: postText.trim(),
+        imageUrl: uploadedImageUrl || undefined,
+        videoUrl: uploadedVideoUrl || undefined,
+      }).catch((tgErr) => console.warn('[Community -> Telegram] Sync notice:', tgErr));
 
       // Also register into suggestions for coins & admin resolution tracking
       if (postCategory === 'NOTES_FIX') {

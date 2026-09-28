@@ -8,27 +8,31 @@ import {
   VolumeX,
   Maximize,
   Minimize,
-  Settings,
   Download,
   CheckCircle,
   Crown,
   Lock,
   ArrowLeft,
-  ChevronRight,
-  Sparkles,
-  ExternalLink,
-  AlertTriangle,
+  Settings,
+  MoreVertical,
+  Check,
+  Repeat,
   RefreshCw,
+  AlertTriangle,
 } from 'lucide-react';
 import { PlayerWatermark } from './PlayerWatermark';
-import { getAvailableQualitiesForUser, VideoQualityLevel, getQualityTransformedUrl } from '../utils/mediaQuality';
-import { getOptimizedVideoUrl } from '../services/cloudinaryService';
 import {
   downloadAndSaveOfflineMedia,
   isMediaOffline,
   getOfflineMediaObjectUrl,
   validateOfflinePlaybackAccess,
 } from '../services/offlineStorageService';
+import {
+  VideoQualityLevel,
+  getAvailableQualitiesForUser,
+  getQualityTransformedUrl,
+} from '../utils/mediaQuality';
+import { getOptimizedVideoUrl } from '../services/cloudinaryService';
 
 interface ModernVideoPlayerProps {
   videoUrl: string;
@@ -41,31 +45,10 @@ interface ModernVideoPlayerProps {
   isAdmin?: boolean;
   onBack?: () => void;
   onNext?: () => void;
-  nextTitle?: string;
   onUpgradeRequired?: (feature: string) => void;
+  onFullscreenChange?: (isFullscreen: boolean) => void;
   autoPlay?: boolean;
   isOfflinePlayback?: boolean;
-}
-
-/** Robust extractor for YouTube video ID (supports standard, shorts, mobile, embed, youtu.be) */
-function extractYouTubeId(url: string): string | null {
-  if (!url) return null;
-  const clean = url.trim();
-  const match = clean.match(
-    /(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/|live\/))([\w-]{11})/
-  );
-  if (match && match[1]) return match[1];
-  return null;
-}
-
-/** Robust extractor for Google Drive file ID */
-function extractDriveId(url: string): string | null {
-  if (!url || !url.includes('drive.google.com')) return null;
-  const match1 = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-  if (match1 && match1[1]) return match1[1];
-  const match2 = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-  if (match2 && match2[1]) return match2[1];
-  return null;
 }
 
 export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
@@ -73,54 +56,67 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
   title = 'Video Lecture',
   mediaId,
   subject,
-  appLogo = '/nsta-logo.png',
-  appName = 'NSTA ACADEMY',
+  appLogo,
+  appName = 'IIC',
   user,
   isAdmin = false,
   onBack,
   onNext,
-  nextTitle,
   onUpgradeRequired,
+  onFullscreenChange,
   autoPlay = false,
   isOfflinePlayback = false,
 }) => {
-  const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [currentPlayUrl, setCurrentPlayUrl] = useState('');
+  const [selectedQuality, setSelectedQuality] = useState<VideoQualityLevel>('Auto');
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [isLooping, setIsLooping] = useState(false);
   const [videoError, setVideoError] = useState<string | null>(null);
 
-  // Quality & Settings Menu
-  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
-  const [selectedQuality, setSelectedQuality] = useState<VideoQualityLevel>('720p');
-  
-  // Use getOptimizedVideoUrl exactly like CommunityPostFeed and CustomPlayer
-  const [currentPlayUrl, setCurrentPlayUrl] = useState(() => getOptimizedVideoUrl(videoUrl || ''));
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [isMuted, setIsMuted] = useState(false);
 
   // Download state
   const [isDownloaded, setIsDownloaded] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
 
-  // Expiry / Lock state for offline playback
+  // Access control
   const [accessBlocked, setAccessBlocked] = useState(false);
   const [blockedReason, setBlockedReason] = useState<string | null>(null);
 
   const userTier = (user?.subscriptionTier || user?.subscriptionLevel || 'FREE').toUpperCase();
   const isUltraUser = isAdmin || userTier === 'ULTRA';
+  const itemId = mediaId || `vid_${encodeURIComponent(videoUrl).slice(0, 32)}`;
 
-  // Check URL types
-  const ytId = extractYouTubeId(videoUrl);
-  const driveId = extractDriveId(videoUrl);
-  const isYouTube = !!ytId;
-  const isDrive = !isYouTube && !!driveId;
+  // Helper to extract YouTube video ID
+  const getYouTubeId = (url: string) => {
+    const match = url.match(
+      /(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/
+    );
+    return match ? match[1] : null;
+  };
 
-  const itemId = mediaId || `vid_${encodeURIComponent(videoUrl || '').slice(0, 32)}`;
+  // Helper to extract Google Drive file ID
+  const getDriveId = (url: string) => {
+    const match = url.match(/\/d\/(.*?)\/|\/d\/(.*?)$|id=(.*?)(&|$)/);
+    return match ? match[1] || match[2] || match[3] : null;
+  };
 
-  // Sync video URL whenever prop changes
+  const isYouTube = videoUrl ? (videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be')) : false;
+  const isDrive = videoUrl ? (videoUrl.includes('drive.google.com') && !videoUrl.includes('export=download')) : false;
+  const ytId = isYouTube ? getYouTubeId(videoUrl) : null;
+  const driveId = isDrive ? getDriveId(videoUrl) : null;
+
+  // Initialize playback URL and check offline status
   useEffect(() => {
-    if (!videoUrl) return;
     let active = true;
     (async () => {
       const offline = await isMediaOffline(itemId);
@@ -134,8 +130,8 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
             setAccessBlocked(true);
             setBlockedReason(
               validation.reason === 'EXPIRED'
-                ? 'Aapka Ultra Plan expire ho chuka hai! Offline video chalane ke liye subscription renew karein.'
-                : 'Ye video sirf Ultra VIP members ke liye exclusive hai.'
+                ? 'Aapka Ultra Plan expire ho chuka hai! Offline video dekhne ke liye renew karein.'
+                : 'Ye offline video Ultra VIP members ke liye exclusive hai.'
             );
             return;
           }
@@ -143,7 +139,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           return;
         }
       }
-      
+
       if (active) {
         setCurrentPlayUrl(getOptimizedVideoUrl(videoUrl));
         setVideoError(null);
@@ -154,6 +150,87 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
       active = false;
     };
   }, [itemId, isOfflinePlayback, user, videoUrl]);
+
+  // Fullscreen state synchronization with document and body class
+  const toggleFullscreen = useCallback(() => {
+    const nextState = !isFullscreen;
+    setIsFullscreen(nextState);
+    onFullscreenChange?.(nextState);
+
+    if (nextState) {
+      document.body.classList.add('nsta-video-fullscreen-active');
+      document.documentElement.classList.add('nsta-video-fullscreen-active');
+    } else {
+      document.body.classList.remove('nsta-video-fullscreen-active');
+      document.documentElement.classList.remove('nsta-video-fullscreen-active');
+    }
+
+    try {
+      window.dispatchEvent(
+        new CustomEvent('nsta-video-fullscreen', { detail: { isFullscreen: nextState } })
+      );
+    } catch {}
+
+    try {
+      if (nextState) {
+        if (!document.fullscreenElement && containerRef.current?.requestFullscreen) {
+          containerRef.current.requestFullscreen().catch(() => {});
+        }
+      } else {
+        if (document.fullscreenElement && document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {});
+        }
+      }
+    } catch {}
+  }, [isFullscreen, onFullscreenChange]);
+
+  useEffect(() => {
+    const handleFsChange = () => {
+      const isFs = !!document.fullscreenElement;
+      setIsFullscreen(isFs);
+      onFullscreenChange?.(isFs);
+      if (isFs) {
+        document.body.classList.add('nsta-video-fullscreen-active');
+        document.documentElement.classList.add('nsta-video-fullscreen-active');
+      } else {
+        document.body.classList.remove('nsta-video-fullscreen-active');
+        document.documentElement.classList.remove('nsta-video-fullscreen-active');
+      }
+      try {
+        window.dispatchEvent(
+          new CustomEvent('nsta-video-fullscreen', { detail: { isFullscreen: isFs } })
+        );
+      } catch {}
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    document.addEventListener('webkitfullscreenchange', handleFsChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFsChange);
+      document.removeEventListener('webkitfullscreenchange', handleFsChange);
+      document.body.classList.remove('nsta-video-fullscreen-active');
+      document.documentElement.classList.remove('nsta-video-fullscreen-active');
+      try {
+        window.dispatchEvent(
+          new CustomEvent('nsta-video-fullscreen', { detail: { isFullscreen: false } })
+        );
+      } catch {}
+    };
+  }, [onFullscreenChange]);
+
+  const handleSpeedChange = (speed: number) => {
+    setPlaybackRate(speed);
+    if (videoRef.current) {
+      videoRef.current.playbackRate = speed;
+    }
+  };
+
+  const handleLoopToggle = () => {
+    const nextLoop = !isLooping;
+    setIsLooping(nextLoop);
+    if (videoRef.current) {
+      videoRef.current.loop = nextLoop;
+    }
+  };
 
   const handleQualitySelect = (q: VideoQualityLevel, isLocked: boolean) => {
     if (isLocked) {
@@ -182,17 +259,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           }
         }
       }, 100);
-    }
-  };
-
-  const toggleFullscreen = () => {
-    if (!containerRef.current) return;
-    if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen?.().catch(() => {});
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen?.().catch(() => {});
-      setIsFullscreen(false);
     }
   };
 
@@ -235,6 +301,24 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
     }
   };
 
+  const formatTime = (seconds: number) => {
+    if (!seconds || isNaN(seconds)) return '0:00';
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const togglePlayPause = () => {
+    if (!videoRef.current) return;
+    if (videoRef.current.paused) {
+      videoRef.current.play().catch(() => {});
+      setIsPlaying(true);
+    } else {
+      videoRef.current.pause();
+      setIsPlaying(false);
+    }
+  };
+
   // If playback access is blocked due to expired subscription
   if (accessBlocked) {
     return (
@@ -255,7 +339,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
     );
   }
 
-  // ── YOUTUBE PLAYER EMBED WITH FULL HEADER CONTROLS ──
+  // ── YOUTUBE PLAYER EMBED ──
   if (isYouTube && ytId) {
     const ytEmbedUrl = `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&controls=1&modestbranding=1&rel=0&playsinline=1&enablejsapi=1`;
     return (
@@ -265,11 +349,17 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           isFullscreen ? 'fixed inset-0 z-[99999] rounded-none h-screen' : ''
         }`}
       >
-        <PlayerWatermark appLogo={appLogo} appName={appName} position="top-right" />
+        <PlayerWatermark
+          appLogo={appLogo}
+          appName={appName}
+          position={isFullscreen ? 'top-right' : 'bottom-right'}
+          onClick={toggleFullscreen}
+          isFullscreen={isFullscreen}
+        />
 
         {/* Top Bar Header Overlay */}
         <div className="absolute top-0 left-0 right-0 p-3 flex items-center justify-between bg-gradient-to-b from-black/85 via-black/50 to-transparent z-20 pointer-events-auto">
-          <div className="flex items-center gap-2 min-w-0 pr-24">
+          <div className="flex items-center gap-2 min-w-0 pr-4">
             {onBack && (
               <button
                 onClick={onBack}
@@ -279,6 +369,30 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
                 <ArrowLeft size={16} />
               </button>
             )}
+
+            {/* IIC Button Upar Hi Rahega */}
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/50 hover:bg-black/70 active:scale-95 transition border border-white/20 text-white cursor-pointer shrink-0 shadow-md backdrop-blur-md"
+              title={isFullscreen ? 'Exit Fullscreen' : 'IIC Fullscreen'}
+            >
+              <img
+                src={appLogo || '/branding/nsta-logo.png'}
+                alt="IIC"
+                className="w-4 h-4 rounded-full object-contain shrink-0"
+                onError={(e) => {
+                  (e.currentTarget as HTMLElement).style.display = 'none';
+                }}
+              />
+              <span className="text-[10px] font-black uppercase tracking-wider text-white">
+                {appName || 'IIC'}
+              </span>
+              <span className="text-[10px] text-indigo-300 font-bold ml-0.5">
+                {isFullscreen ? '⤓' : '⛶'}
+              </span>
+            </button>
+
             <div className="min-w-0">
               <h4 className="text-xs font-bold text-white truncate drop-shadow">{title}</h4>
               {subject && <p className="text-[10px] text-slate-300 font-semibold uppercase">{subject}</p>}
@@ -286,19 +400,10 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            <a
-              href={`https://www.youtube.com/watch?v=${ytId}`}
-              target="_blank"
-              rel="noreferrer"
-              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition"
-              title="YouTube App me Kholein"
-            >
-              <ExternalLink size={14} />
-            </a>
             <button
               onClick={toggleFullscreen}
-              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition"
-              title="Fullscreen"
+              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
+              title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
             >
               {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
             </button>
@@ -327,11 +432,17 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           isFullscreen ? 'fixed inset-0 z-[99999] rounded-none h-screen' : ''
         }`}
       >
-        <PlayerWatermark appLogo={appLogo} appName={appName} position="top-right" />
+        <PlayerWatermark
+          appLogo={appLogo}
+          appName={appName}
+          position={isFullscreen ? 'top-right' : 'bottom-right'}
+          onClick={toggleFullscreen}
+          isFullscreen={isFullscreen}
+        />
 
         {/* Top Bar Header Overlay */}
         <div className="absolute top-0 left-0 right-0 p-3 flex items-center justify-between bg-gradient-to-b from-black/85 via-black/50 to-transparent z-20 pointer-events-auto">
-          <div className="flex items-center gap-2 min-w-0 pr-24">
+          <div className="flex items-center gap-2 min-w-0 pr-4">
             {onBack && (
               <button
                 onClick={onBack}
@@ -341,50 +452,60 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
                 <ArrowLeft size={16} />
               </button>
             )}
+
+            {/* IIC Button Upar Hi Rahega */}
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/50 hover:bg-black/70 active:scale-95 transition border border-white/20 text-white cursor-pointer shrink-0 shadow-md backdrop-blur-md"
+              title={isFullscreen ? 'Exit Fullscreen' : 'IIC Fullscreen'}
+            >
+              <img
+                src={appLogo || '/branding/nsta-logo.png'}
+                alt="IIC"
+                className="w-4 h-4 rounded-full object-contain shrink-0"
+                onError={(e) => {
+                  (e.currentTarget as HTMLElement).style.display = 'none';
+                }}
+              />
+              <span className="text-[10px] font-black uppercase tracking-wider text-white">
+                {appName || 'IIC'}
+              </span>
+              <span className="text-[10px] text-indigo-300 font-bold ml-0.5">
+                {isFullscreen ? '⤓' : '⛶'}
+              </span>
+            </button>
+
             <div className="min-w-0">
               <h4 className="text-xs font-bold text-white truncate drop-shadow">{title}</h4>
               {subject && <p className="text-[10px] text-slate-300 font-semibold uppercase">{subject}</p>}
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <a
-              href={`https://drive.google.com/file/d/${driveId}/view`}
-              target="_blank"
-              rel="noreferrer"
-              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition"
-              title="Drive me Kholein"
-            >
-              <ExternalLink size={14} />
-            </a>
-            <button
-              onClick={toggleFullscreen}
-              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition"
-              title="Fullscreen"
-            >
-              {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
-            </button>
-          </div>
+          <button
+            onClick={toggleFullscreen}
+            className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
+            title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+          >
+            {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
+          </button>
         </div>
 
-        {/* Embedded Google Drive Video Frame */}
         <iframe
           src={drivePreviewUrl}
           className="w-full h-full border-0 flex-1"
-          allow="autoplay; encrypted-media; fullscreen"
-          allowFullScreen
+          allow="autoplay"
           title={title}
         />
       </div>
     );
   }
 
-  // ── DIRECT VIDEO STREAM (HTML5 / CLOUDINARY / TELEGRAM / MP4) ──
+  // ── DIRECT VIDEO STREAM (HTML5 / CLOUDINARY / MP4) ──
   const availableQualities = getAvailableQualitiesForUser(videoUrl || '', userTier, isAdmin);
 
   const handleVideoError = () => {
     console.warn('[ModernVideoPlayer] Video load error for URL:', currentPlayUrl);
-    // If quality transformed URL failed, fallback immediately to original videoUrl
     if (currentPlayUrl !== videoUrl && videoUrl) {
       setCurrentPlayUrl(videoUrl);
       return;
@@ -395,16 +516,25 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
   return (
     <div
       ref={containerRef}
-      className={`relative w-full aspect-video min-h-[300px] bg-black rounded-2xl overflow-hidden select-none shadow-2xl flex flex-col justify-between ${
+      className={`group/player relative w-full aspect-video min-h-[300px] bg-black rounded-2xl overflow-hidden select-none shadow-2xl flex flex-col justify-between ${
         isFullscreen ? 'fixed inset-0 z-[99999] rounded-none h-screen' : ''
       }`}
+      onClick={() => {
+        if (showSettingsMenu) setShowSettingsMenu(false);
+      }}
     >
       {/* ── Official Semi-Transparent Logo Watermark ── */}
-      <PlayerWatermark appLogo={appLogo} appName={appName} position="top-right" />
+      <PlayerWatermark
+        appLogo={appLogo}
+        appName={appName}
+        position={isFullscreen ? 'top-right' : 'bottom-right'}
+        onClick={toggleFullscreen}
+        isFullscreen={isFullscreen}
+      />
 
-      {/* ── Top Bar Header Overlay ── */}
-      <div className="absolute top-0 left-0 right-0 p-3 flex items-center justify-between bg-gradient-to-b from-black/85 via-black/40 to-transparent z-20 pointer-events-auto">
-        <div className="flex items-center gap-2 min-w-0 pr-24">
+      {/* ── Top Bar Header Overlay: IIC BUTTON UPAR HI RAHEGA ── */}
+      <div className="absolute top-0 left-0 right-0 p-3 flex items-center justify-between bg-gradient-to-b from-black/90 via-black/50 to-transparent z-20 pointer-events-auto">
+        <div className="flex items-center gap-2 min-w-0 pr-4">
           {onBack && (
             <button
               onClick={onBack}
@@ -414,103 +544,73 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
               <ArrowLeft size={16} />
             </button>
           )}
+
+          {/* IIC Button Upar Hi Rahega (User requirement: Iic buttoj uoar hi rahega) */}
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/50 hover:bg-black/70 active:scale-95 transition border border-white/20 text-white cursor-pointer shrink-0 shadow-md backdrop-blur-md"
+            title={isFullscreen ? 'Exit Fullscreen' : 'IIC Fullscreen'}
+          >
+            <img
+              src={appLogo || '/branding/nsta-logo.png'}
+              alt="IIC"
+              className="w-4 h-4 rounded-full object-contain shrink-0"
+              onError={(e) => {
+                (e.currentTarget as HTMLElement).style.display = 'none';
+              }}
+            />
+            <span className="text-[10px] font-black uppercase tracking-wider text-white">
+              {appName || 'IIC'}
+            </span>
+            <span className="text-[10px] text-indigo-300 font-bold ml-0.5">
+              {isFullscreen ? '⤓' : '⛶'}
+            </span>
+          </button>
+
           <div className="min-w-0">
             <h4 className="text-xs font-bold text-white truncate drop-shadow">{title}</h4>
             {subject && <p className="text-[10px] text-slate-300 font-semibold uppercase">{subject}</p>}
           </div>
         </div>
 
-        {/* Action Controls on Player Top (Download + Settings + Direct Link) */}
-        <div className="flex items-center gap-1.5 relative">
-          {videoUrl && (
-            <a
-              href={videoUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition text-xs flex items-center"
-              title="Direct Video Kholein"
-            >
-              <ExternalLink size={13} />
-            </a>
-          )}
-
-          {/* Quality Selector Button */}
-          {availableQualities.length > 1 && (
-            <button
-              onClick={() => setShowSettingsMenu((v) => !v)}
-              className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[10px] font-bold text-white transition"
-              title="Resolution Quality"
-            >
-              <span className="uppercase text-indigo-300">{selectedQuality}</span>
-              <Settings size={12} />
-            </button>
-          )}
-
-          {/* Offline Save Button */}
-          {isDownloaded ? (
-            <span className="flex items-center gap-1 text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-1 rounded-full">
-              <CheckCircle size={12} /> Saved
-            </span>
-          ) : isDownloading ? (
-            <span className="flex items-center gap-1.5 text-[10px] font-bold bg-indigo-500/30 text-indigo-200 border border-indigo-500/40 px-2.5 py-1 rounded-full animate-pulse">
-              <Download size={12} className="animate-bounce" /> {downloadProgress}%
-            </span>
-          ) : (
-            <button
-              onClick={handleDownload}
-              className={`flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-full transition active:scale-95 shadow ${
-                isUltraUser
-                  ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white hover:brightness-110'
-                  : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
-              }`}
-              title="Download inside App for offline learning"
-            >
-              {isUltraUser ? <Download size={11} /> : <Crown size={11} />}
-              <span className="hidden xs:inline">{isUltraUser ? 'Save Offline' : 'Ultra'}</span>
-            </button>
-          )}
-
-          {/* Quality Settings Dropdown Popup */}
-          {showSettingsMenu && (
-            <div
-              onClick={(e) => e.stopPropagation()}
-              className="absolute right-0 top-full mt-2 w-48 bg-slate-900/95 backdrop-blur-md border border-slate-700 rounded-xl p-2.5 shadow-2xl text-white z-50 animate-in fade-in"
-            >
-              <p className="text-[9px] font-black uppercase tracking-wider text-slate-400 mb-1.5">Select Quality</p>
-              <div className="space-y-1">
-                {availableQualities.map((q) => (
-                  <button
-                    key={q.quality}
-                    onClick={() => handleQualitySelect(q.quality, q.isLocked)}
-                    className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-left text-xs transition ${
-                      selectedQuality === q.quality
-                        ? 'bg-indigo-600 text-white font-bold'
-                        : 'hover:bg-slate-800 text-slate-200'
-                    }`}
-                  >
-                    <span>{q.label}</span>
-                    {q.isLocked && <Lock size={11} className="text-amber-400" />}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+        {/* Top Right: Fullscreen Quick Button */}
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={toggleFullscreen}
+            className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
+            title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+          >
+            {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
+          </button>
         </div>
       </div>
 
-      {/* ── Native HTML5 Video Stream with Native Hardware Controls (Guaranteed to work like Community Post) ── */}
-      <div className="w-full h-full flex-1 relative flex items-center justify-center bg-black pt-10">
+      {/* ── Video Element ── */}
+      <div className="w-full h-full flex-1 relative flex items-center justify-center bg-black pt-8 pb-12">
         {videoUrl ? (
           <video
             ref={videoRef}
             src={currentPlayUrl}
-            controls
             playsInline
             preload="metadata"
-            controlsList="nodownload"
             autoPlay={autoPlay}
-            className="w-full h-full max-h-full object-contain bg-black"
+            onClick={togglePlayPause}
+            className="w-full h-full max-h-full object-contain bg-black cursor-pointer"
             onError={handleVideoError}
+            onTimeUpdate={() => {
+              if (videoRef.current) {
+                setCurrentTime(videoRef.current.currentTime);
+                if (videoRef.current.duration && !isNaN(videoRef.current.duration)) {
+                  setDuration(videoRef.current.duration);
+                }
+              }
+            }}
+            onLoadedMetadata={() => {
+              if (videoRef.current && videoRef.current.duration) {
+                setDuration(videoRef.current.duration);
+              }
+            }}
             onPlay={() => {
               setIsPlaying(true);
               setVideoError(null);
@@ -530,7 +630,242 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
         )}
       </div>
 
-      {/* ── Video Error Overlay with Retry & Direct Link ── */}
+      {/* ── BOTTOM CONTROLS BAR: 3 DOT BUTTON NICHE JO THA USHI ME ADD KIYA QUALITY CHANGE OPTION ── */}
+      <div className="absolute bottom-0 left-0 right-0 px-3 pb-2 pt-6 bg-gradient-to-t from-black/95 via-black/60 to-transparent z-20 pointer-events-auto">
+        {/* Progress Scrubber */}
+        <div
+          className="h-1.5 bg-slate-700/80 hover:h-2.5 rounded-full w-full cursor-pointer transition-all duration-150 mb-2 relative group"
+          onClick={(e) => {
+            if (videoRef.current && duration > 0) {
+              const rect = e.currentTarget.getBoundingClientRect();
+              const percent = (e.clientX - rect.left) / rect.width;
+              videoRef.current.currentTime = percent * duration;
+            }
+          }}
+        >
+          <div
+            className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full relative"
+            style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+          >
+            <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-white rounded-full shadow border border-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+          </div>
+        </div>
+
+        {/* Bottom Controls Row */}
+        <div className="flex items-center justify-between text-white text-xs">
+          {/* Left Controls: Play/Pause, Skip -10s, Time */}
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={togglePlayPause}
+              className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
+              title={isPlaying ? 'Pause' : 'Play'}
+            >
+              {isPlaying ? <Pause size={17} /> : <Play size={17} className="ml-0.5" />}
+            </button>
+
+            <button
+              onClick={() => {
+                if (videoRef.current) {
+                  videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 10);
+                }
+              }}
+              className="p-1 rounded-md text-slate-300 hover:text-white transition active:scale-90"
+              title="-10 seconds"
+            >
+              <RotateCcw size={14} />
+            </button>
+
+            <button
+              onClick={() => {
+                if (videoRef.current) {
+                  videoRef.current.currentTime = Math.min(duration, videoRef.current.currentTime + 10);
+                }
+              }}
+              className="p-1 rounded-md text-slate-300 hover:text-white transition active:scale-90"
+              title="+10 seconds"
+            >
+              <RotateCw size={14} />
+            </button>
+
+            <button
+              onClick={() => {
+                if (videoRef.current) {
+                  videoRef.current.muted = !isMuted;
+                  setIsMuted(!isMuted);
+                }
+              }}
+              className="p-1 rounded-md text-slate-300 hover:text-white transition active:scale-90"
+              title={isMuted ? 'Unmute' : 'Mute'}
+            >
+              {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+            </button>
+
+            <span className="text-[11px] font-mono text-slate-300 ml-1">
+              {formatTime(currentTime)} / {formatTime(duration)}
+            </span>
+          </div>
+
+          {/* Right Controls: Quality Badge, 3-Dot Options Button (With Quality Menu), Fullscreen */}
+          <div className="flex items-center gap-1.5 relative">
+            {/* Active Quality Badge */}
+            <span className="text-[10px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-500/30 text-indigo-300 border border-indigo-500/40">
+              {selectedQuality}
+            </span>
+
+            {/* 3-Dot Options Button: User requirement: "3 dot button niche jo tha ushi me add karna tha quality change karne wala option" */}
+            <div className="relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowSettingsMenu((v) => !v);
+                }}
+                className={`p-1.5 rounded-lg transition active:scale-90 flex items-center justify-center cursor-pointer ${
+                  showSettingsMenu
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-white/10 hover:bg-white/20 text-white'
+                }`}
+                title="Options (Quality Change, Speed, Loop, Save)"
+                aria-label="Video Options"
+              >
+                <MoreVertical size={16} />
+              </button>
+
+              {/* 3-Dot Settings & Quality Dropdown Popup (Opens Upward From Bottom) */}
+              {showSettingsMenu && (
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="absolute right-0 bottom-full mb-2.5 w-60 max-h-[75vh] overflow-y-auto bg-slate-900/98 backdrop-blur-xl border border-slate-700/80 rounded-2xl p-3 shadow-2xl text-white z-50 animate-in fade-in zoom-in-95 space-y-3"
+                >
+                  {/* Quality Change Section (Inside 3-Dot Menu at Bottom) */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                        Quality / Resolution
+                      </p>
+                      <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
+                        {selectedQuality}
+                      </span>
+                    </div>
+                    <div className="space-y-1">
+                      {availableQualities.map((q) => (
+                        <button
+                          key={q.quality}
+                          onClick={() => handleQualitySelect(q.quality, q.isLocked)}
+                          className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-left text-xs transition active:scale-95 ${
+                            selectedQuality === q.quality
+                              ? 'bg-indigo-600 text-white font-bold shadow'
+                              : 'hover:bg-slate-800 text-slate-200'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            {selectedQuality === q.quality && (
+                              <Check size={12} className="text-white shrink-0" />
+                            )}
+                            <span>{q.label}</span>
+                          </div>
+                          {q.isLocked && <Lock size={12} className="text-amber-400 shrink-0" />}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Playback Speed Section */}
+                  <div className="pt-2 border-t border-slate-800">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">
+                      Playback Speed
+                    </p>
+                    <div className="grid grid-cols-4 gap-1">
+                      {[0.75, 1, 1.25, 1.5].map((speed) => (
+                        <button
+                          key={speed}
+                          onClick={() => handleSpeedChange(speed)}
+                          className={`py-1 rounded-lg text-center text-xs font-bold transition active:scale-90 ${
+                            playbackRate === speed
+                              ? 'bg-indigo-600 text-white shadow'
+                              : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300'
+                          }`}
+                        >
+                          {speed}x
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Loop Video Option */}
+                  <div className="pt-2 border-t border-slate-800">
+                    <button
+                      onClick={handleLoopToggle}
+                      className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition active:scale-95 ${
+                        isLooping
+                          ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40'
+                          : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Repeat size={13} className={isLooping ? 'text-indigo-400' : 'text-slate-400'} />
+                        <span>Loop Video</span>
+                      </div>
+                      <span className="text-[10px] uppercase font-black">{isLooping ? 'ON' : 'OFF'}</span>
+                    </button>
+                  </div>
+
+                  {/* Offline Save inside App Option */}
+                  <div className="pt-2 border-t border-slate-800">
+                    {isDownloaded ? (
+                      <div className="flex items-center justify-between px-2.5 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold">
+                        <span className="flex items-center gap-1.5">
+                          <CheckCircle size={13} /> App Me Saved Hai
+                        </span>
+                        <span className="text-[9px] uppercase font-black bg-emerald-500/20 px-1.5 py-0.5 rounded">
+                          Offline
+                        </span>
+                      </div>
+                    ) : isDownloading ? (
+                      <div className="flex items-center justify-between px-2.5 py-2 rounded-xl bg-indigo-500/20 border border-indigo-500/40 text-indigo-200 text-xs font-bold animate-pulse">
+                        <span className="flex items-center gap-1.5">
+                          <Download size={13} className="animate-bounce" /> Downloading...
+                        </span>
+                        <span className="text-[10px] font-black">{downloadProgress}%</span>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setShowSettingsMenu(false);
+                          handleDownload();
+                        }}
+                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition active:scale-95 shadow ${
+                          isUltraUser
+                            ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:brightness-110'
+                            : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
+                        }`}
+                      >
+                        <span className="flex items-center gap-1.5">
+                          {isUltraUser ? <Download size={13} /> : <Crown size={13} />}
+                          <span>Save Inside App</span>
+                        </span>
+                        <span className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-black/30">
+                          {isUltraUser ? 'Offline' : 'Ultra'}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Bottom Fullscreen Button */}
+            <button
+              onClick={toggleFullscreen}
+              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
+              title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+            >
+              {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Video Error Overlay with Retry ── */}
       {videoError && (
         <div className="absolute inset-0 z-30 bg-slate-950/90 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center text-white">
           <AlertTriangle size={36} className="text-amber-400 mb-3" />
@@ -550,16 +885,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
             >
               <RefreshCw size={13} /> Dobara Chalayein
             </button>
-            {videoUrl && (
-              <a
-                href={videoUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs flex items-center gap-1.5 active:scale-95 transition"
-              >
-                <ExternalLink size={13} /> Direct Kholein
-              </a>
-            )}
           </div>
         </div>
       )}

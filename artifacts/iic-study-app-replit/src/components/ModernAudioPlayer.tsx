@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Play,
   Pause,
@@ -11,8 +11,8 @@ import {
   Crown,
   Lock,
   Headphones,
-  Music,
   ArrowLeft,
+  Minimize2,
 } from 'lucide-react';
 import { PlayerWatermark } from './PlayerWatermark';
 import {
@@ -21,6 +21,7 @@ import {
   getOfflineMediaObjectUrl,
   validateOfflinePlaybackAccess,
 } from '../services/offlineStorageService';
+import { globalAudioService, GlobalAudioState } from '../services/globalAudioService';
 
 interface ModernAudioPlayerProps {
   audioUrl: string;
@@ -51,14 +52,8 @@ export const ModernAudioPlayer: React.FC<ModernAudioPlayerProps> = ({
   autoPlay = false,
   isOfflinePlayback = false,
 }) => {
-  const audioRef = useRef<HTMLAudioElement>(null);
-
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [isMuted, setIsMuted] = useState(false);
-  const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [currentPlayUrl, setCurrentPlayUrl] = useState(audioUrl);
+  const [globalState, setGlobalState] = useState<GlobalAudioState>(() => globalAudioService.getState());
 
   // Download state
   const [isDownloaded, setIsDownloaded] = useState(false);
@@ -71,8 +66,15 @@ export const ModernAudioPlayer: React.FC<ModernAudioPlayerProps> = ({
 
   const userTier = (user?.subscriptionTier || user?.subscriptionLevel || 'FREE').toUpperCase();
   const canDownloadAudio = isAdmin || userTier === 'ULTRA';
-
   const itemId = mediaId || `aud_${encodeURIComponent(audioUrl).slice(0, 32)}`;
+
+  // Subscribe to persistent audio service
+  useEffect(() => {
+    const unsub = globalAudioService.subscribe((state) => {
+      setGlobalState(state);
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -103,28 +105,53 @@ export const ModernAudioPlayer: React.FC<ModernAudioPlayerProps> = ({
     };
   }, [itemId, isOfflinePlayback, user]);
 
+  // If autoPlay is requested or when track matches
+  useEffect(() => {
+    if (autoPlay && currentPlayUrl) {
+      globalAudioService.playTrack(
+        {
+          url: currentPlayUrl,
+          title,
+          subtitle,
+          mediaId: itemId,
+          appLogo,
+        },
+        true
+      );
+    }
+  }, [autoPlay, currentPlayUrl]);
+
+  const isCurrentTrack = globalState.track?.url === currentPlayUrl;
+  const isPlaying = isCurrentTrack && globalState.isPlaying;
+  const currentTime = isCurrentTrack ? globalState.currentTime : 0;
+  const duration = isCurrentTrack ? globalState.duration : 0;
+  const playbackSpeed = globalState.playbackRate;
+  const isMuted = globalState.isMuted;
+
   const togglePlay = () => {
-    if (!audioRef.current) return;
-    if (audioRef.current.paused) {
-      audioRef.current.play().catch(() => {});
-      setIsPlaying(true);
+    if (!isCurrentTrack) {
+      globalAudioService.playTrack({
+        url: currentPlayUrl,
+        title,
+        subtitle,
+        mediaId: itemId,
+        appLogo,
+      });
     } else {
-      audioRef.current.pause();
-      setIsPlaying(false);
+      globalAudioService.togglePlay();
     }
   };
 
   const skipTime = (seconds: number) => {
-    if (!audioRef.current) return;
-    audioRef.current.currentTime = Math.max(0, Math.min(duration, audioRef.current.currentTime + seconds));
+    if (isCurrentTrack) {
+      globalAudioService.skip(seconds);
+    }
   };
 
   const handleSpeedCycle = () => {
     const speeds = [1, 1.25, 1.5, 2, 0.75];
     const nextIdx = (speeds.indexOf(playbackSpeed) + 1) % speeds.length;
-    const nextSpeed = speeds[nextIdx];
-    if (audioRef.current) audioRef.current.playbackRate = nextSpeed;
-    setPlaybackSpeed(nextSpeed);
+    globalAudioService.setPlaybackRate(speeds[nextIdx]);
   };
 
   const handleDownload = async () => {
@@ -166,6 +193,7 @@ export const ModernAudioPlayer: React.FC<ModernAudioPlayerProps> = ({
   };
 
   const formatTime = (timeInSec: number) => {
+    if (!timeInSec || isNaN(timeInSec)) return '0:00';
     const min = Math.floor(timeInSec / 60);
     const sec = Math.floor(timeInSec % 60);
     return `${min}:${sec < 10 ? '0' : ''}${sec}`;
@@ -195,20 +223,6 @@ export const ModernAudioPlayer: React.FC<ModernAudioPlayerProps> = ({
       {/* ── Corner Official Logo Watermark ── */}
       <PlayerWatermark appLogo={appLogo} appName={appName} position="top-right" />
 
-      {/* Hidden Native Audio Element */}
-      <audio
-        ref={audioRef}
-        src={currentPlayUrl}
-        autoPlay={autoPlay}
-        onTimeUpdate={() => {
-          if (audioRef.current) setCurrentTime(audioRef.current.currentTime);
-        }}
-        onLoadedMetadata={() => {
-          if (audioRef.current) setDuration(audioRef.current.duration);
-        }}
-        onEnded={() => setIsPlaying(false)}
-      />
-
       {/* Header Row */}
       <div className="flex items-center justify-between gap-3 mb-4 pr-24">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -216,6 +230,7 @@ export const ModernAudioPlayer: React.FC<ModernAudioPlayerProps> = ({
             <button
               onClick={onBack}
               className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition active:scale-90 shrink-0"
+              title="Mini player me rakhein aur app me ghoomein"
             >
               <ArrowLeft size={16} />
             </button>
@@ -225,75 +240,91 @@ export const ModernAudioPlayer: React.FC<ModernAudioPlayerProps> = ({
           </div>
           <div className="min-w-0">
             <h4 className="text-sm font-bold text-white truncate">{title}</h4>
-            {subtitle && <p className="text-[10px] text-indigo-300/80 font-semibold uppercase">{subtitle}</p>}
+            {subtitle && (
+              <p className="text-[10px] text-indigo-300/80 font-semibold uppercase">{subtitle}</p>
+            )}
           </div>
         </div>
 
-        {/* In-App Offline Download Button */}
-        <div>
-          {isDownloaded ? (
-            <span className="flex items-center gap-1 text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full">
-              <CheckCircle size={11} /> Saved
-            </span>
-          ) : isDownloading ? (
-            <span className="flex items-center gap-1 text-[10px] font-bold bg-indigo-500/30 text-indigo-200 border border-indigo-500/40 px-2 py-0.5 rounded-full animate-pulse">
-              <Download size={11} className="animate-bounce" /> {downloadProgress}%
-            </span>
-          ) : (
+        {/* Action Buttons: Background minimize + Offline Download */}
+        <div className="flex items-center gap-2">
+          {onBack && (
             <button
-              onClick={handleDownload}
-              className={`flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-full transition active:scale-95 shadow ${
-                canDownloadAudio
-                  ? 'bg-indigo-600 text-white hover:bg-indigo-500'
-                  : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
-              }`}
+              onClick={onBack}
+              className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/20 text-indigo-200 text-[10px] font-bold transition active:scale-95"
+              title="Background me chalte rahega, aap app me ghoom sakte hain"
             >
-              {canDownloadAudio ? <Download size={11} /> : <Crown size={11} />}
-              {canDownloadAudio ? 'Save' : 'Ultra'}
+              <Minimize2 size={12} />
+              <span>Background Play</span>
             </button>
           )}
+
+          <div>
+            {isDownloaded ? (
+              <span className="flex items-center gap-1 text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full">
+                <CheckCircle size={11} /> Saved
+              </span>
+            ) : isDownloading ? (
+              <span className="flex items-center gap-1 text-[10px] font-bold bg-indigo-500/30 text-indigo-200 border border-indigo-500/40 px-2 py-0.5 rounded-full animate-pulse">
+                <Download size={11} className="animate-bounce" /> {downloadProgress}%
+              </span>
+            ) : (
+              <button
+                onClick={handleDownload}
+                className={`flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-full transition active:scale-95 shadow ${
+                  canDownloadAudio
+                    ? 'bg-indigo-600 text-white hover:bg-indigo-500'
+                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
+                }`}
+              >
+                {canDownloadAudio ? <Download size={11} /> : <Crown size={11} />}
+                {canDownloadAudio ? 'Save' : 'Ultra'}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Animated Sound Waveform Bars */}
       <div className="flex items-center justify-center gap-1 h-10 mb-4 px-4">
-        {[40, 75, 50, 90, 60, 30, 85, 45, 95, 70, 50, 80, 65, 90, 40, 70, 55, 85, 45, 60].map((h, i) => (
-          <div
-            key={i}
-            className={`w-1 rounded-full transition-all duration-300 ${
-              isPlaying
-                ? 'bg-gradient-to-t from-indigo-500 to-purple-400'
-                : 'bg-slate-700/60'
-            }`}
-            style={{
-              height: isPlaying ? `${Math.max(15, (h * (0.4 + (i % 5) * 0.15)))}%` : '18%',
-              animation: isPlaying ? `pulse 1.${(i % 5) + 2}s infinite alternate` : 'none',
-            }}
-          />
-        ))}
+        {[40, 75, 50, 90, 60, 30, 85, 45, 95, 70, 50, 80, 65, 90, 40, 70, 55, 85, 45, 60].map(
+          (h, i) => (
+            <div
+              key={i}
+              className={`w-1 rounded-full transition-all duration-300 ${
+                isPlaying ? 'bg-indigo-400' : 'bg-slate-700'
+              }`}
+              style={{
+                height: isPlaying ? `${Math.max(15, (h * (isPlaying ? 1 : 0.3)))}%` : '15%',
+                opacity: isPlaying ? 0.9 : 0.3,
+                animation: isPlaying ? `pulse 1.2s ease-in-out infinite ${i * 0.05}s` : 'none',
+              }}
+            />
+          )
+        )}
       </div>
 
       {/* Progress Slider */}
-      <div className="mb-3">
+      <div className="space-y-1 mb-4">
         <input
           type="range"
           min={0}
           max={duration || 100}
           value={currentTime}
           onChange={(e) => {
-            const val = Number(e.target.value);
-            setCurrentTime(val);
-            if (audioRef.current) audioRef.current.currentTime = val;
+            if (isCurrentTrack) {
+              globalAudioService.seek(parseFloat(e.target.value));
+            }
           }}
-          className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-400 hover:h-2 transition-all"
+          className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 hover:accent-indigo-400"
         />
-        <div className="flex justify-between items-center text-[10px] font-mono text-slate-400 mt-1">
+        <div className="flex justify-between text-[10px] text-slate-400 font-mono">
           <span>{formatTime(currentTime)}</span>
           <span>{formatTime(duration)}</span>
         </div>
       </div>
 
-      {/* Control Buttons Bar */}
+      {/* Controls Bar */}
       <div className="flex items-center justify-between">
         <button
           onClick={handleSpeedCycle}
@@ -331,12 +362,7 @@ export const ModernAudioPlayer: React.FC<ModernAudioPlayerProps> = ({
         </div>
 
         <button
-          onClick={() => {
-            if (audioRef.current) {
-              audioRef.current.muted = !isMuted;
-              setIsMuted(!isMuted);
-            }
-          }}
+          onClick={() => globalAudioService.toggleMute()}
           className="p-2 text-slate-400 hover:text-white transition"
         >
           {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
