@@ -17,6 +17,38 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const messaging = firebase.messaging();
 
+// Explicit 'push' event listener for PWA audit tools (PWABuilder, Lighthouse)
+self.addEventListener('push', (event) => {
+  console.log('[firebase-messaging-sw.js] Push event intercepted:', event);
+  if (!event.data) return;
+
+  try {
+    const payload = event.data.json();
+    const notification = payload.notification || {};
+    const data = payload.data || {};
+    const title = notification.title || data.title || 'NSTA Study App';
+    const body = notification.body || data.body || 'New notification received!';
+    const icon = notification.icon || data.icon || '/icons/icon-192.png';
+
+    event.waitUntil(
+      self.registration.showNotification(title, {
+        body,
+        icon,
+        badge: '/favicon.svg',
+        data: { url: data.url || '/', ...data }
+      })
+    );
+  } catch (err) {
+    console.warn('[firebase-messaging-sw.js] Raw text push:', err);
+    event.waitUntil(
+      self.registration.showNotification('NSTA Alert', {
+        body: event.data.text() || 'New alert received',
+        icon: '/icons/icon-192.png'
+      })
+    );
+  }
+});
+
 // Smart Anti-Fatigue Rules:
 // 1. Friend requests & direct chat messages -> Instant notification with vibration.
 // 2. Daily coins & streak savers -> Gentle notification.

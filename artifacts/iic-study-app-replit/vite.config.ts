@@ -24,6 +24,7 @@ export default defineConfig({
         'icons/icon-192.png',
         'icons/icon-512.png',
         'icons/icon-maskable-512.png',
+        'firebase-messaging-sw.js',
       ],
       manifest: {
         name: 'NSTA',
