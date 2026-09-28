@@ -1903,22 +1903,20 @@ export const subscribeToFriendRequests = (
   // 2. Cloud Firestore targeted listener for incoming friend requests
   try {
     if (db) {
-      const fsBucket = new Map<string, FriendRequest>();
-      sourceBuckets.set('firestore', fsBucket);
-
       const primaryTargetIds = Array.from(new Set([myUserId, ...(extraUserIds || [])].filter(Boolean))).slice(0, 10);
       primaryTargetIds.forEach((tId) => {
         try {
+          const fsBucket = new Map<string, FriendRequest>();
+          sourceBuckets.set(`firestore_${tId}`, fsBucket);
           const fsQuery = query(collection(db, 'friend_requests'), where('toId', '==', tId));
           const unsubFs = onSnapshot(
             fsQuery,
             (snap) => {
+              fsBucket.clear();
               snap.forEach((docSnap) => {
                 const data = docSnap.data() as FriendRequest;
                 if (data && data.status === 'PENDING') {
                   fsBucket.set(docSnap.id, { ...data, id: docSnap.id });
-                } else if (data && data.status !== 'PENDING') {
-                  fsBucket.delete(docSnap.id);
                 }
               });
               emit();
@@ -2029,21 +2027,22 @@ export const subscribeToSentFriendRequests = (
   // 2. Firestore redundancy for sent friend requests
   try {
     if (db) {
-      const fsBucket = new Map<string, FriendRequest>();
-      sourceBuckets.set('firestore_sent', fsBucket);
       const primaryTargetIds = Array.from(new Set([myUserId, ...(extraUserIds || [])].filter(Boolean))).slice(0, 10);
       primaryTargetIds.forEach((tId) => {
         try {
+          const fsSubBucket = new Map<string, FriendRequest>();
+          const fsRootBucket = new Map<string, FriendRequest>();
+          sourceBuckets.set(`firestore_sent_sub_${tId}`, fsSubBucket);
+          sourceBuckets.set(`firestore_sent_root_${tId}`, fsRootBucket);
           // Direct subcollection listener (no composite index required)
           const unsubSub = onSnapshot(
             collection(db, 'users', tId, 'friend_requests_sent'),
             (snap) => {
+              fsSubBucket.clear();
               snap.forEach((docSnap) => {
                 const data = docSnap.data() as FriendRequest;
                 if (data && (data.status === 'PENDING' || !data.status)) {
-                  fsBucket.set(docSnap.id, { ...data, id: docSnap.id });
-                } else if (data && data.status !== 'PENDING') {
-                  fsBucket.delete(docSnap.id);
+                  fsSubBucket.set(docSnap.id, { ...data, id: docSnap.id });
                 }
               });
               emit();
@@ -2057,12 +2056,11 @@ export const subscribeToSentFriendRequests = (
           const unsubFs = onSnapshot(
             fsQuery,
             (snap) => {
+              fsRootBucket.clear();
               snap.forEach((docSnap) => {
                 const data = docSnap.data() as FriendRequest;
                 if (data && (data.status === 'PENDING' || !data.status)) {
-                  fsBucket.set(docSnap.id, { ...data, id: docSnap.id });
-                } else if (data && data.status !== 'PENDING') {
-                  fsBucket.delete(docSnap.id);
+                  fsRootBucket.set(docSnap.id, { ...data, id: docSnap.id });
                 }
               });
               emit();
@@ -2133,6 +2131,9 @@ export const subscribeToFriends = (
       const unsub = onValue(
         friendsRef,
         (snapshot) => {
+          // Once a remote snapshot arrives it is authoritative. Otherwise a
+          // stale local cache can re-add a friend after refresh/unfriend.
+          sourceBuckets.delete('local');
           bucket.clear();
           const val = snapshot.val();
           if (val && typeof val === 'object') {
@@ -2167,16 +2168,16 @@ export const subscribeToFriends = (
   // Dual-source redundancy: Cloud Firestore friends subcollection & accepted friend requests
   try {
     if (db) {
-      const fsFriendsBucket = new Map<string, ChatContact>();
-      sourceBuckets.set('firestore_friends', fsFriendsBucket);
-
       const primaryTargetIds = Array.from(new Set([myUserId, ...(extraUserIds || [])].filter(Boolean))).slice(0, 10);
       primaryTargetIds.forEach((tId) => {
         try {
+          const fsFriendsBucket = new Map<string, ChatContact>();
+          sourceBuckets.set(`firestore_friends_${tId}`, fsFriendsBucket);
           // 1. Direct friends subcollection: users/{tId}/friends
           const unsubFriendsSub = onSnapshot(
             collection(db, 'users', tId, 'friends'),
             (snap) => {
+              fsFriendsBucket.clear();
               snap.forEach((docSnap) => {
                 const data = docSnap.data();
                 if (data && docSnap.id) {
@@ -2200,13 +2201,16 @@ export const subscribeToFriends = (
           unsubs.push(unsubFriendsSub);
 
           // 2. Sent friend requests that have been accepted: friend_requests where fromId == tId and status == 'ACCEPTED'
+          const acceptedFriendsBucket = new Map<string, ChatContact>();
+          sourceBuckets.set(`firestore_accepted_${tId}`, acceptedFriendsBucket);
           const unsubAcceptedReqs = onSnapshot(
             query(collection(db, 'friend_requests'), where('fromId', '==', tId), where('status', '==', 'ACCEPTED')),
             (snap) => {
+              acceptedFriendsBucket.clear();
               snap.forEach((docSnap) => {
                 const data = docSnap.data();
                 if (data && data.toId) {
-                  fsFriendsBucket.set(data.toId, {
+                  acceptedFriendsBucket.set(data.toId, {
                     id: data.toId,
                     name: data.toName || data.friend?.name || 'Friend',
                     photoURL: data.toPhoto || data.friend?.photoURL || '',
@@ -2397,6 +2401,28 @@ export function removeLocalFriendRequest(reqId: string) {
   } catch {}
 }
 
+function removeLocalFriendRequestsBetween(firstUserId: string, secondUserId: string) {
+  const matchesPair = (request: FriendRequest) =>
+    (isSameUser(request.fromId, firstUserId) && isSameUser(request.toId, secondUserId)) ||
+    (isSameUser(request.fromId, secondUserId) && isSameUser(request.toId, firstUserId));
+
+  try {
+    const incoming = getLocalFriendRequests().filter((request) => !matchesPair(request));
+    localStorage.setItem('nsta_friend_requests', JSON.stringify(incoming));
+  } catch {}
+
+  try {
+    const sentRaw = localStorage.getItem('nsta_sent_requests_global');
+    if (sentRaw) {
+      const sent = JSON.parse(sentRaw) as FriendRequest[];
+      localStorage.setItem(
+        'nsta_sent_requests_global',
+        JSON.stringify(sent.filter((request) => !matchesPair(request))),
+      );
+    }
+  } catch {}
+}
+
 export function getLocalFriends(userId: string): ChatContact[] {
   try {
     const raw = localStorage.getItem(`nsta_friends_${userId}`);
@@ -2436,39 +2462,109 @@ function saveAllLocalFriends(userId: string, friends: ChatContact[]) {
  * Unfriend a user: removes friendship from RTDB and local storage.
  */
 export const unfriendUser = async (myUserId: string, friendId: string): Promise<boolean> => {
-  const cleanMy = sanitizeRtdbKey(myUserId);
-  const cleanFriend = sanitizeRtdbKey(friendId);
+  const knownFriend = getLocalFriends(myUserId).find(
+    (friend) => isSameUser(friend.id, friendId) || isSameUser(friend.uid, friendId),
+  );
+  const friendIdentityIds = Array.from(
+    new Set(
+      [friendId, knownFriend?.id, knownFriend?.uid, knownFriend?.email]
+        .filter(Boolean)
+        .map((value) => String(value)),
+    ),
+  );
+  const myKeys = Array.from(
+    new Set([myUserId].filter(Boolean).map(sanitizeRtdbKey)),
+  );
+  const friendKeys = Array.from(
+    new Set(
+      friendIdentityIds.map(sanitizeRtdbKey),
+    ),
+  );
 
   try {
-    // 1. Remove from RTDB friends list for both users
-    await remove(ref(rtdb, `chat/friends/${cleanMy}/${cleanFriend}`));
-    await remove(ref(rtdb, `chat/friends/${cleanFriend}/${cleanMy}`));
-
-    // Also try un-sanitized keys if they were different
-    if (cleanMy !== myUserId || cleanFriend !== friendId) {
-      await remove(ref(rtdb, `chat/friends/${myUserId}/${friendId}`)).catch(() => {});
-      await remove(ref(rtdb, `chat/friends/${friendId}/${myUserId}`)).catch(() => {});
-    }
-
-    // 2. Remove any pending/sent requests
-    await remove(ref(rtdb, `chat/friend_requests/${cleanMy}/${cleanFriend}`)).catch(() => {});
-    await remove(ref(rtdb, `chat/friend_requests/${cleanFriend}/${cleanMy}`)).catch(() => {});
-    await remove(ref(rtdb, `chat/friend_requests_sent/${cleanMy}/${cleanFriend}`)).catch(() => {});
-    await remove(ref(rtdb, `chat/friend_requests_sent/${cleanFriend}/${cleanMy}`)).catch(() => {});
+    // Remove every alias pair in one atomic update. Previously only the two
+    // visible IDs were deleted, leaving email/UID aliases to recreate the
+    // friendship after refresh.
+    const updates: Record<string, null> = {};
+    myKeys.forEach((myKey) => {
+      friendKeys.forEach((friendKey) => {
+        updates[`chat/friends/${myKey}/${friendKey}`] = null;
+        updates[`chat/friends/${friendKey}/${myKey}`] = null;
+        updates[`chat/friend_requests/${myKey}/${friendKey}`] = null;
+        updates[`chat/friend_requests/${friendKey}/${myKey}`] = null;
+        updates[`chat/friend_requests_sent/${myKey}/${friendKey}`] = null;
+        updates[`chat/friend_requests_sent/${friendKey}/${myKey}`] = null;
+        updates[`chat/friend_accepted/${myKey}/${friendKey}`] = null;
+        updates[`chat/friend_accepted/${friendKey}/${myKey}`] = null;
+      });
+    });
+    await update(ref(rtdb), updates);
   } catch (e) {
     console.warn('[Nsta Messenger] Error unfriending user in RTDB:', e);
+    // Keep the user's own paths removable even when Firebase rules reject a
+    // peer-side write. The peer's listener will also see the revocation when
+    // rules permit the atomic update above.
+    await Promise.allSettled(
+      friendKeys.flatMap((friendKey) =>
+        myKeys.flatMap((myKey) => [
+          remove(ref(rtdb, `chat/friends/${myKey}/${friendKey}`)).catch(() => {}),
+          remove(ref(rtdb, `chat/friend_requests/${myKey}/${friendKey}`)).catch(() => {}),
+          remove(ref(rtdb, `chat/friend_requests_sent/${myKey}/${friendKey}`)).catch(() => {}),
+        ]),
+      ),
+    );
   }
 
-  // 3. Remove from local storage
-  const list = getLocalFriends(myUserId).filter((f) => f.id !== friendId);
-  saveAllLocalFriends(myUserId, list);
+  // Remove both Firestore sources too. Accepted requests and friends
+  // subcollections were previously left behind and rebuilt the friend on
+  // refresh even after RTDB was cleared.
+  try {
+    if (db) {
+      const firestoreDeletes: Promise<unknown>[] = [];
+      for (const myIdentityId of [myUserId]) {
+        for (const friendIdentityId of friendIdentityIds) {
+          firestoreDeletes.push(
+            deleteDoc(doc(db, 'users', myIdentityId, 'friends', friendIdentityId)),
+            deleteDoc(doc(db, 'users', friendIdentityId, 'friends', myIdentityId)),
+            deleteDoc(doc(db, 'friend_requests', `${myIdentityId}_${friendIdentityId}`)),
+            deleteDoc(doc(db, 'friend_requests', `${friendIdentityId}_${myIdentityId}`)),
+            deleteDoc(doc(db, 'users', myIdentityId, 'friend_requests_incoming', `${friendIdentityId}_${myIdentityId}`)),
+            deleteDoc(doc(db, 'users', myIdentityId, 'friend_requests_sent', `${myIdentityId}_${friendIdentityId}`)),
+            deleteDoc(doc(db, 'users', friendIdentityId, 'friend_requests_incoming', `${myIdentityId}_${friendIdentityId}`)),
+            deleteDoc(doc(db, 'users', friendIdentityId, 'friend_requests_sent', `${friendIdentityId}_${myIdentityId}`)),
+          );
+        }
+      }
+      await Promise.allSettled(firestoreDeletes);
+    }
+  } catch (e) {
+    console.warn('[Nsta Messenger] Error clearing Firestore friendship state:', e);
+  }
 
-  // Also remove from peer's local list if in current browser
-  const peerList = getLocalFriends(friendId).filter((f) => f.id !== myUserId);
-  saveAllLocalFriends(friendId, peerList);
+  // 3. Remove from every local alias cache, including the peer cache when it
+  // exists in the same browser.
+  const localUserIds = Array.from(new Set([myUserId, ...myKeys]));
+  const localFriendIds = Array.from(new Set([friendId, ...friendKeys]));
+  localUserIds.forEach((userId) => {
+    saveAllLocalFriends(
+      userId,
+      getLocalFriends(userId).filter(
+        (friend) => !isSameUser(friend.id, friendId) && !isSameUser(friend.uid, friendId),
+      ),
+    );
+  });
+  localFriendIds.forEach((userId) => {
+    saveAllLocalFriends(
+      userId,
+      getLocalFriends(userId).filter(
+        (friend) => !isSameUser(friend.id, myUserId) && !isSameUser(friend.uid, myUserId),
+      ),
+    );
+  });
 
-  removeLocalFriendRequest(`${friendId}_${myUserId}`);
-  removeLocalFriendRequest(`${myUserId}_${friendId}`);
+  removeLocalFriendRequestsBetween(myUserId, friendId);
+  removeLocalSentFriendRequest(myUserId, friendId);
+  removeLocalSentFriendRequest(friendId, myUserId);
 
   return true;
 };
