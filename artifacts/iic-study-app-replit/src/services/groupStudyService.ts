@@ -5,6 +5,7 @@
 
 import { ref, set, get, update, remove, onValue, onDisconnect, push } from 'firebase/database';
 import { rtdb, auth } from '../firebase';
+import { notifyStudyRoomStartInBackground } from '../components/NotificationManager';
 import { getLevelFromScore } from '../utils/levelSystem';
 
 export interface GroupStudyMember {
@@ -1545,6 +1546,16 @@ export const endLiveMcqBattle = async (roomId: string): Promise<void> => {
       'liveMcq/isActive': false,
       'liveMcq/status': 'ENDED',
     });
+    const activeRoom = getCachedRooms()[roomId];
+    if (activeRoom?.members) {
+      void notifyStudyRoomStartInBackground({
+        recipientIds: Object.keys(activeRoom.members),
+        senderId: auth.currentUser?.uid || activeRoom.hostId,
+        senderName: activeRoom.hostName || 'NSTA Student',
+        roomName: activeRoom.name || 'Study Room',
+        url: `/?open=study-room&room=${encodeURIComponent(roomId)}`,
+      });
+    }
   } catch (err: any) {
     const msg = String(err?.message || err || '');
     if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied')) return;

@@ -43,8 +43,10 @@ export default defineConfig({
         'icons/icon-192.png',
         'icons/icon-512.png',
         'icons/icon-maskable-512.png',
-        'firebase-messaging-sw.js',
       ],
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
       manifest: {
         name: 'NSTA',
         short_name: 'NSTA',
@@ -63,10 +65,8 @@ export default defineConfig({
           { src: 'icons/apple-touch-icon.png', sizes: '180x180', type: 'image/png', purpose: 'any' },
         ],
       },
-      workbox: {
+      injectManifest: {
         globIgnores: ['**/*.map'],
-        skipWaiting: true,
-        clientsClaim: true,
         maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
       },
     }),

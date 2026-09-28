@@ -1,0 +1,1 @@
+- [Notification delivery](notification-delivery.md) — FCM background delivery depends on Firebase Admin credentials; keep its worker on a separate scope from the PWA worker.

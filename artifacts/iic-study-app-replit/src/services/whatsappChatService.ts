@@ -2,7 +2,7 @@
 import { ref, set, get, update, onValue, push, remove } from 'firebase/database';
 import { doc, setDoc, deleteDoc, collection, getDocs, limit, query, onSnapshot, where } from 'firebase/firestore';
 import { rtdb, db } from '../firebase';
-import { notifyFriendRequestInBackground } from '../components/NotificationManager';
+import { notifyDirectMessageInBackground, notifyFriendRequestInBackground } from '../components/NotificationManager';
 
 export interface ChatContact {
   id: string;
@@ -469,6 +469,16 @@ export const sendPrivateMessage = async (
     await set(msgRef, payload);
   } catch (err) {
     console.warn('[WhatsApp] RTDB write error:', err);
+  }
+
+  if (!peerUserId.startsWith('peer_') && myUserId !== peerUserId && message.text) {
+    void notifyDirectMessageInBackground({
+      recipientIds: [peerUserId],
+      senderId: myUserId,
+      senderName: myUserName || 'NSTA Student',
+      message: message.text,
+      url: '/?open=messenger',
+    });
   }
 
   // 3. Firestore completely bypass (Zero Firestore Write - saves 20,000 write quota)

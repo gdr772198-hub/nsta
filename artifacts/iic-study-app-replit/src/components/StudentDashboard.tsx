@@ -88,6 +88,8 @@ import { SubscriptionEngine } from "../utils/engines/subscriptionEngine";
 import { PedroEngine } from "../utils/engines/pedroEngine";
 import { recalculateSubscriptionStatus } from "../utils/subscriptionUtils";
 import { RewardEngine } from "../utils/engines/rewardEngine";
+import { NotificationSettings } from "./NotificationSettings";
+import { notifyStudyProgressMilestone } from "./NotificationManager";
 import {
   isCreditSubActive,
   canClaimCreditSubToday,
@@ -5623,6 +5625,19 @@ export const StudentDashboard: React.FC<Props> = ({
       const leftSec = Math.max(0, dynamicReqSec - totalSecs);
 
       setReadingProgressInfo({ pct, leftSec, reqSec: dynamicReqSec });
+
+      if (pct >= 50 && user?.id) {
+        const milestoneKey = `nst_progress_50_${user.id}_${_lid}_${_pi}`;
+        if (!localStorage.getItem(milestoneKey)) {
+          localStorage.setItem(milestoneKey, new Date().toISOString());
+          void notifyStudyProgressMilestone({
+            recipientIds: [user.id],
+            senderId: user.id,
+            milestone: 50,
+            lessonTitle: _lid,
+          });
+        }
+      }
 
       if (totalSecs >= dynamicReqSec) {
         markRoutinePageRead(_lid, _pi);
@@ -16768,6 +16783,7 @@ export const StudentDashboard: React.FC<Props> = ({
   <ThemeProvider theme={_extendedTheme}>
     <div data-tier={tierTheme.tier} className="min-h-[100dvh] pb-0" style={{ background: _appBg }}>
       <NotificationPrompt userId={user.id} />
+      <NotificationSettings userId={user.id} />
       {/* Admin WhiteBoard floating panel — fixed z-[9999], visible in ALL modes */}
       {_isAdminUser && showAdminBoard && (
         <AdminWhiteBoard onClose={() => setShowAdminBoard(false)} />

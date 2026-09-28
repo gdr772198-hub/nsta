@@ -1,6 +1,123 @@
 import { VAPID_KEY, getFirebaseMessaging, db, rtdb, auth } from '../firebase';
 import { doc, updateDoc } from 'firebase/firestore';
-import { ref, set } from 'firebase/database';
+import { get, ref, set } from 'firebase/database';
+
+export const NOTIFICATION_CATEGORY_DEFINITIONS = [
+  { key: 'DAILY_ROUTINE', label: 'Today’s routine', description: 'Subah ka daily study target' },
+  { key: 'ROUTINE_SLOT', label: 'Routine slots', description: 'Aapke selected subject ke time reminders' },
+  { key: 'STUDY_PROGRESS', label: 'Study progress', description: '50% / 100% target aur coins milestones' },
+  { key: 'STREAK_SAVER', label: 'Streak saver', description: 'Shaam ka pending-target reminder' },
+  { key: 'CONTENT', label: 'New content', description: 'Naye notes, MCQs, PDFs aur tests' },
+  { key: 'COMMUNITY', label: 'Community updates', description: 'Doubt replies, comments aur notices' },
+  { key: 'CHAT', label: 'Private messages', description: 'Direct chat messages' },
+  { key: 'FRIEND_REQUEST', label: 'Friend requests', description: 'Friend request aur acceptance alerts' },
+  { key: 'LIVE_CLASS', label: 'Live classes', description: 'Live class start alerts' },
+  { key: 'STUDY_ROOM', label: 'Study rooms', description: 'Room invites aur live study-room alerts' },
+] as const;
+
+export type NotificationCategory = (typeof NOTIFICATION_CATEGORY_DEFINITIONS)[number]['key'] | 'DEFAULT';
+
+export type NotificationPreferences = {
+  enabled: boolean;
+  categories: Record<NotificationCategory, boolean>;
+  morningRoutineTime: string;
+  streakSaverTime: string;
+  routineSlotTimes: Record<string, string>;
+  timezone: string;
+  updatedAt?: string;
+};
+
+const NOTIFICATION_PREFERENCES_KEY = (userId: string) => `nst_notification_preferences_${userId}`;
+
+export const getDefaultNotificationPreferences = (): NotificationPreferences => {
+  const categories = {} as Record<NotificationCategory, boolean>;
+  for (const item of NOTIFICATION_CATEGORY_DEFINITIONS) categories[item.key] = true;
+  categories.DEFAULT = true;
+  return {
+    enabled: true,
+    categories,
+    morningRoutineTime: '07:00',
+    streakSaverTime: '19:00',
+    routineSlotTimes: {},
+    timezone: typeof Intl !== 'undefined'
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
+      : 'Asia/Kolkata',
+  };
+};
+
+export const loadNotificationPreferences = (userId?: string): NotificationPreferences => {
+  const defaults = getDefaultNotificationPreferences();
+  if (!userId || typeof window === 'undefined') return defaults;
+  try {
+    const raw = localStorage.getItem(NOTIFICATION_PREFERENCES_KEY(userId));
+    if (!raw) return defaults;
+    const saved = JSON.parse(raw) as Partial<NotificationPreferences>;
+    return {
+      ...defaults,
+      ...saved,
+      categories: { ...defaults.categories, ...(saved.categories || {}) },
+      routineSlotTimes: { ...(saved.routineSlotTimes || {}) },
+    };
+  } catch {
+    return defaults;
+  }
+};
+
+export const saveNotificationPreferences = async (
+  userId: string,
+  next: Partial<NotificationPreferences>,
+): Promise<NotificationPreferences> => {
+  const preferences = {
+    ...loadNotificationPreferences(userId),
+    ...next,
+    categories: {
+      ...loadNotificationPreferences(userId).categories,
+      ...(next.categories || {}),
+    },
+    routineSlotTimes: {
+      ...loadNotificationPreferences(userId).routineSlotTimes,
+      ...(next.routineSlotTimes || {}),
+    },
+    updatedAt: new Date().toISOString(),
+  };
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(NOTIFICATION_PREFERENCES_KEY(userId), JSON.stringify(preferences));
+  }
+  try {
+    const payload = { ...preferences, userId };
+    await Promise.all([
+      set(ref(rtdb, `notification_preferences/${userId}`), payload),
+      set(ref(rtdb, `users/${userId}/notificationPreferences`), payload),
+    ]);
+  } catch (error) {
+    console.warn('[NotificationManager] Preference sync failed:', error);
+  }
+  return preferences;
+};
+
+export const hydrateNotificationPreferences = async (
+  userId: string,
+): Promise<NotificationPreferences> => {
+  if (!userId) return getDefaultNotificationPreferences();
+  const local = loadNotificationPreferences(userId);
+  try {
+    const snapshot = await get(ref(rtdb, `notification_preferences/${userId}`));
+    if (!snapshot.exists()) return local;
+    const remote = snapshot.val() as Partial<NotificationPreferences>;
+    const merged: NotificationPreferences = {
+      ...local,
+      ...remote,
+      categories: { ...local.categories, ...(remote.categories || {}) },
+      routineSlotTimes: { ...local.routineSlotTimes, ...(remote.routineSlotTimes || {}) },
+    };
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(NOTIFICATION_PREFERENCES_KEY(userId), JSON.stringify(merged));
+    }
+    return merged;
+  } catch {
+    return local;
+  }
+};
 
 export const requestNotificationPermission = async (): Promise<boolean> => {
   if (typeof window === 'undefined' || !('Notification' in window)) {
@@ -25,15 +142,14 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
   return false;
 };
 
-const FCM_SERVICE_WORKER_SCOPE = '/firebase-cloud-messaging-push-scope';
-
 const getFcmServiceWorkerRegistration = async (): Promise<ServiceWorkerRegistration> => {
-  const existing = await navigator.serviceWorker.getRegistration(FCM_SERVICE_WORKER_SCOPE);
+  // Use the same /sw.js worker that powers the installable PWA. A separate
+  // Firebase-only worker is invisible to PWA validators and can split push
+  // behavior across scopes.
+  const existing = await navigator.serviceWorker.getRegistration();
   if (existing) return existing;
-  return navigator.serviceWorker.register('/firebase-messaging-sw.js', {
-    scope: FCM_SERVICE_WORKER_SCOPE,
-    updateViaCache: 'none',
-  });
+  if (navigator.serviceWorker.ready) return navigator.serviceWorker.ready;
+  return navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
 };
 
 export const subscribeUserToPush = async (userId?: string): Promise<string | null> => {
@@ -48,8 +164,7 @@ export const subscribeUserToPush = async (userId?: string): Promise<string | nul
       return null;
     }
 
-    // Keep the Firebase worker on its own scope so it never replaces the
-    // Workbox worker that powers the installable PWA shell.
+    // Firebase Messaging now uses the main Workbox+FCM PWA worker.
     const swReg = await getFcmServiceWorkerRegistration();
 
     const messaging = await getFirebaseMessaging();
@@ -70,6 +185,8 @@ export const subscribeUserToPush = async (userId?: string): Promise<string | nul
 
       if (userId) {
         await saveFcmToken(userId, currentToken);
+        const preferences = loadNotificationPreferences(userId);
+        await saveNotificationPreferences(userId, preferences);
       }
       return currentToken;
     } else {
@@ -93,7 +210,8 @@ export const saveFcmToken = async (userId: string, token: string) => {
     await set(broadcastRef, {
       token,
       updatedAt: new Date().toISOString(),
-      platform: 'pwa'
+        platform: 'pwa',
+        userId,
     }).catch(() => {});
 
     // Save in Firestore
@@ -109,18 +227,24 @@ export const getStoredFcmToken = (): string | null => {
   return localStorage.getItem('nst_fcm_token');
 };
 
-/** Ask the server to send a data-only FCM push for a friend request. */
-export const notifyFriendRequestInBackground = async (request: {
+export interface PushNotificationRequest {
   recipientIds: string[];
-  senderId: string;
-  senderName: string;
+  type: NotificationCategory;
+  title: string;
+  body: string;
   url?: string;
-}) => {
+  senderId?: string;
+  senderName?: string;
+  broadcast?: boolean;
+}
+
+/** Ask the server to send a data-only FCM push while the app is closed. */
+export const sendPushNotification = async (request: PushNotificationRequest) => {
   try {
     const idToken = await auth?.currentUser?.getIdToken();
-    if (!idToken || request.recipientIds.length === 0) return false;
+    if (!idToken) return false;
 
-    const response = await fetch('/api/notifications/friend-request', {
+    const response = await fetch('/api/notifications/push', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -133,10 +257,57 @@ export const notifyFriendRequestInBackground = async (request: {
     });
     return response.ok;
   } catch (error) {
-    console.warn('[NotificationManager] Background friend-request push failed:', error);
+    console.warn('[NotificationManager] Push request failed:', error);
     return false;
   }
 };
+
+export const notifyFriendRequestInBackground = async (request: {
+  recipientIds: string[];
+  senderId: string;
+  senderName: string;
+  url?: string;
+}) => {
+  if (request.recipientIds.length === 0) return false;
+  return sendPushNotification({
+    ...request,
+    type: 'FRIEND_REQUEST',
+    title: '🤝 Friend Request',
+    body: `${request.senderName} ne aapko friend request bheji hai! Accept karke baat start karein.`,
+  });
+};
+
+export const notifyDirectMessageInBackground = async (request: {
+  recipientIds: string[];
+  senderId: string;
+  senderName: string;
+  message: string;
+  url?: string;
+}) => sendPushNotification({
+  recipientIds: request.recipientIds,
+  senderId: request.senderId,
+  senderName: request.senderName,
+  type: 'CHAT',
+  title: `💬 Naya Message: ${request.senderName}`,
+  body: request.message.slice(0, 180) || 'Aapko ek naya private message mila hai.',
+  url: request.url || '/?open=messenger',
+});
+
+export const notifyCommunityUpdateInBackground = async (request: {
+  recipientIds: string[];
+  senderId?: string;
+  senderName: string;
+  body: string;
+  url?: string;
+}) => sendPushNotification({
+  recipientIds: request.recipientIds,
+  senderId: request.senderId,
+  senderName: request.senderName,
+  type: 'COMMUNITY',
+  title: '💬 Community Update',
+  body: request.body,
+  url: request.url || '/?open=community',
+});
 
 export const getNotificationPermissionStatus = (): NotificationPermission | 'unsupported' => {
   if (typeof window === 'undefined' || !('Notification' in window)) return 'unsupported';
@@ -199,8 +370,6 @@ export const listenToForegroundMessages = async (onMessageReceived?: (payload: a
   }
 };
 
-export type NotificationCategory = 'CHAT' | 'FRIEND_REQUEST' | 'STREAK' | 'DAILY_COIN' | 'COMMUNITY' | 'NOTE_UPDATE' | 'DEFAULT';
-
 export interface SmartNotificationPayload {
   title: string;
   body: string;
@@ -218,11 +387,11 @@ export const dispatchSmartNotification = async (payload: SmartNotificationPayloa
   const { title, body, category, url = '/', senderId } = payload;
   const showNotification = async (
     registration: ServiceWorkerRegistration,
-    options: NotificationOptions & { vibrate?: number[] },
+    options: NotificationOptions & { vibrate?: number[]; renotify?: boolean },
   ) => registration.showNotification(title, options);
 
   // 1. Community & Notes Updates: Silent in-app update only. Never vibrate or spam the phone tray repeatedly.
-  if (category === 'COMMUNITY' || category === 'NOTE_UPDATE') {
+  if (category === 'COMMUNITY' || category === 'CONTENT') {
     console.log('[SmartNotify] Anti-Fatigue: Silent in-app notification for community/notes:', title);
     // Silent notification without loud vibration
     try {
@@ -277,7 +446,7 @@ export const dispatchSmartNotification = async (payload: SmartNotificationPayloa
   }
 
   // 3. Streak & Daily Coins: Gentle reminder
-  if (category === 'STREAK' || category === 'DAILY_COIN') {
+  if (category === 'STREAK_SAVER' || category === 'STUDY_PROGRESS') {
     try {
       if ('serviceWorker' in navigator) {
         const reg = await getFcmServiceWorkerRegistration();
@@ -296,6 +465,38 @@ export const dispatchSmartNotification = async (payload: SmartNotificationPayloa
     }
   }
 };
+
+export const notifyStudyProgressMilestone = async (request: {
+  recipientIds: string[];
+  senderId?: string;
+  milestone: 50 | 100;
+  lessonTitle?: string;
+}) => sendPushNotification({
+  recipientIds: request.recipientIds,
+  senderId: request.senderId,
+  type: 'STUDY_PROGRESS',
+  title: request.milestone === 100 ? '🎉 Study Target Complete!' : '⚡ 50% Study Progress',
+  body: request.milestone === 100
+    ? `${request.lessonTitle || 'Aaj ka lesson'} complete ho gaya. Great work!`
+    : `${request.lessonTitle || 'Aaj ka lesson'} ka 50% progress complete ho gaya. Keep going!`,
+  url: '/?open=routine',
+});
+
+export const notifyStudyRoomStartInBackground = async (request: {
+  recipientIds: string[];
+  senderId: string;
+  senderName: string;
+  roomName: string;
+  url?: string;
+}) => sendPushNotification({
+  recipientIds: request.recipientIds.filter((id) => id !== request.senderId),
+  senderId: request.senderId,
+  senderName: request.senderName,
+  type: 'STUDY_ROOM',
+  title: '🟢 Study room live hai',
+  body: `${request.senderName} ne "${request.roomName}" study room start kiya.`,
+  url: request.url || '/?open=study-room',
+});
 
 // Evening Gentle Streak & Coin Saver Reminder
 // Checks if current time is evening (after 6 PM) and reminder not already sent today
@@ -316,7 +517,7 @@ export const checkEveningStreakReminder = (user?: { streak?: number; streakClaim
   dispatchSmartNotification({
     title: '🔥 Streak Saver & Daily Coins!',
     body: `Aapka ${user?.streak || 1}-day streak tootne se bachayein! Aaj ke free daily coins collect karein.`,
-    category: 'STREAK',
+    category: 'STREAK_SAVER',
     url: '/'
   });
 };
