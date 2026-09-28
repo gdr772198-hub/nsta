@@ -83,6 +83,7 @@ function cleanIds(value: unknown, max = 500): string[] {
     ? [...new Set(value
       .filter((id): id is string => typeof id === "string" && id.trim().length > 0)
       .map((id) => id.trim())
+      .map((id) => id.replace(/[.#$[\]/]/g, "_"))
       .slice(0, max))]
     : [];
 }
