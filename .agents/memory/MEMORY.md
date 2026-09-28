@@ -1,1 +1,2 @@
 - [Notification delivery](notification-delivery.md) — FCM background delivery depends on Firebase Admin credentials; keep its worker on a separate scope from the PWA worker.
+- [Direct chat identity](direct-chat-identity.md) — direct-message rooms must account for imported users having multiple identity aliases.

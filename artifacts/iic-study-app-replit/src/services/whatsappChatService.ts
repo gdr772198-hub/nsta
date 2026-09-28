@@ -447,6 +447,7 @@ export const sendPrivateMessage = async (
     replyTo?: any;
     isHd?: boolean;
     recipientIds?: string[];
+    senderIds?: string[];
   }
 ): Promise<ChatMessage> => {
   const convId = getDirectConversationId(myUserId, peerUserId);
@@ -484,10 +485,23 @@ export const sendPrivateMessage = async (
 
   const payload = cleanPayload(message);
 
-  // 2. Try Firebase RTDB
+  // 2. Try Firebase RTDB. A user can have more than one identity in the
+  // imported data (Firestore document id, auth uid, email/display id). Write
+  // to every known sender/recipient pair so both clients resolve the same
+  // conversation even when they use different identity fields.
+  const senderIds = Array.from(new Set([myUserId, ...(extra?.senderIds || [])].filter(Boolean)));
+  const recipientIds = Array.from(new Set([peerUserId, ...(extra?.recipientIds || [])].filter(Boolean)));
+  const conversationIds = Array.from(
+    new Set(senderIds.flatMap((senderId) =>
+      recipientIds.map((recipientId) => getDirectConversationId(senderId, recipientId))
+    ))
+  );
   try {
-    const msgRef = ref(rtdb, `chat/whatsapp_direct/${convId}/${msgId}`);
-    await set(msgRef, payload);
+    await Promise.allSettled(
+      conversationIds.map((conversationId) =>
+        set(ref(rtdb, `chat/whatsapp_direct/${conversationId}/${msgId}`), payload)
+      )
+    );
   } catch (err) {
     console.warn('[WhatsApp] RTDB write error:', err);
   }
@@ -587,22 +601,40 @@ export const sendGroupMessage = async (
 export const subscribeToDirectMessages = (
   myUserId: string,
   peerUserId: string,
-  callback: (messages: ChatMessage[]) => void
+  callback: (messages: ChatMessage[]) => void,
+  myUserIds: string[] = [],
+  peerUserIds: string[] = []
 ): (() => void) => {
-  const convId = getDirectConversationId(myUserId, peerUserId);
-  const cacheKey = `dm_${convId}`;
+  const myIds = Array.from(new Set([myUserId, ...myUserIds].filter(Boolean)));
+  const peerIds = Array.from(new Set([peerUserId, ...peerUserIds].filter(Boolean)));
+  const conversationIds = Array.from(
+    new Set(myIds.flatMap((myId) =>
+      peerIds.map((peerId) => getDirectConversationId(myId, peerId))
+    ))
+  );
+  const cacheKey = `dm_${getDirectConversationId(myUserId, peerUserId)}`;
 
-  // Emit local cache immediately for zero loading wait (strictly filtered)
-  const initialLocal = getLocalMessages(cacheKey, myUserId);
+  // Emit all known local aliases immediately for zero loading wait.
+  const initialLocal = Array.from(
+    new Map(
+      conversationIds
+        .flatMap((conversationId) => getLocalMessages(`dm_${conversationId}`, myUserId))
+        .map((message) => [message.id, message] as const)
+    ).values()
+  ).sort((a, b) => a.timestamp - b.timestamp);
   if (initialLocal.length > 0) {
     callback(initialLocal);
   } else {
     callback(getStarterPeerMessages(peerUserId));
   }
 
+  const remoteBuckets = new Map<string, ChatMessage[]>();
+
   // Merging logic that prevents messages from disappearing while strictly filtering out deleted messages
-  const mergeAndEmit = (incoming: ChatMessage[]) => {
-    const freshLocal = getLocalMessages(cacheKey, myUserId);
+  const mergeAndEmit = () => {
+    const freshLocal = conversationIds.flatMap((conversationId) =>
+      getLocalMessages(`dm_${conversationId}`, myUserId)
+    );
     const map = new Map<string, ChatMessage>();
 
     // 1. Seed with local messages (filtering out deleted for me & deleted for everyone)
@@ -613,7 +645,7 @@ export const subscribeToDirectMessages = (
     });
 
     // 2. Process incoming messages (strictly dropping messages deleted for me or deleted for everyone)
-    incoming.forEach((m) => {
+    Array.from(remoteBuckets.values()).flat().forEach((m) => {
       if (!m || !m.id) return;
       if (
         m.isDeletedForEveryone ||
@@ -640,54 +672,56 @@ export const subscribeToDirectMessages = (
     callback(combined);
   };
 
-  // 1. RTDB real-time listener
-  const msgRef = ref(rtdb, `chat/whatsapp_direct/${convId}`);
-  const unsubRtdb = onValue(
-    msgRef,
-    (snapshot) => {
-      const val = snapshot.val();
-      if (val) {
-        const list: ChatMessage[] = Object.values(val);
-        mergeAndEmit(list);
-      } else {
-        const freshLocal = getLocalMessages(cacheKey, myUserId);
-        callback(freshLocal.length > 0 ? freshLocal : getStarterPeerMessages(peerUserId));
-      }
-    },
-    (error) => {
-      console.warn('[WhatsApp] RTDB listen error, using local:', error);
-      const freshLocal = getLocalMessages(cacheKey, myUserId);
-      callback(freshLocal.length > 0 ? freshLocal : getStarterPeerMessages(peerUserId));
-    }
-  );
+  const unsubs: Array<() => void> = [];
 
-  // 1b. Real-time listener for deleted-for-everyone registry in this direct chat
-  const deletedRef = ref(rtdb, `chat/whatsapp_direct_deleted/${convId}`);
-  const unsubDeleted = onValue(
-    deletedRef,
-    (snapshot) => {
-      const val = snapshot.val();
-      if (val && typeof val === 'object') {
-        let hasNew = false;
-        Object.keys(val).forEach((id) => {
-          if (!isMessageDeletedForEveryone(id)) {
-            addMessageToDeletedForEveryone(id);
-            hasNew = true;
-          }
-        });
-        if (hasNew) {
-          const freshLocal = getLocalMessages(cacheKey, myUserId);
-          callback(freshLocal);
-        }
+  // 1. RTDB real-time listeners for every known identity-pair room.
+  conversationIds.forEach((conversationId) => {
+    const msgRef = ref(rtdb, `chat/whatsapp_direct/${conversationId}`);
+    const unsubRtdb = onValue(
+      msgRef,
+      (snapshot) => {
+        const val = snapshot.val();
+        remoteBuckets.set(
+          conversationId,
+          val && typeof val === 'object' ? Object.values(val) as ChatMessage[] : []
+        );
+        mergeAndEmit();
+      },
+      (error) => {
+        console.warn('[WhatsApp] RTDB listen error, using local:', error);
+        remoteBuckets.set(conversationId, []);
+        mergeAndEmit();
       }
-    },
-    () => {}
-  );
+    );
+    unsubs.push(unsubRtdb);
+
+    // Deleted-for-everyone registry must use the same aliases as the message
+    // room, otherwise a delete in one identity-pair room can reappear in the
+    // other room.
+    const deletedRef = ref(rtdb, `chat/whatsapp_direct_deleted/${conversationId}`);
+    const unsubDeleted = onValue(
+      deletedRef,
+      (snapshot) => {
+        const val = snapshot.val();
+        if (val && typeof val === 'object') {
+          let hasNew = false;
+          Object.keys(val).forEach((id) => {
+            if (!isMessageDeletedForEveryone(id)) {
+              addMessageToDeletedForEveryone(id);
+              hasNew = true;
+            }
+          });
+          if (hasNew) mergeAndEmit();
+        }
+      },
+      () => {}
+    );
+    unsubs.push(unsubDeleted);
+  });
 
   // Firestore listener disabled to ensure 0 Firestore read quota consumption
   return () => {
-    unsubRtdb();
-    unsubDeleted();
+    unsubs.forEach((unsubscribe) => unsubscribe());
   };
 };
 

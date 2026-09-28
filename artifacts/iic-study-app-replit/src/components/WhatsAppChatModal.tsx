@@ -2291,24 +2291,30 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       setIsCurrentChatLocked(isChatLocked(convId));
       markMessagesAsRead(false, convId, effectiveUserId);
 
-      unsub = subscribeToDirectMessages(effectiveUserId, selectedContact.id, (msgs) => {
-        const filtered = filterDisappearingMessages(msgs, convId, effectiveUserId);
-        setMessages(filtered);
-        markMessagesAsRead(false, convId, effectiveUserId);
+      unsub = subscribeToDirectMessages(
+        effectiveUserId,
+        selectedContact.id,
+        (msgs) => {
+          const filtered = filterDisappearingMessages(msgs, convId, effectiveUserId);
+          setMessages(filtered);
+          markMessagesAsRead(false, convId, effectiveUserId);
 
-        // Auto-reconciliation: If contact has replied or sent any messages, friend status is active!
-        const hasContactReplied = filtered.some(
-          (m) => !isSameUser(m.senderId, effectiveUserId) && m.type !== 'SYSTEM'
-        );
-        if (hasContactReplied) {
-          confirmFriendshipLocally(effectiveUserId || user.id, selectedContact);
-          setFriends((prev) => {
-            if (prev.some((f) => isSameUser(f.id, selectedContact.id))) return prev;
-            return [selectedContact, ...prev];
-          });
-          setSentRequests((prev) => prev.filter((r) => !isSameUser(r.toId, selectedContact.id)));
-        }
-      });
+          // Auto-reconciliation: If contact has replied or sent any messages, friend status is active!
+          const hasContactReplied = filtered.some(
+            (m) => !isSameUser(m.senderId, effectiveUserId) && m.type !== 'SYSTEM'
+          );
+          if (hasContactReplied) {
+            confirmFriendshipLocally(effectiveUserId || user.id, selectedContact);
+            setFriends((prev) => {
+              if (prev.some((f) => isSameUser(f.id, selectedContact.id))) return prev;
+              return [selectedContact, ...prev];
+            });
+            setSentRequests((prev) => prev.filter((r) => !isSameUser(r.toId, selectedContact.id)));
+          }
+        },
+        allMyUserIds,
+        selectedContactPushIds,
+      );
     } else if (selectedGroup && effectiveUserId) {
       const grpId = selectedGroup.id;
       setCurrentDisappearingTimer(getDisappearingTimer(grpId));
@@ -2328,7 +2334,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     return () => {
       if (unsub) unsub();
     };
-  }, [selectedContact, selectedGroup, effectiveUserId]);
+  }, [selectedContact, selectedGroup, effectiveUserId, allMyUserIdsKey, selectedContactPushIds]);
 
   // Handle exiting chat (Back button or modal close): Clear Snapchat vanish messages and lock chat if enabled
   const handleExitChat = () => {
@@ -3197,6 +3203,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
         {
           ...(currentReply ? { replyTo: currentReply } : {}),
           recipientIds: selectedContactPushIds,
+          senderIds: allMyUserIds,
         }
       );
     } else if (selectedGroup) {
