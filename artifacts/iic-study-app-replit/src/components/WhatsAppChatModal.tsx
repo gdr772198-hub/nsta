@@ -69,6 +69,9 @@ import {
   ChevronLeft,
   Archive,
   Video,
+  Music,
+  Disc,
+  Headphones,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { User } from '../types';
@@ -251,6 +254,228 @@ export const getBaseBlockLimit = (tier: 'FREE' | 'BASIC' | 'ULTRA'): number => {
 
 export const getNextExpansionCost = (expansionsCount: number): number => {
   return 100;
+};
+
+export const formatAudioFileSize = (bytes?: number): string => {
+  if (!bytes || bytes <= 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+export const formatAudioTime = (seconds?: number): string => {
+  if (!seconds || isNaN(seconds) || seconds <= 0) return '0:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+};
+
+// ── Audio Song Player Card for Interactive In-Chat Playback ───────────────────
+const AudioSongPlayerCard: React.FC<{
+  msg: ChatMessage;
+  isMe: boolean;
+}> = ({ msg, isMe }) => {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(msg.audioDuration || msg.voiceDuration || 0);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const handleGlobalPause = (e: Event) => {
+      const customEvent = e as CustomEvent<{ excludeId?: string }>;
+      if (customEvent.detail?.excludeId !== msg.id) {
+        if (audioRef.current) {
+          audioRef.current.pause();
+        }
+        setIsPlaying(false);
+      }
+    };
+    window.addEventListener('nsta-audio-play', handleGlobalPause);
+    return () => {
+      window.removeEventListener('nsta-audio-play', handleGlobalPause);
+      if (audioRef.current) {
+        try {
+          audioRef.current.pause();
+          audioRef.current = null;
+        } catch {}
+      }
+    };
+  }, [msg.id]);
+
+  const initAudio = () => {
+    if (!audioRef.current && msg.mediaUrl) {
+      const rawUrl = resolveTelegramUrl(msg.mediaUrl);
+      const audio = new Audio(rawUrl);
+      audioRef.current = audio;
+      audio.playbackRate = playbackRate;
+
+      audio.onloadedmetadata = () => {
+        if (audio.duration && !isNaN(audio.duration) && isFinite(audio.duration)) {
+          setDuration(Math.round(audio.duration));
+        }
+      };
+
+      audio.ontimeupdate = () => {
+        setCurrentTime(Math.round(audio.currentTime));
+      };
+
+      audio.onended = () => {
+        setIsPlaying(false);
+        setCurrentTime(0);
+      };
+
+      audio.onerror = () => {
+        setIsPlaying(false);
+      };
+    }
+    return audioRef.current;
+  };
+
+  const togglePlay = () => {
+    const audio = initAudio();
+    if (!audio) return;
+
+    if (isPlaying) {
+      audio.pause();
+      setIsPlaying(false);
+    } else {
+      window.dispatchEvent(new CustomEvent('nsta-audio-play', { detail: { excludeId: msg.id } }));
+      audio.play().then(() => {
+        setIsPlaying(true);
+      }).catch((e) => {
+        console.warn('Audio song playback error:', e);
+        setIsPlaying(false);
+      });
+    }
+  };
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const time = Number(e.target.value);
+    const audio = initAudio();
+    if (audio) {
+      audio.currentTime = time;
+      setCurrentTime(time);
+    }
+  };
+
+  const cycleSpeed = () => {
+    const speeds = [1, 1.25, 1.5, 2];
+    const nextIdx = (speeds.indexOf(playbackRate) + 1) % speeds.length;
+    const nextSpeed = speeds[nextIdx];
+    setPlaybackRate(nextSpeed);
+    if (audioRef.current) {
+      audioRef.current.playbackRate = nextSpeed;
+    }
+  };
+
+  const songTitle = msg.audioTitle || (msg.mediaUrl ? msg.mediaUrl.split('/').pop()?.split('?')[0] : 'Audio Song') || 'Audio Song';
+  const ext = songTitle.split('.').pop()?.toUpperCase() || 'MP3';
+  const showCaption = msg.text && msg.text !== songTitle && msg.text !== '🎤 Voice message';
+  const directPlayUrl = msg.mediaUrl ? resolveTelegramUrl(msg.mediaUrl) : '';
+
+  return (
+    <div className={`rounded-2xl p-2.5 sm:p-3 min-w-[240px] max-w-[320px] space-y-2 border transition-all ${
+      isMe
+        ? 'bg-purple-950/40 border-purple-400/30 text-white shadow-xs'
+        : 'bg-white/90 dark:bg-slate-900/90 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100 shadow-sm'
+    }`}>
+      {/* Header Info */}
+      <div className="flex items-center gap-2.5">
+        <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 shadow-inner ${
+          isPlaying
+            ? 'bg-emerald-500 text-white shadow-emerald-500/30 ring-2 ring-emerald-400/40'
+            : isMe
+            ? 'bg-white/20 text-white'
+            : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400'
+        }`}>
+          <Disc size={20} className={isPlaying ? 'animate-[spin_4s_linear_infinite]' : ''} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-bold truncate leading-tight" title={songTitle}>
+            {songTitle}
+          </p>
+          <div className="flex items-center gap-1.5 text-[10px] opacity-75 mt-0.5">
+            <span className="font-semibold text-emerald-500">{ext}</span>
+            {msg.audioSize && (
+              <>
+                <span>•</span>
+                <span>{formatAudioFileSize(msg.audioSize)}</span>
+              </>
+            )}
+          </div>
+        </div>
+        {directPlayUrl && (
+          <a
+            href={directPlayUrl}
+            download={songTitle}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Download song"
+            onClick={(e) => e.stopPropagation()}
+            className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+              isMe ? 'hover:bg-white/20 text-white/90' : 'hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 hover:text-emerald-500'
+            }`}
+          >
+            <Download size={14} />
+          </a>
+        )}
+      </div>
+
+      {/* Interactive Controls & Progress */}
+      <div className="flex items-center gap-2 pt-0.5">
+        <button
+          type="button"
+          onClick={togglePlay}
+          className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 shadow-md active:scale-95 transition cursor-pointer ${
+            isPlaying
+              ? 'bg-rose-500 text-white shadow-rose-500/30'
+              : 'bg-gradient-to-tr from-emerald-600 to-teal-500 text-white shadow-emerald-600/30'
+          }`}
+          title={isPlaying ? 'Pause song' : 'Play song'}
+        >
+          {isPlaying ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
+        </button>
+
+        <div className="flex-1 min-w-0 flex flex-col justify-center gap-1">
+          <input
+            type="range"
+            min={0}
+            max={duration || 100}
+            value={currentTime}
+            onChange={handleSeek}
+            className="w-full h-1.5 rounded-lg appearance-none bg-slate-200 dark:bg-slate-700 accent-emerald-500 cursor-pointer"
+          />
+          <div className="flex items-center justify-between text-[10px] opacity-70 px-0.5 font-mono">
+            <span>{formatAudioTime(currentTime)}</span>
+            <span>{formatAudioTime(duration)}</span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={cycleSpeed}
+          className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition active:scale-90 cursor-pointer ${
+            isMe
+              ? 'bg-white/15 hover:bg-white/25 text-white'
+              : 'bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 text-slate-700 dark:text-slate-300'
+          }`}
+          title="Playback speed"
+        >
+          {playbackRate}x
+        </button>
+      </div>
+
+      {/* Caption Text (if user wrote a note/caption with the song) */}
+      {showCaption && (
+        <p className={`text-xs whitespace-pre-wrap leading-relaxed px-0.5 pt-1.5 border-t ${
+          isMe ? 'border-white/15 text-white/95' : 'border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200'
+        }`}>
+          {msg.text}
+        </p>
+      )}
+    </div>
+  );
 };
 
 interface Props {
@@ -742,6 +967,22 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   const [isUploadingChatVideo, setIsUploadingChatVideo] = useState<boolean>(false);
   const [chatVideoUploadProgress, setChatVideoUploadProgress] = useState<number>(0);
 
+  // Chat Audio Song Upload State (Telegram Cloud Vault / Storage)
+  const audioSongInputRef = useRef<HTMLInputElement>(null);
+  const [selectedAudioSong, setSelectedAudioSong] = useState<{
+    file: File;
+    name: string;
+    size: number;
+    duration: number;
+    previewUrl: string;
+  } | null>(null);
+  const [audioSongCaption, setAudioSongCaption] = useState<string>('');
+  const [isUploadingAudioSong, setIsUploadingAudioSong] = useState<boolean>(false);
+  const [audioSongUploadProgress, setAudioSongUploadProgress] = useState<number>(0);
+  const [isPreviewAudioPlaying, setIsPreviewAudioPlaying] = useState<boolean>(false);
+  const [previewAudioCurrentTime, setPreviewAudioCurrentTime] = useState<number>(0);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+
   // NSTA 24-Hour Status / Story State (Cloudinary Video & Image)
   const [statuses, setStatuses] = useState<UserStatusItem[]>([]);
   const [showStatusUploadModal, setShowStatusUploadModal] = useState<boolean>(false);
@@ -933,6 +1174,249 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       showToast(`❌ Video bhejte samay samasya aayi: ${err?.message || 'Error'}`);
     } finally {
       setIsUploadingChatVideo(false);
+    }
+  };
+
+  // ─── AUDIO SONG UPLOAD & PREVIEW (MOBILE MEDIA / STORAGE TO CLOUD VAULT) ───
+  const handleSelectAudioSongFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 50 * 1024 * 1024) {
+      showToast('⚠️ Audio song maximum 50MB tak bhej sakte hain!');
+      e.target.value = '';
+      return;
+    }
+
+    if (selectedAudioSong?.previewUrl) {
+      try { URL.revokeObjectURL(selectedAudioSong.previewUrl); } catch {}
+    }
+    if (previewAudioRef.current) {
+      try {
+        previewAudioRef.current.pause();
+        previewAudioRef.current = null;
+      } catch {}
+    }
+    setIsPreviewAudioPlaying(false);
+    setPreviewAudioCurrentTime(0);
+
+    const objectUrl = URL.createObjectURL(file);
+    const audioObj = new Audio(objectUrl);
+
+    audioObj.onloadedmetadata = () => {
+      const dur = Math.round(audioObj.duration) || 0;
+      setSelectedAudioSong({
+        file,
+        name: file.name,
+        size: file.size,
+        duration: dur,
+        previewUrl: objectUrl,
+      });
+      setAudioSongCaption('');
+    };
+
+    audioObj.onerror = () => {
+      setSelectedAudioSong({
+        file,
+        name: file.name,
+        size: file.size,
+        duration: 0,
+        previewUrl: objectUrl,
+      });
+      setAudioSongCaption('');
+    };
+
+    e.target.value = '';
+  };
+
+  const handleTogglePreviewAudio = () => {
+    if (!selectedAudioSong) return;
+
+    if (isPreviewAudioPlaying) {
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+      }
+      setIsPreviewAudioPlaying(false);
+      return;
+    }
+
+    if (!previewAudioRef.current) {
+      const audio = new Audio(selectedAudioSong.previewUrl);
+      previewAudioRef.current = audio;
+
+      audio.ontimeupdate = () => {
+        setPreviewAudioCurrentTime(Math.round(audio.currentTime));
+      };
+
+      audio.onended = () => {
+        setIsPreviewAudioPlaying(false);
+        setPreviewAudioCurrentTime(0);
+      };
+
+      audio.onerror = () => {
+        setIsPreviewAudioPlaying(false);
+      };
+    }
+
+    previewAudioRef.current.play().then(() => {
+      setIsPreviewAudioPlaying(true);
+    }).catch(() => {
+      setIsPreviewAudioPlaying(false);
+    });
+  };
+
+  const handleCancelAudioSong = () => {
+    if (previewAudioRef.current) {
+      try {
+        previewAudioRef.current.pause();
+        previewAudioRef.current = null;
+      } catch {}
+    }
+    if (selectedAudioSong?.previewUrl) {
+      try { URL.revokeObjectURL(selectedAudioSong.previewUrl); } catch {}
+    }
+    setIsPreviewAudioPlaying(false);
+    setPreviewAudioCurrentTime(0);
+    setSelectedAudioSong(null);
+    setAudioSongCaption('');
+  };
+
+  const handleSendAudioSongMessage = async () => {
+    if (!selectedAudioSong) return;
+    if (totalDailyMsgLimit !== Infinity && dailyMessagesSent >= totalDailyMsgLimit) {
+      setShowMessageLimitModal(true);
+      return;
+    }
+    if (selectedContact && isUserBlocked(selectedContact.id)) {
+      showToast('Aapne is user ko block kiya hua hai. Pehle unblock karein.');
+      return;
+    }
+
+    if (previewAudioRef.current) {
+      try {
+        previewAudioRef.current.pause();
+        previewAudioRef.current = null;
+      } catch {}
+    }
+    setIsPreviewAudioPlaying(false);
+
+    setIsUploadingAudioSong(true);
+    setAudioSongUploadProgress(5);
+
+    try {
+      const res = await uploadToTelegramStorage(selectedAudioSong.file, {
+        type: 'audio',
+        fileName: selectedAudioSong.name,
+        onProgress: (pct) => setAudioSongUploadProgress(pct),
+      });
+
+      const audioUrl = res?.url || res?.directUrl;
+      if (!audioUrl) throw new Error('Audio song cloud link generate nahi ho saki.');
+
+      const userPhoto = user.photoURL || (user as any).avatarUrl;
+      const captionText = audioSongCaption.trim();
+      const songTitle = selectedAudioSong.name;
+      const songSize = selectedAudioSong.size;
+      const durationSec = selectedAudioSong.duration;
+
+      if (totalDailyMsgLimit !== Infinity) {
+        const today = getTodayStr();
+        const nextSent = dailyMessagesSent + 1;
+        setDailyMessagesSent(nextSent);
+        try {
+          localStorage.setItem(`nsta_daily_msg_${user.id}_${today}`, String(nextSent));
+        } catch {}
+      }
+
+      if (selectedContact) {
+        const optimisticMsg: ChatMessage = {
+          id: `local_aud_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          senderId: effectiveUserId,
+          senderName: user.name || 'Student',
+          ...(userPhoto ? { senderPhoto: userPhoto } : {}),
+          text: captionText || songTitle,
+          timestamp: Date.now(),
+          type: 'AUDIO',
+          mediaUrl: audioUrl,
+          audioTitle: songTitle,
+          audioSize: songSize,
+          audioDuration: durationSec,
+          voiceDuration: durationSec,
+          status: 'SENT',
+          seen: false,
+          delivered: false,
+          readByRecipient: false,
+        };
+
+        setMessages((prev) => [
+          ...prev.filter((m) => !isMessageDeletedForUser(effectiveUserId, m)),
+          optimisticMsg,
+        ]);
+
+        await sendPrivateMessage(
+          effectiveUserId,
+          user.name || 'Student',
+          userPhoto,
+          selectedContact.id,
+          captionText || songTitle,
+          'AUDIO',
+          {
+            mediaUrl: audioUrl,
+            audioTitle: songTitle,
+            audioSize: songSize,
+            audioDuration: durationSec,
+            voiceDuration: durationSec,
+          }
+        );
+      } else if (selectedGroup) {
+        const optimisticMsg: ChatMessage = {
+          id: `local_grp_aud_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          senderId: effectiveUserId,
+          senderName: user.name || 'Student',
+          ...(userPhoto ? { senderPhoto: userPhoto } : {}),
+          text: captionText || songTitle,
+          timestamp: Date.now(),
+          type: 'AUDIO',
+          mediaUrl: audioUrl,
+          audioTitle: songTitle,
+          audioSize: songSize,
+          audioDuration: durationSec,
+          voiceDuration: durationSec,
+          status: 'SENT',
+          seen: false,
+          delivered: false,
+        };
+
+        setMessages((prev) => [
+          ...prev.filter((m) => !isMessageDeletedForUser(effectiveUserId, m)),
+          optimisticMsg,
+        ]);
+
+        await sendGroupMessage(
+          selectedGroup.id,
+          effectiveUserId,
+          user.name || 'Student',
+          userPhoto,
+          captionText || songTitle,
+          'AUDIO',
+          {
+            mediaUrl: audioUrl,
+            audioTitle: songTitle,
+            audioSize: songSize,
+            audioDuration: durationSec,
+            voiceDuration: durationSec,
+          }
+        );
+      }
+
+      showToast('🎵 Audio song bhej diya gaya!');
+      handleCancelAudioSong();
+    } catch (err: any) {
+      console.error('Audio song send error:', err);
+      showToast('Audio song bhejne me samasya aayi: ' + (err.message || ''));
+    } finally {
+      setIsUploadingAudioSong(false);
+      setAudioSongUploadProgress(0);
     }
   };
 
@@ -3607,9 +4091,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   }
 
   return (
-    <div className={`fixed inset-0 z-[550] bg-slate-950/70 backdrop-blur-md flex items-center justify-center p-0 md:p-4 animate-in fade-in duration-200 transition-all ${
-      !isBottomNavHidden ? 'pb-[64px]' : 'pb-0'
-    }`}>
+    <div className="fixed inset-0 z-[800] bg-slate-950/70 backdrop-blur-md flex items-center justify-center p-0 md:p-4 animate-in fade-in duration-200 transition-all pb-0">
       <div className="w-full h-full md:max-w-2xl md:h-[92vh] md:rounded-3xl bg-slate-100 dark:bg-slate-950 flex flex-col shadow-2xl overflow-hidden border border-purple-500/20">
 
         {/* ─── TOAST BANNER ────────────────────────────────────────── */}
@@ -3702,17 +4184,6 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                   </span>
                 </button>
 
-                <a
-                  href="https://t.me/+p0aIY7YWgGxhYzk1"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-1.5 py-0.5 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-400/40 text-sky-200 text-[9px] font-bold flex items-center gap-1 transition-all"
-                  title="Open Telegram Channel (Nsta messanger)"
-                >
-                  <Send size={10} className="text-sky-300 -rotate-12" />
-                  <span className="hidden sm:inline">Telegram</span>
-                </a>
-
                 <div className="relative">
                   <button
                     type="button"
@@ -3722,18 +4193,9 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                   >
                     <MoreVertical size={13} />
                   </button>
+
                   {showMainMenu && (
                     <div className="absolute right-0 top-full mt-1 w-52 bg-slate-900/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-purple-500/30 py-1.5 z-50 animate-in fade-in zoom-in-95">
-                      <a
-                        href="https://t.me/+p0aIY7YWgGxhYzk1"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={() => setShowMainMenu(false)}
-                        className="w-full px-3 py-2 text-left text-xs font-semibold text-sky-300 hover:bg-sky-900/40 flex items-center gap-2 border-b border-purple-500/20"
-                      >
-                        <Send size={14} className="text-sky-400 -rotate-12" />
-                        <span>Telegram Channel (Manage)</span>
-                      </a>
                       <button
                         onClick={() => {
                           setShowMainMenu(false);
@@ -6364,6 +6826,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                               </div>
                             )}
                         </div>
+                      ) : (msg.type === 'AUDIO' || (msg.type === 'VOICE' && Boolean(msg.audioTitle || (msg.mediaUrl && /\.(mp3|m4a|wav|aac|ogg|opus|flac|wma)$/i.test(msg.mediaUrl))))) ? (
+                        <AudioSongPlayerCard msg={msg} isMe={isMe} />
                       ) : msg.type === 'VOICE' ? (
                         <div className="flex items-center gap-3 py-1 min-w-[180px]">
                           <button
@@ -6752,6 +7216,21 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                 </button>
                 <button
                   type="button"
+                  onClick={() => {
+                    setShowAttachmentMenu(false);
+                    if (audioSongInputRef.current) {
+                      audioSongInputRef.current.value = '';
+                      audioSongInputRef.current.click();
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-95 text-white rounded-xl text-xs font-bold shadow-xs flex-shrink-0 flex items-center gap-1.5 cursor-pointer active:scale-95 select-none"
+                  title="Mobile Media / Storage se Audio Song ya Music bhejein (MP3, M4A, WAV, AAC)"
+                >
+                  <Music size={14} />
+                  <span>🎵 Audio Song (Mobile se)</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => handleSendQuickAttachment('DOUBT', '📐 Mujhe is question ke formula calculation me doubt hai. Koi step explain kar sakta hai?')}
                   className="px-3 py-1.5 bg-amber-50 dark:bg-amber-950/50 hover:bg-amber-100 text-amber-800 dark:text-amber-200 rounded-xl text-xs font-bold border border-amber-200 flex-shrink-0 flex items-center gap-1 cursor-pointer"
                 >
@@ -6904,6 +7383,31 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                     className="sr-only"
                     tabIndex={-1}
                     onChange={handleSelectVideoFile}
+                  />
+
+                  {/* Dedicated Audio Song Button (Mobile Media / Songs) */}
+                  <label
+                    htmlFor="nsta-chat-audio-song-input"
+                    id="nsta-chat-audio-button"
+                    className="p-2 text-slate-500 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors cursor-pointer flex items-center justify-center rounded-lg active:scale-95 select-none"
+                    title="Mobile Media se Audio Song Bhejein (MP3, M4A, WAV, AAC)"
+                    aria-label="Mobile Media se Audio Song Bhejein"
+                    onClick={() => {
+                      if (audioSongInputRef.current) {
+                        audioSongInputRef.current.value = '';
+                      }
+                    }}
+                  >
+                    <Music size={20} />
+                  </label>
+                  <input
+                    id="nsta-chat-audio-song-input"
+                    ref={audioSongInputRef}
+                    type="file"
+                    accept="audio/*,.mp3,.m4a,.wav,.aac,.ogg,.opus,.flac,.wma,.m4p"
+                    className="sr-only"
+                    tabIndex={-1}
+                    onChange={handleSelectAudioSongFile}
                   />
 
                   {/* Dedicated Voice Message / Mic Button */}
@@ -9004,6 +9508,161 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                     <>
                       <Send size={14} />
                       <span>Video Bhejein 🚀</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─── MODAL: CHAT AUDIO SONG PREVIEW & SEND (TELEGRAM CLOUD VAULT) ─────────── */}
+        {selectedAudioSong && (
+          <div className="fixed inset-0 z-[9995] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+            <div className="bg-white dark:bg-slate-900 border border-emerald-500/30 rounded-3xl max-w-md w-full p-4 sm:p-5 shadow-2xl space-y-4">
+              {/* Header */}
+              <div className="flex items-center justify-between pb-1 border-b border-slate-100 dark:border-slate-800">
+                <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
+                    <Music size={16} />
+                  </div>
+                  <span>🎵 Audio / Song Bhejein</span>
+                </h3>
+                {!isUploadingAudioSong && (
+                  <button
+                    type="button"
+                    onClick={handleCancelAudioSong}
+                    className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 cursor-pointer"
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+
+              {/* Vinyl / Music Card */}
+              <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-emerald-950/80 via-slate-900 to-teal-950 p-4 border border-emerald-500/30 flex flex-col items-center justify-center text-center space-y-3">
+                <div className="relative">
+                  <div className={`w-20 h-20 rounded-full bg-slate-950 border-4 border-emerald-500/40 shadow-xl flex items-center justify-center ${
+                    isPreviewAudioPlaying ? 'animate-[spin_4s_linear_infinite]' : ''
+                  }`}>
+                    <div className="w-7 h-7 rounded-full bg-emerald-500 flex items-center justify-center text-slate-950">
+                      <Disc size={18} />
+                    </div>
+                  </div>
+                  {isPreviewAudioPlaying && (
+                    <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-emerald-500 text-slate-950 rounded-full text-[9px] font-black uppercase tracking-wider animate-pulse">
+                      Playing
+                    </span>
+                  )}
+                </div>
+
+                <div className="w-full min-w-0">
+                  <p className="text-sm font-bold text-white truncate px-2" title={selectedAudioSong.name}>
+                    {selectedAudioSong.name}
+                  </p>
+                  <div className="flex items-center justify-center gap-2 mt-1 text-[11px] text-emerald-300/80">
+                    <span className="px-2 py-0.5 rounded-md bg-white/10 font-mono font-semibold">
+                      {formatAudioFileSize(selectedAudioSong.size)}
+                    </span>
+                    <span>•</span>
+                    <span className="px-2 py-0.5 rounded-md bg-white/10 font-mono font-semibold">
+                      {formatAudioTime(selectedAudioSong.duration)}
+                    </span>
+                    <span>•</span>
+                    <span className="text-emerald-400 font-bold uppercase">
+                      {selectedAudioSong.name.split('.').pop() || 'AUDIO'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Built-in Preview Play/Pause button */}
+                <div className="flex items-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleTogglePreviewAudio}
+                    className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-lg shadow-emerald-500/30 active:scale-95 transition-all cursor-pointer"
+                  >
+                    {isPreviewAudioPlaying ? (
+                      <>
+                        <Pause size={14} />
+                        <span>Preview Pause Karein</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play size={14} />
+                        <span>Song Sunkar Check Karein</span>
+                      </>
+                    )}
+                  </button>
+
+                  <label
+                    htmlFor="nsta-chat-audio-song-input"
+                    className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-medium text-xs cursor-pointer active:scale-95 transition"
+                    onClick={() => {
+                      if (audioSongInputRef.current) {
+                        audioSongInputRef.current.value = '';
+                      }
+                    }}
+                  >
+                    Doosra Song Chunein
+                  </label>
+                </div>
+              </div>
+
+              {/* Upload Progress Bar */}
+              {isUploadingAudioSong && (
+                <div className="bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 rounded-xl p-2.5">
+                  <div className="flex justify-between text-[11px] font-bold text-emerald-700 dark:text-emerald-300 mb-1">
+                    <span className="flex items-center gap-1.5">
+                      <Loader2 size={12} className="animate-spin" />
+                      Uploading Song to Cloud Vault...
+                    </span>
+                    <span>{audioSongUploadProgress}%</span>
+                  </div>
+                  <div className="w-full h-2 bg-emerald-200 dark:bg-emerald-900 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-300"
+                      style={{ width: `${Math.max(5, audioSongUploadProgress)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Caption input */}
+              <input
+                type="text"
+                value={audioSongCaption}
+                onChange={(e) => setAudioSongCaption(e.target.value)}
+                disabled={isUploadingAudioSong}
+                placeholder="Song ke sath koi message ya notes likhein (optional)..."
+                className="w-full bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 rounded-xl px-3.5 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+
+              {/* Modal Buttons */}
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={isUploadingAudioSong}
+                  onClick={handleCancelAudioSong}
+                  className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-bold transition cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isUploadingAudioSong}
+                  onClick={handleSendAudioSongMessage}
+                  className="flex-2 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/30 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 active:scale-95 transition-all"
+                >
+                  {isUploadingAudioSong ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      <span>Sending {audioSongUploadProgress}%...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send size={14} />
+                      <span>Audio Song Bhejein 🚀</span>
                     </>
                   )}
                 </button>

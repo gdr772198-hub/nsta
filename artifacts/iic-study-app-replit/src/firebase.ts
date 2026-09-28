@@ -7,13 +7,14 @@ import { CLASS_10_FAKE_LESSONS } from "./constants/class10SeedLessons";
 
 // --- FIREBASE CONFIGURATION ---
 const firebaseConfig = {
-  apiKey: "AIzaSyDyYNuSJr72nC52MinT0rt6jbDae8HLCts",
-  authDomain: "project-1959318394445181665.firebaseapp.com",
-  databaseURL: "https://project-1959318394445181665-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "project-1959318394445181665",
-  storageBucket: "project-1959318394445181665.firebasestorage.app",
-  messagingSenderId: "130030264192",
-  appId: "1:130030264192:web:1b8a53d694b15c8ef1eb65"
+  apiKey: "AIzaSyBEDKZVPgwOPCccjWdKSShfvSqC3REDa0c",
+  authDomain: "iic-nst.firebaseapp.com",
+  databaseURL: "https://iic-nst-default-rtdb.firebaseio.com",
+  projectId: "iic-nst",
+  storageBucket: "iic-nst.firebasestorage.app",
+  messagingSenderId: "984309241322",
+  appId: "1:984309241322:web:4dae35987732d630e64e93",
+  measurementId: "G-QX0XT7RSQX"
 };
 
 // ── Stale IndexedDB guard ──────────────────────────────────────────────────
@@ -149,6 +150,26 @@ try {
 } catch (e) {
   console.error('[Firebase] getAuth failed:', e);
 }
+
+export const VAPID_KEY = 'BIZ9FrX99-hm4cM6pgBIKqZPevNkrVNM0AliLpTPbSr23eX4Vw_DGyC2GMLyJqTbogbuTseW5suFRWE6qQzbrL0';
+
+let _messagingInstance: any = null;
+export const getFirebaseMessaging = async () => {
+  if (_messagingInstance) return _messagingInstance;
+  if (typeof window !== 'undefined' && 'Notification' in window && 'serviceWorker' in navigator) {
+    try {
+      const { getMessaging, isSupported } = await import('firebase/messaging');
+      const supported = await isSupported().catch(() => false);
+      if (supported && app) {
+        _messagingInstance = getMessaging(app);
+        return _messagingInstance;
+      }
+    } catch (e) {
+      console.warn('[Firebase] messaging not supported:', e);
+    }
+  }
+  return null;
+};
 
 // --- EXPORTED HELPERS ---
 

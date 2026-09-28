@@ -659,17 +659,6 @@ export const UniversalChat: React.FC<Props> = ({ user, onClose, isAdmin, targetU
                                 >
                                     <Plus size={18} />
                                 </button>
-                                {/* Direct Telegram Channel link */}
-                                <a
-                                    href="https://t.me/+p0aIY7YWgGxhYzk1"
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="p-1.5 px-2 hover:bg-sky-500/30 bg-sky-500/20 border border-sky-400/40 rounded-lg text-sky-200 hover:text-white transition-all cursor-pointer active:scale-95 shrink-0 flex items-center gap-1 text-[11px] font-bold"
-                                    title="Open Nsta Messenger Telegram Channel"
-                                >
-                                    <Send size={12} className="text-sky-300 -rotate-12" />
-                                    <span>Telegram</span>
-                                </a>
                             </div>
                         </div>
                     ) : !roomId && !isMcqOnly && !isSupportOnly && !isFeedOnly ? (
@@ -787,6 +776,7 @@ export const UniversalChat: React.FC<Props> = ({ user, onClose, isAdmin, targetU
                             onSearchQueryChange={setCommunitySearchQuery}
                             externalShowComposer={communityComposerOpen}
                             onShowComposerChange={setCommunityComposerOpen}
+                            onUserUpdate={onUpdateUser}
                         />
                     </div>
                 ) : activeTab === 'SUPPORT' && isAdmin && !targetUser && !roomId ? (

@@ -51,8 +51,8 @@ import {
 } from '../firebase';
 import { uploadImageToImgBB, compressImage } from '../services/imgbbService';
 import { uploadToCloudinary, getOptimizedVideoUrl } from '../services/cloudinaryService';
-import { sendTelegramCommunityPost } from '../services/telegramStorageService';
 import { ImageCropper } from './ImageCropper';
+import { GuestRestrictionModal } from './GuestRestrictionModal';
 import { User } from '../types';
 import { useAppTheme } from '../utils/themeContext';
 import { getLevelInfo } from '../utils/levelSystem';
@@ -114,6 +114,7 @@ interface CommunityPostFeedProps {
   onSearchQueryChange?: (q: string) => void;
   externalShowComposer?: boolean;
   onShowComposerChange?: (show: boolean) => void;
+  onUserUpdate?: (user: User) => void;
 }
 
 type FilterType = 'ALL' | 'OFFICIAL' | 'BUG_REPORT' | 'DOUBT' | 'MINE' | 'UNDER_REVIEW' | 'NOTES_FIX';
@@ -128,7 +129,11 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
   onSearchQueryChange,
   externalShowComposer,
   onShowComposerChange,
+  onUserUpdate,
 }) => {
+  const isGuestUser = !!(user?.isGuest || user?.isAnonymous || user?.role === 'GUEST');
+  const [guestModalOpen, setGuestModalOpen] = useState(false);
+  const [guestModalContext, setGuestModalContext] = useState('Community Interaction');
   const { appTheme } = useAppTheme();
   const isAdminOrSubUser =
     isAdmin ||
@@ -175,6 +180,11 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
 
   const isComposerOpen = externalShowComposer !== undefined ? externalShowComposer : showComposer;
   const setComposerOpen = (val: boolean) => {
+    if (val && isGuestUser) {
+      setGuestModalContext('Community Post Creation');
+      setGuestModalOpen(true);
+      return;
+    }
     setShowComposer(val);
     onShowComposerChange?.(val);
   };
@@ -353,6 +363,11 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
   // Submit Post
   const handleCreatePost = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isGuestUser) {
+      setGuestModalContext('Community Post Creation');
+      setGuestModalOpen(true);
+      return;
+    }
     if (!postText.trim() && !selectedImageFile && !selectedVideoFile) {
       showToast('⚠️ Kripya kuch text likhein, photo ya video attach karein!');
       return;
@@ -435,16 +450,6 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
 
       await set(newPostRef, newPostData);
 
-      // Broadcast to Telegram Channel with 0 Firestore read/writes
-      sendTelegramCommunityPost({
-        userName: user.name || 'Anonymous Student',
-        userRole: user.role || 'STUDENT',
-        category: postCategory,
-        text: postText.trim(),
-        imageUrl: uploadedImageUrl || undefined,
-        videoUrl: uploadedVideoUrl || undefined,
-      }).catch((tgErr) => console.warn('[Community -> Telegram] Sync notice:', tgErr));
-
       // Also register into suggestions for coins & admin resolution tracking
       if (postCategory === 'NOTES_FIX') {
         try {
@@ -491,6 +496,11 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
 
   // Toggle Like Handler
   const handleToggleLike = async (post: CommunityPost) => {
+    if (isGuestUser) {
+      setGuestModalContext('Post Like Karna');
+      setGuestModalOpen(true);
+      return;
+    }
     if (post.id.startsWith('sugg_')) {
       const suggId = post.id.replace('sugg_', '');
       await reactToSuggestion(suggId, user.id, 'like');
@@ -630,6 +640,11 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
 
   // Submit Comment
   const handleAddComment = async (postId: string) => {
+    if (isGuestUser) {
+      setGuestModalContext('Comment Karna');
+      setGuestModalOpen(true);
+      return;
+    }
     const text = (commentInputs[postId] || '').trim();
     const imageFile = commentImageFiles[postId];
     if (!text && !imageFile) return;
@@ -1123,6 +1138,25 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
               <span>{isComposerOpen ? 'Close' : 'Naya Post'}</span>
             </button>
           )}
+        </div>
+      )}
+
+      {/* Guest Mode Informational Banner */}
+      {isGuestUser && (
+        <div className="mx-3 my-2 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between gap-3 text-xs shrink-0">
+          <div className="flex items-center gap-2.5 text-amber-300 min-w-0">
+            <Eye size={17} className="text-amber-400 shrink-0" />
+            <p className="text-[11px] leading-tight">
+              <strong>Guest Mode:</strong> Aap sabhi posts aur messages padh sakte hain. Post, like ya comment karne ke liye Google se link karein.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => { setGuestModalContext('Community Access'); setGuestModalOpen(true); }}
+            className="px-2.5 py-1.5 rounded-xl bg-amber-400 text-slate-900 font-black text-[11px] shrink-0 hover:bg-amber-300 transition-all active:scale-95 cursor-pointer shadow-sm"
+          >
+            Link Google
+          </button>
         </div>
       )}
 
@@ -2670,6 +2704,18 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
           </div>
         </div>
       )}
+
+      {/* Guest Restriction & Google Binding Modal */}
+      <GuestRestrictionModal
+        isOpen={guestModalOpen}
+        onClose={() => setGuestModalOpen(false)}
+        currentUser={user}
+        onUserUpdated={(updated) => {
+          if (onUserUpdate) onUserUpdate(updated);
+        }}
+        featureName={guestModalContext}
+        customMessage="Guest Account me Community par post likhna, like ya comment karna allowed nahi hai. Apne account ko Google se bind karein taaki aapka profile hamesha verified rahe!"
+      />
     </div>
   );
 };

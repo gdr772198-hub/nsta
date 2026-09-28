@@ -204,6 +204,9 @@ export interface User {
   avatarChoice?: 'gmail' | 'app';
   linkedGoogleUid?: string;
   linkedGoogleEmail?: string;
+  isGuest?: boolean;
+  isAnonymous?: boolean;
+  fcmToken?: string;
   profileCompleted?: boolean;
   
   // Chat & Premium Features
@@ -2288,3 +2291,7 @@ export interface AppFeedbackEntry {
   overallRating: number;
   submittedAt: string;
 }
+
+// Runtime fallback export for User to prevent browser runtime resolution errors
+export const User = {};
+

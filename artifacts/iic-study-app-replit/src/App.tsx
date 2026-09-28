@@ -100,6 +100,7 @@ import { FreeSubjectLessonPopup } from './components/FreeSubjectLessonPopup';
 import { McqLimitLockedPopup } from './components/McqLimitLockedPopup';
 
 import { StreakLoginPopup } from './components/StreakLoginPopup';
+import { checkEveningStreakReminder } from './components/NotificationManager';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { logErrorToFirebase, setErrorLoggerUser } from './utils/errorLogger';
 import { MaintenanceBanner, AdminCrashPopup, MaintenanceScreen } from './components/MaintenanceScreen';
@@ -660,6 +661,12 @@ const App: React.FC = () => {
 
   const homeTabActiveRef = useRef(false);
   useEffect(() => { homeTabActiveRef.current = studentTab === 'HOME'; }, [studentTab]);
+
+  useEffect(() => {
+    if (state.user) {
+      checkEveningStreakReminder(state.user);
+    }
+  }, [state.user?.id]);
 
   useEffect(() => {
     if (!toastMessage) return;

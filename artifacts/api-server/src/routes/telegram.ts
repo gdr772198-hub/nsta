@@ -34,10 +34,15 @@ function getChatBotToken(): string {
 }
 
 function getChatChannelId(): string {
-  return (
+  let raw = (
     process.env.TELEGRAM_CHAT_CHANNEL_ID?.trim() ||
     DEFAULT_CHAT_CHANNEL_ID
-  );
+  ).trim();
+  if (raw && !raw.startsWith('@') && !raw.startsWith('-100')) {
+    const cleanNum = raw.replace(/^-+/, '');
+    raw = cleanNum.startsWith('100') ? `-${cleanNum}` : `-100${cleanNum}`;
+  }
+  return raw;
 }
 
 const MIME_MAP: Record<string, string> = {

@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import { VAPID_KEY, getFirebaseMessaging, db, rtdb } from '../firebase';
+import { doc, updateDoc } from 'firebase/firestore';
+import { ref, set } from 'firebase/database';
 
-export const requestNotificationPermission = async () => {
-  if (!('Notification' in window)) {
-    console.log("This browser does not support desktop notification");
+export const requestNotificationPermission = async (): Promise<boolean> => {
+  if (typeof window === 'undefined' || !('Notification' in window)) {
+    console.log('[NotificationManager] This browser does not support notifications');
     return false;
   }
 
@@ -11,55 +13,211 @@ export const requestNotificationPermission = async () => {
   }
 
   if (Notification.permission !== 'denied') {
-    const permission = await Notification.requestPermission();
-    return permission === 'granted';
+    try {
+      const permission = await Notification.requestPermission();
+      return permission === 'granted';
+    } catch (e) {
+      console.warn('[NotificationManager] Permission request error:', e);
+      return false;
+    }
   }
 
   return false;
 };
 
-export const subscribeUserToPush = async () => {
-  if ('serviceWorker' in navigator && 'PushManager' in window) {
-    try {
-      const registration = await navigator.serviceWorker.ready;
+export const subscribeUserToPush = async (userId?: string): Promise<string | null> => {
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
+    return null;
+  }
 
-      const existingSubscription = await registration.pushManager.getSubscription();
-      if (existingSubscription) {
-          console.log("Already subscribed to push notifications");
-          return existingSubscription;
-      }
-
-      // In a real scenario, this public key would come from your backend server
-      const VAPID_PUBLIC_KEY = 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuB-5hDPNpAAfAA_QzWvVQA8sI';
-
-      const convertedVapidKey = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
-      const subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: convertedVapidKey
-      });
-
-      console.log('Push Subscription:', subscription);
-      // Here you would typically send `subscription` to your backend via API to save it for the user
-      return subscription;
-    } catch (e) {
-      console.error('Failed to subscribe user:', e);
+  try {
+    const isGranted = await requestNotificationPermission();
+    if (!isGranted) {
+      console.log('[NotificationManager] Notification permission not granted');
+      return null;
     }
+
+    // Register / get Firebase Messaging service worker
+    let swReg: ServiceWorkerRegistration;
+    try {
+      swReg = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
+      await navigator.serviceWorker.ready;
+    } catch (swErr) {
+      console.warn('[NotificationManager] SW registration fallback:', swErr);
+      swReg = await navigator.serviceWorker.ready;
+    }
+
+    const messaging = await getFirebaseMessaging();
+    if (!messaging) {
+      console.warn('[NotificationManager] Firebase messaging not available');
+      return null;
+    }
+
+    const { getToken } = await import('firebase/messaging');
+    const currentToken = await getToken(messaging, {
+      vapidKey: VAPID_KEY,
+      serviceWorkerRegistration: swReg
+    });
+
+    if (currentToken) {
+      console.log('[NotificationManager] FCM Token acquired:', currentToken.slice(0, 15) + '...');
+      localStorage.setItem('nst_fcm_token', currentToken);
+
+      if (userId) {
+        await saveFcmToken(userId, currentToken);
+      }
+      return currentToken;
+    } else {
+      console.warn('[NotificationManager] No registration token available.');
+    }
+  } catch (err) {
+    console.warn('[NotificationManager] Unable to get FCM token:', err);
   }
   return null;
 };
 
-// Utility function to convert VAPID key
-function urlBase64ToUint8Array(base64String: string) {
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64 = (base64String + padding)
-    .replace(/\-/g, '+')
-    .replace(/_/g, '/');
+export const saveFcmToken = async (userId: string, token: string) => {
+  if (!userId || !token) return;
+  try {
+    // Save in RTDB
+    const tokenRef = ref(rtdb, `users/${userId}/fcmToken`);
+    await set(tokenRef, token).catch(() => {});
 
-  const rawData = window.atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
+    // Save in user's token list for broadcast pushes
+    const broadcastRef = ref(rtdb, `fcm_tokens/${userId}`);
+    await set(broadcastRef, {
+      token,
+      updatedAt: new Date().toISOString(),
+      platform: 'pwa'
+    }).catch(() => {});
 
-  for (let i = 0; i < rawData.length; ++i) {
-    outputArray[i] = rawData.charCodeAt(i);
+    // Save in Firestore
+    const userDoc = doc(db, 'users', userId);
+    await updateDoc(userDoc, { fcmToken: token }).catch(() => {});
+  } catch (e) {
+    console.warn('[NotificationManager] Token save non-fatal error:', e);
   }
-  return outputArray;
+};
+
+export const listenToForegroundMessages = async (onMessageReceived: (payload: any) => void) => {
+  try {
+    const messaging = await getFirebaseMessaging();
+    if (!messaging) return () => {};
+
+    const { onMessage } = await import('firebase/messaging');
+    return onMessage(messaging, (payload) => {
+      console.log('[NotificationManager] Foreground message received:', payload);
+      onMessageReceived(payload);
+    });
+  } catch (e) {
+    console.warn('[NotificationManager] listenToForegroundMessages error:', e);
+    return () => {};
+  }
+};
+
+export type NotificationCategory = 'CHAT' | 'FRIEND_REQUEST' | 'STREAK' | 'DAILY_COIN' | 'COMMUNITY' | 'NOTE_UPDATE' | 'DEFAULT';
+
+export interface SmartNotificationPayload {
+  title: string;
+  body: string;
+  category: NotificationCategory;
+  url?: string;
+  senderId?: string;
+  silent?: boolean;
 }
+
+// Smart Anti-Fatigue Notification Trigger
+export const dispatchSmartNotification = async (payload: SmartNotificationPayload) => {
+  if (typeof window === 'undefined' || !('Notification' in window)) return;
+  if (Notification.permission !== 'granted') return;
+
+  const { title, body, category, url = '/', senderId } = payload;
+
+  // 1. Community & Notes Updates: Silent in-app update only. Never vibrate or spam the phone tray repeatedly.
+  if (category === 'COMMUNITY' || category === 'NOTE_UPDATE') {
+    console.log('[SmartNotify] Anti-Fatigue: Silent in-app notification for community/notes:', title);
+    // Silent notification without loud vibration
+    try {
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.ready;
+        reg.showNotification(title, {
+          body,
+          icon: '/icons/icon-192.png',
+          badge: '/favicon.svg',
+          tag: 'community-silent',
+          silent: true,
+          data: { url, category }
+        });
+      }
+    } catch {}
+    return;
+  }
+
+  // 2. Direct Chat & Friend Request: Instant notification with vibration
+  if (category === 'CHAT' || category === 'FRIEND_REQUEST') {
+    try {
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.ready;
+        reg.showNotification(title, {
+          body,
+          icon: '/icons/icon-192.png',
+          badge: '/favicon.svg',
+          tag: senderId ? `chat-${senderId}` : 'direct-chat',
+          vibrate: [200, 100, 200],
+          renotify: true,
+          data: { url, category, senderId }
+        });
+      } else {
+        new Notification(title, { body, icon: '/icons/icon-192.png' });
+      }
+    } catch (e) {
+      console.warn('[SmartNotify] Chat notification trigger notice:', e);
+    }
+    return;
+  }
+
+  // 3. Streak & Daily Coins: Gentle reminder
+  if (category === 'STREAK' || category === 'DAILY_COIN') {
+    try {
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.ready;
+        reg.showNotification(title, {
+          body,
+          icon: '/icons/icon-192.png',
+          badge: '/favicon.svg',
+          tag: 'streak-reminder',
+          vibrate: [80],
+          renotify: false,
+          data: { url, category }
+        });
+      }
+    } catch (e) {
+      console.warn('[SmartNotify] Streak notification trigger notice:', e);
+    }
+  }
+};
+
+// Evening Gentle Streak & Coin Saver Reminder
+// Checks if current time is evening (after 6 PM) and reminder not already sent today
+export const checkEveningStreakReminder = (user?: { streak?: number; streakClaimedToday?: boolean }) => {
+  if (typeof window === 'undefined') return;
+
+  const now = new Date();
+  const currentHour = now.getHours();
+  // Only trigger between 6 PM (18:00) and 10 PM (22:00)
+  if (currentHour < 18 || currentHour > 22) return;
+
+  const todayKey = `nst_streak_reminder_${now.toISOString().split('T')[0]}`;
+  if (localStorage.getItem(todayKey)) return;
+
+  // Mark as checked for today
+  localStorage.setItem(todayKey, 'true');
+
+  dispatchSmartNotification({
+    title: '🔥 Streak Saver & Daily Coins!',
+    body: `Aapka ${user?.streak || 1}-day streak tootne se bachayein! Aaj ke free daily coins collect karein.`,
+    category: 'STREAK',
+    url: '/'
+  });
+};
+

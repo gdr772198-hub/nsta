@@ -30,10 +30,13 @@ export interface ChatMessage {
   senderColor?: string;
   text: string;
   timestamp: number;
-  type?: 'TEXT' | 'VOICE' | 'IMAGE' | 'VIDEO' | 'DOUBT' | 'NOTE' | 'SYSTEM';
+  type?: 'TEXT' | 'VOICE' | 'IMAGE' | 'VIDEO' | 'DOUBT' | 'NOTE' | 'SYSTEM' | 'AUDIO';
   mediaUrl?: string;
   mediaUrls?: string[]; // Multiple photos (up to 10 at once)
   voiceDuration?: number; // seconds
+  audioTitle?: string; // Original audio song / file name (e.g., song.mp3)
+  audioSize?: number; // File size in bytes
+  audioDuration?: number; // seconds
   doubtSubject?: string;
   status?: 'SENT' | 'DELIVERED' | 'READ';
   replyTo?: {
@@ -422,7 +425,7 @@ export const sendPrivateMessage = async (
   peerUserId: string,
   text: string,
   type: ChatMessage['type'] = 'TEXT',
-  extra?: { mediaUrl?: string; mediaUrls?: string[]; voiceDuration?: number; doubtSubject?: string; replyTo?: any; isHd?: boolean }
+  extra?: { mediaUrl?: string; mediaUrls?: string[]; voiceDuration?: number; audioTitle?: string; audioSize?: number; audioDuration?: number; doubtSubject?: string; replyTo?: any; isHd?: boolean }
 ): Promise<ChatMessage> => {
   const convId = getDirectConversationId(myUserId, peerUserId);
   const msgId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -446,6 +449,9 @@ export const sendPrivateMessage = async (
     ...(extra?.mediaUrl ? { mediaUrl: extra.mediaUrl } : {}),
     ...(extra?.mediaUrls && extra.mediaUrls.length > 0 ? { mediaUrls: extra.mediaUrls } : {}),
     ...(extra?.voiceDuration ? { voiceDuration: extra.voiceDuration } : {}),
+    ...(extra?.audioTitle ? { audioTitle: extra.audioTitle } : {}),
+    ...(extra?.audioSize ? { audioSize: extra.audioSize } : {}),
+    ...(extra?.audioDuration ? { audioDuration: extra.audioDuration } : {}),
     ...(extra?.doubtSubject ? { doubtSubject: extra.doubtSubject } : {}),
     ...(extra?.replyTo ? { replyTo: extra.replyTo } : {}),
     ...(extra?.isHd ? { isHd: true } : {}),
@@ -485,7 +491,7 @@ export const sendGroupMessage = async (
   myPhoto: string | undefined,
   text: string,
   type: ChatMessage['type'] = 'TEXT',
-  extra?: { mediaUrl?: string; mediaUrls?: string[]; voiceDuration?: number; doubtSubject?: string; replyTo?: any; isHd?: boolean }
+  extra?: { mediaUrl?: string; mediaUrls?: string[]; voiceDuration?: number; audioTitle?: string; audioSize?: number; audioDuration?: number; doubtSubject?: string; replyTo?: any; isHd?: boolean }
 ): Promise<ChatMessage> => {
   const msgId = `grp_msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const timestamp = Date.now();
@@ -506,6 +512,9 @@ export const sendGroupMessage = async (
     ...(extra?.mediaUrl ? { mediaUrl: extra.mediaUrl } : {}),
     ...(extra?.mediaUrls && extra.mediaUrls.length > 0 ? { mediaUrls: extra.mediaUrls } : {}),
     ...(extra?.voiceDuration ? { voiceDuration: extra.voiceDuration } : {}),
+    ...(extra?.audioTitle ? { audioTitle: extra.audioTitle } : {}),
+    ...(extra?.audioSize ? { audioSize: extra.audioSize } : {}),
+    ...(extra?.audioDuration ? { audioDuration: extra.audioDuration } : {}),
     ...(extra?.doubtSubject ? { doubtSubject: extra.doubtSubject } : {}),
     ...(extra?.replyTo ? { replyTo: extra.replyTo } : {}),
     ...(extra?.isHd ? { isHd: true } : {}),

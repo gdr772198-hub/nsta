@@ -10,11 +10,12 @@ import { DEFAULT_PLAN_COMPARISON } from '../constants';
 import { db, saveUserToLive } from '../firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import {
-  Sparkles, Check, MessageSquare, Lock, Ticket, ShieldCheck, Star,
+  Sparkles, Check, MessageSquare, Lock, Ticket, ShieldCheck, Shield, Star,
   ChevronRight, ChevronDown, Flame, BadgeCheck, History, TrendingDown,
   Calendar, Clock, Crown, DollarSign, ArrowLeft, Zap, Gift, Coins,
   Package, Wallet, X, ArrowLeftRight
 } from 'lucide-react';
+import { GuestRestrictionModal } from './GuestRestrictionModal';
 import { getLevelInfo, getScoreDiscountFromScore, getNextLevelInfo, getLevelProgress, getLevelDailyLimitsWithOverride, UNLIMITED } from '../utils/levelSystem';
 import { SCORE_MULTIPLIERS, getDailyScoreLimit, getUserScoreMultiplier } from '../utils/scoreSystem';
 import { addSubscription, isSubscriptionFromCoins } from '../utils/subscriptionUtils';
@@ -697,6 +698,9 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
   const isDiamondsStoreOn = settings?.showDiamondsStore === true;
 
   const isCreditEconomy = user.studyMode === 'CREDIT';
+  const isGuestUser = !!(user?.isGuest || user?.isAnonymous || user?.role === 'GUEST');
+  const [guestModalOpen, setGuestModalOpen] = useState(false);
+  const [guestModalFeature, setGuestModalFeature] = useState('Store Purchases & Subscriptions');
 
   const [tierType, setTierType] = useState<'SUBSCRIPTION' | 'VIP_PLUS' | 'CREDITS' | 'DIAMONDS' | 'EXCHANGE' | 'HISTORY'>(() => {
     if (initialTier) {
@@ -816,6 +820,11 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
   const [creditConfirmLoading, setCreditConfirmLoading] = useState(false);
 
   const handleCreditPurchase = async (plan: any) => {
+    if (isGuestUser) {
+      setGuestModalFeature('Credit Subscription');
+      setGuestModalOpen(true);
+      return;
+    }
     if (!isCreditSubAllowed) {
       setCreditPurchaseMsg('❌ Admin ne credits se subscription khareedna band kiya hua hai.');
       setTimeout(() => setCreditPurchaseMsg(null), 4000);
@@ -982,7 +991,15 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
     setShowSupportModal(false);
   };
 
-  const initiatePurchase = (item: any) => { setPurchaseItem(item); setShowSupportModal(true); };
+  const initiatePurchase = (item: any) => {
+    if (isGuestUser) {
+      setGuestModalFeature(item?.name ? `${item.name} Purchase` : 'Subscription / Plan');
+      setGuestModalOpen(true);
+      return;
+    }
+    setPurchaseItem(item);
+    setShowSupportModal(true);
+  };
 
   const isCreditsTab = tierType === 'CREDITS';
   const isDiamondsTab = tierType === 'DIAMONDS';
@@ -1656,6 +1673,25 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
               <span className="font-black truncate">History</span>
             </button>
           </div>
+
+          {/* Guest Mode Restriction Alert Banner */}
+          {isGuestUser && (
+            <div className="p-3 rounded-2xl bg-amber-500/15 border border-amber-500/35 flex items-center justify-between gap-3 text-xs mt-1">
+              <div className="flex items-center gap-2 text-amber-300 min-w-0">
+                <Shield size={16} className="text-amber-400 shrink-0" />
+                <p className="text-[11px] leading-tight">
+                  <strong>Guest Mode:</strong> Subscriptions ya purchases unlock karne ke liye apna account Google se bind karein.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setGuestModalFeature('Store Subscriptions'); setGuestModalOpen(true); }}
+                className="px-2.5 py-1.5 rounded-xl bg-amber-400 text-slate-950 font-black text-[11px] shrink-0 hover:bg-amber-300 transition-all active:scale-95 cursor-pointer shadow-sm"
+              >
+                Bind Google
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -3083,6 +3119,18 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
             </div>
           </div>
         )}
+
+        {/* Guest Restriction & Google Binding Modal */}
+        <GuestRestrictionModal
+          isOpen={guestModalOpen}
+          onClose={() => setGuestModalOpen(false)}
+          currentUser={user}
+          onUserUpdated={(updated) => {
+            onUserUpdate(updated);
+          }}
+          featureName={guestModalFeature}
+          customMessage="Guest Account me Subscriptions aur Paid Packs lena allowed nahi hai. Apne account ko Google se bind karein taaki aapka payment, streak aur membership hamesha safe rahe!"
+        />
 
       </div>
     </div>

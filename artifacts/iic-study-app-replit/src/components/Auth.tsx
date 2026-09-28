@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect } from 'react';
-import { User, SystemSettings } from '../types';
+import type { User, SystemSettings } from '../types';
 import { ADMIN_EMAIL } from '../constants';
 import { saveUserToLive, auth, getUserByEmail, getUserByMobileOrId, getUserData, getFreshUserData, getUserByLinkedGoogleUid } from '../firebase';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, setPersistence, browserLocalPersistence, signInAnonymously, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult } from 'firebase/auth';
@@ -266,6 +266,72 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleContinueAsGuest = () => {
+    setError(null);
+    try {
+      const cached = localStorage.getItem('nst_current_user');
+      let existingUser: any = null;
+      if (cached) {
+        try { existingUser = JSON.parse(cached); } catch {}
+      }
+
+      const uid = auth.currentUser?.uid || existingUser?.uid || ('guest_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6));
+      const guestDisplayId = existingUser?.displayId || `GUEST-${uid.slice(0, 6).toUpperCase()}`;
+
+      const guestUser: User = {
+        ...(existingUser || {}),
+        id: uid,
+        uid: uid,
+        displayId: guestDisplayId,
+        name: existingUser?.name && existingUser.name !== 'Guest Student' ? existingUser.name : 'Guest Student',
+        email: existingUser?.email || '',
+        mobile: existingUser?.mobile || '',
+        role: 'STUDENT',
+        isGuest: true,
+        isAnonymous: true,
+        board: existingUser?.board || 'CBSE',
+        classLevel: existingUser?.classLevel || '10',
+        credits: typeof existingUser?.credits === 'number' ? existingUser.credits : 50,
+        streak: existingUser?.streak ?? 1,
+        totalScore: existingUser?.totalScore ?? 0,
+        createdAt: existingUser?.createdAt || new Date().toISOString(),
+        lastLoginDate: new Date().toISOString().split('T')[0],
+        redeemedCodes: existingUser?.redeemedCodes || [],
+        studyMode: existingUser?.studyMode || 'WITHOUT_CREDIT',
+        profileCompleted: true,
+      };
+
+      // Instantly save to local storage
+      localStorage.setItem('nst_current_user', JSON.stringify(guestUser));
+      localStorage.setItem('nst_last_user_id', uid);
+      localStorage.setItem('nst_is_guest', 'true');
+
+      // 1-Second Direct Entrance: Immediately trigger success without waiting for network!
+      if (logActivity) logActivity("LOGIN", "Entered as Guest", guestUser);
+      triggerLoginSuccess(guestUser);
+
+      // In background, ensure Firebase anonymous session is active & synced
+      if (!auth.currentUser) {
+        signInAnonymously(auth).then((res) => {
+          if (res.user?.uid && res.user.uid !== guestUser.uid) {
+            guestUser.uid = res.user.uid;
+            guestUser.id = res.user.uid;
+            localStorage.setItem('nst_current_user', JSON.stringify(guestUser));
+            localStorage.setItem('nst_last_user_id', res.user.uid);
+            saveUserToLive(guestUser, { immediate: false }).catch(() => {});
+          }
+        }).catch((err) => {
+          console.warn('[Auth] Background signInAnonymously notice:', err);
+        });
+      } else {
+        saveUserToLive(guestUser, { immediate: false }).catch(() => {});
+      }
+    } catch (err: any) {
+      console.error('[Auth] Guest login failed:', err);
+      setError('Guest mode shuru nahi ho saka: ' + (err.message || 'Error'));
     }
   };
 
@@ -1020,6 +1086,7 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
                 <div className="flex-1 border-t border-slate-200" />
               </div>
 
+              {/* 2. Google Sign-in (1-Click) */}
               <div id="field-google_btn" className="relative w-full">
                 <button 
                   type="button" 
@@ -1030,7 +1097,7 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
                   }`}
                 >
                   <GoogleBrandIcon />
-                  <span>Google Sign-in</span>
+                  <span>Sign in with Google</span>
                 </button>
                 {highlightedField === 'google_btn' && (
                   <div className="absolute -top-3.5 right-2 px-2.5 py-0.5 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-[10px] font-black uppercase tracking-wider shadow-lg animate-bounce flex items-center gap-1 z-30 pointer-events-none">
@@ -1039,9 +1106,10 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
                 )}
               </div>
 
+              {/* 3. Naye user ke liye [ Create Account ] */}
               <div 
                 id="field-signup"
-                className={`text-[11px] sm:text-xs text-slate-500 mt-2.5 sm:mt-3 text-center rounded-xl transition-all duration-300 relative ${
+                className={`text-[11px] sm:text-xs text-slate-500 mt-2 sm:mt-2.5 text-center rounded-xl transition-all duration-300 relative w-full ${
                   highlightedField === 'signup' ? 'ring-4 ring-blue-400 bg-blue-50/70 p-2 scale-105 shadow-md' : ''
                 }`}
               >
@@ -1050,13 +1118,33 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
                     <span>👉 Naya account banane ke liye yahan dabayein</span>
                   </div>
                 )}
-                Don't have an account?{' '}
+                Naye student hain?{' '}
                 <button
                   type="button"
                   onClick={() => { setView('SIGNUP'); setError(null); }}
-                  className="font-black text-slate-900 hover:underline ml-0.5 cursor-pointer px-1 py-0.5"
+                  className="font-black text-indigo-600 hover:text-indigo-800 hover:underline ml-0.5 cursor-pointer px-1 py-0.5"
                 >
-                  Sign up
+                  Create Account (खाता बनाएं)
+                </button>
+              </div>
+
+              {/* Separator before Guest */}
+              <div className="w-full flex items-center my-2.5">
+                <div className="flex-1 border-t border-slate-200" />
+                <span className="px-3 text-[11px] font-semibold text-slate-400">or</span>
+                <div className="flex-1 border-t border-slate-200" />
+              </div>
+
+              {/* 4. Professional & Clean "Continue as Guest" Button (matching Google sign-in style) */}
+              <div className="w-full">
+                <button 
+                  type="button" 
+                  onClick={handleContinueAsGuest} 
+                  disabled={loading}
+                  className="w-full py-2.5 sm:py-3 rounded-xl bg-white border border-slate-200/90 hover:bg-slate-50/90 hover:border-slate-300 shadow-xs active:scale-[0.99] transition-all flex items-center justify-center gap-2 text-xs sm:text-sm font-bold text-slate-700 cursor-pointer"
+                >
+                  <UserIcon size={16} className="text-slate-500 shrink-0" />
+                  <span>Continue as Guest</span>
                 </button>
               </div>
 
@@ -1290,6 +1378,19 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
                   Login
                 </button>
               </p>
+
+              {/* Guest option on Sign-up too */}
+              <div className="w-full mt-3 pt-2.5 border-t border-slate-100">
+                <button 
+                  type="button" 
+                  onClick={handleContinueAsGuest} 
+                  disabled={loading}
+                  className="w-full py-2.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-xs active:scale-[0.99]"
+                >
+                  <UserIcon size={15} className="text-slate-500 shrink-0" />
+                  <span>Continue as Guest</span>
+                </button>
+              </div>
             </div>
           </div>
         )}
