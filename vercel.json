@@ -1,6 +1,6 @@
 {
-  "installCommand": "pnpm install --frozen-lockfile --filter @workspace/iic-study-app-replit... --filter @workspace/api-server...",
   "buildCommand": "pnpm --filter @workspace/iic-study-app-replit run build",
   "outputDirectory": "artifacts/iic-study-app-replit/dist/public",
+  "installCommand": "pnpm install --frozen-lockfile --filter @workspace/iic-study-app-replit...",
   "framework": "vite"
 }
