@@ -515,6 +515,36 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [selectedContact, setSelectedContact] = useState<ChatContact | null>(targetPeer || null);
   const [selectedGroup, setSelectedGroup] = useState<ChatGroup | null>(null);
+  const selectedContactPushIds = React.useMemo(
+    () => Array.from(new Set([
+      selectedContact?.id,
+      selectedContact?.uid,
+      selectedContact?.email,
+      selectedContact?.displayId,
+      selectedContact?.mobile,
+    ].filter((value): value is string => Boolean(value && value.trim())))),
+    [
+      selectedContact?.id,
+      selectedContact?.uid,
+      selectedContact?.email,
+      selectedContact?.displayId,
+      selectedContact?.mobile,
+    ],
+  );
+  const selectedContactChatIds = React.useMemo(
+    () => Array.from(new Set([
+      selectedContact?.id,
+      selectedContact?.uid,
+      selectedContact?.displayId,
+      selectedContact?.mobile,
+    ].filter((value): value is string => Boolean(value && value.trim())))),
+    [
+      selectedContact?.id,
+      selectedContact?.uid,
+      selectedContact?.displayId,
+      selectedContact?.mobile,
+    ],
+  );
 
   // Synchronize activeTab if initialTab changes
   useEffect(() => {
@@ -1131,7 +1161,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
           selectedContact.id,
           captionText,
           'VIDEO',
-          { mediaUrl: uploadedVideoUrl }
+          { mediaUrl: uploadedVideoUrl, recipientIds: selectedContactPushIds }
         );
       } else if (selectedGroup) {
         const optimisticMsg: ChatMessage = {
@@ -1366,6 +1396,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
             audioSize: songSize,
             audioDuration: durationSec,
             voiceDuration: durationSec,
+            recipientIds: selectedContactPushIds,
           }
         );
       } else if (selectedGroup) {
@@ -1574,7 +1605,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
           selectedContact.id,
           '🎤 Voice message',
           'VOICE',
-          { mediaUrl: audioUrl, voiceDuration: durationSec }
+          { mediaUrl: audioUrl, voiceDuration: durationSec, recipientIds: selectedContactPushIds }
         );
       } else if (selectedGroup) {
         const optimisticMsg: ChatMessage = {
@@ -2117,11 +2148,26 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     return allMyUserIdsKey ? allMyUserIdsKey.split(',') : [];
   }, [allMyUserIdsKey]);
 
-  // Check if a message was authored by the current user across all user aliases
+  // Message ownership must use stable account identifiers only. Email, mobile,
+  // and display aliases are used for friend-request fan-out, but treating them
+  // as message authors can make a friend's incoming message look like ours
+  // when an old/incorrect profile record shares one of those values.
+  const messageOwnerIds = React.useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [effectiveUserId, user?.id, (user as any)?.uid, currentUid]
+            .filter(Boolean)
+            .map((id) => String(id).trim()),
+        ),
+      ),
+    [effectiveUserId, user?.id, (user as any)?.uid, currentUid],
+  );
+
+  // Check if a message was authored by the current account.
   const isMsgSentByMe = (msg?: ChatMessage | null): boolean => {
     if (!msg) return false;
-    if (isSameUser(msg.senderId, effectiveUserId) || isSameUser(msg.senderId, user?.id)) return true;
-    return allMyUserIds.some((id) => isSameUser(msg.senderId, id));
+    return messageOwnerIds.some((id) => isSameUser(msg.senderId, id));
   };
 
   // 1. Subscribe to confirmed friends
@@ -2259,24 +2305,30 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       setIsCurrentChatLocked(isChatLocked(convId));
       markMessagesAsRead(false, convId, effectiveUserId);
 
-      unsub = subscribeToDirectMessages(effectiveUserId, selectedContact.id, (msgs) => {
-        const filtered = filterDisappearingMessages(msgs, convId, effectiveUserId);
-        setMessages(filtered);
-        markMessagesAsRead(false, convId, effectiveUserId);
+      unsub = subscribeToDirectMessages(
+        effectiveUserId,
+        selectedContact.id,
+        (msgs) => {
+          const filtered = filterDisappearingMessages(msgs, convId, effectiveUserId);
+          setMessages(filtered);
+          markMessagesAsRead(false, convId, effectiveUserId);
 
-        // Auto-reconciliation: If contact has replied or sent any messages, friend status is active!
-        const hasContactReplied = filtered.some(
-          (m) => !isSameUser(m.senderId, effectiveUserId) && m.type !== 'SYSTEM'
-        );
-        if (hasContactReplied) {
-          confirmFriendshipLocally(effectiveUserId || user.id, selectedContact);
-          setFriends((prev) => {
-            if (prev.some((f) => isSameUser(f.id, selectedContact.id))) return prev;
-            return [selectedContact, ...prev];
-          });
-          setSentRequests((prev) => prev.filter((r) => !isSameUser(r.toId, selectedContact.id)));
-        }
-      });
+          // Auto-reconciliation: If contact has replied or sent any messages, friend status is active!
+          const hasContactReplied = filtered.some(
+            (m) => !isSameUser(m.senderId, effectiveUserId) && m.type !== 'SYSTEM'
+          );
+          if (hasContactReplied) {
+            confirmFriendshipLocally(effectiveUserId || user.id, selectedContact);
+            setFriends((prev) => {
+              if (prev.some((f) => isSameUser(f.id, selectedContact.id))) return prev;
+              return [selectedContact, ...prev];
+            });
+            setSentRequests((prev) => prev.filter((r) => !isSameUser(r.toId, selectedContact.id)));
+          }
+        },
+        messageOwnerIds,
+        selectedContactChatIds,
+      );
     } else if (selectedGroup && effectiveUserId) {
       const grpId = selectedGroup.id;
       setCurrentDisappearingTimer(getDisappearingTimer(grpId));
@@ -2296,7 +2348,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     return () => {
       if (unsub) unsub();
     };
-  }, [selectedContact, selectedGroup, effectiveUserId]);
+  }, [selectedContact, selectedGroup, effectiveUserId, messageOwnerIds, selectedContactChatIds]);
 
   // Handle exiting chat (Back button or modal close): Clear Snapchat vanish messages and lock chat if enabled
   const handleExitChat = () => {
@@ -3162,7 +3214,11 @@ export const WhatsAppChatModal: React.FC<Props> = ({
         selectedContact.id,
         textToSend,
         'TEXT',
-        currentReply ? { replyTo: currentReply } : undefined
+        {
+          ...(currentReply ? { replyTo: currentReply } : {}),
+          recipientIds: selectedContactPushIds,
+          senderIds: messageOwnerIds,
+        }
       );
     } else if (selectedGroup) {
       const optimisticMsg: ChatMessage = {
@@ -3322,7 +3378,12 @@ export const WhatsAppChatModal: React.FC<Props> = ({
           selectedContact.id,
           captionText,
           'IMAGE',
-          { mediaUrl: uploadedUrls[0], mediaUrls: uploadedUrls, isHd: isHdQuality }
+          {
+            mediaUrl: uploadedUrls[0],
+            mediaUrls: uploadedUrls,
+            isHd: isHdQuality,
+            recipientIds: selectedContactPushIds,
+          }
         );
       } else if (selectedGroup) {
         const optimisticMsg: ChatMessage = {
@@ -3419,7 +3480,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
         userPhoto,
         selectedContact.id,
         content,
-        msgType as any
+        msgType as any,
+        { recipientIds: selectedContactPushIds }
       );
     } else if (selectedGroup) {
       const optimisticMsg: ChatMessage = {

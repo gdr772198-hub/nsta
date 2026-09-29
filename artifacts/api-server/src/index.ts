@@ -1,10 +1,18 @@
-import app from "./app";
-import { logger } from "./lib/logger";
+import app from "./app.js";
+import { logger } from "./lib/logger.js";
 
-const port = Number(process.env["PORT"] || 3000);
+const rawPort = process.env["PORT"];
+
+if (!rawPort) {
+  throw new Error(
+    "PORT environment variable is required but was not provided.",
+  );
+}
+
+const port = Number(rawPort);
 
 if (Number.isNaN(port) || port <= 0) {
-  throw new Error(`Invalid PORT value: "${process.env["PORT"]}"`);
+  throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
 app.listen(port, (err) => {
