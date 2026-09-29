@@ -1,3 +1,0 @@
-- [Notification delivery](notification-delivery.md) — FCM background delivery depends on Firebase Admin credentials; keep its worker on a separate scope from the PWA worker.
-- [Web/API routing](web-api-routing.md) — the web artifact and API artifact use separate dev ports; browser `/api` calls need the web dev proxy to reach notification routes.
-- [Direct chat identity](direct-chat-identity.md) — direct-message rooms must account for imported users having multiple identity aliases.
