@@ -284,6 +284,14 @@ export const sendPushNotification = async (request: PushNotificationRequest) => 
         url: request.url || '/',
       }),
     });
+    if (!response.ok) {
+      const details = await response.text().catch(() => '');
+      console.warn(
+        '[NotificationManager] Push request rejected:',
+        response.status,
+        details.slice(0, 300),
+      );
+    }
     return response.ok;
   } catch (error) {
     console.warn('[NotificationManager] Push request failed:', error);

@@ -107,6 +107,15 @@ export default defineConfig({
     strictPort: true,
     host: '0.0.0.0',
     allowedHosts: true,
+    // The API runs as a separate artifact during development. Without this
+    // proxy, browser calls to /api/notifications/push are handled by Vite and
+    // return 404 before they can reach Firebase Admin.
+    proxy: {
+      '/api': {
+        target: process.env.API_SERVER_URL || 'http://127.0.0.1:8080',
+        changeOrigin: true,
+      },
+    },
     fs: {
       strict: true,
     },
