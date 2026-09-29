@@ -1,10 +1,10 @@
-import { Router, type IRouter, type Request } from "express";
+import { Router, type Request } from "express";
 import { cert, getApps, initializeApp, type App } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getDatabase } from "firebase-admin/database";
 import { getMessaging } from "firebase-admin/messaging";
 
-const router: IRouter = Router();
+const router = Router();
 
 const NOTIFICATION_TYPES = new Set([
   "DAILY_ROUTINE",
@@ -184,8 +184,15 @@ async function sendPush(
     groups[groupIndex].push(token);
     return groups;
   }, [])) {
+    const isUrgent = input.type === "CHAT" || input.type === "FRIEND_REQUEST" || input.type === "DIRECT_MESSAGE";
+    const notificationIcon = input.icon || input.senderPhoto || '/icons/icon-192.png';
+
     const response = await getMessaging(app).sendEachForMulticast({
       tokens: batch,
+      notification: {
+        title: input.title,
+        body: input.body,
+      },
       data: {
         type: input.type,
         title: input.title,
@@ -197,7 +204,37 @@ async function sendPush(
         ...(input.icon ? { icon: input.icon } : {}),
       },
       webpush: {
-        headers: { Urgency: input.type === "CHAT" || input.type === "FRIEND_REQUEST" ? "high" : "normal", TTL: "86400" },
+        headers: {
+          Urgency: isUrgent ? "high" : "normal",
+          TTL: "86400",
+        },
+        notification: {
+          title: input.title,
+          body: input.body,
+          icon: notificationIcon,
+          badge: '/favicon.svg',
+          requireInteraction: isUrgent,
+          vibrate: isUrgent ? [250, 100, 250] : [100, 50, 100],
+          data: {
+            url: input.url,
+            type: input.type,
+            ...(input.senderId ? { senderId: input.senderId } : {}),
+          },
+        },
+        fcmOptions: {
+          link: input.url || '/',
+        },
+      },
+      android: {
+        priority: 'high',
+        notification: {
+          title: input.title,
+          body: input.body,
+          icon: notificationIcon,
+          priority: 'max',
+          sound: 'default',
+          visibility: 'public',
+        },
       },
     });
     successCount += response.successCount;

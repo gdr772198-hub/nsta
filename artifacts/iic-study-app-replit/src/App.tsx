@@ -1687,11 +1687,16 @@ const App: React.FC = () => {
         user.uid = validId;
         user.profileCompleted = true;
 
-        if (!user.displayId || user.displayId.startsWith('IIC-') || /^\d{8,12}$/.test(user.displayId)) {
-            const digits = user.displayId ? user.displayId.replace(/\D/g, '').slice(-6).padStart(6, '0') : String(Math.floor(100000 + Math.random() * 900000));
-            user.displayId = `NSTA-${digits}`;
-            localStorage.setItem('nst_current_user', JSON.stringify(user));
-            saveUserToLive(user);
+        const isGuest = Boolean(user.isGuest || user.isAnonymous || String(user.id || '').startsWith('guest_'));
+        if (!isGuest) {
+          if (!user.displayId || user.displayId.startsWith('IIC-') || /^\d{8,12}$/.test(user.displayId)) {
+              const digits = user.displayId ? user.displayId.replace(/\D/g, '').slice(-6).padStart(6, '0') : String(Math.floor(100000 + Math.random() * 900000));
+              user.displayId = `NSTA-${digits}`;
+              localStorage.setItem('nst_current_user', JSON.stringify(user));
+              saveUserToLive(user);
+          }
+        } else {
+          user.displayId = '';
         }
 
         if (auth.currentUser === null) {

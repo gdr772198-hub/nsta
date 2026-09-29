@@ -2312,19 +2312,6 @@ export const WhatsAppChatModal: React.FC<Props> = ({
           const filtered = filterDisappearingMessages(msgs, convId, effectiveUserId);
           setMessages(filtered);
           markMessagesAsRead(false, convId, effectiveUserId);
-
-          // Auto-reconciliation: If contact has replied or sent any messages, friend status is active!
-          const hasContactReplied = filtered.some(
-            (m) => !isSameUser(m.senderId, effectiveUserId) && m.type !== 'SYSTEM'
-          );
-          if (hasContactReplied) {
-            confirmFriendshipLocally(effectiveUserId || user.id, selectedContact);
-            setFriends((prev) => {
-              if (prev.some((f) => isSameUser(f.id, selectedContact.id))) return prev;
-              return [selectedContact, ...prev];
-            });
-            setSentRequests((prev) => prev.filter((r) => !isSameUser(r.toId, selectedContact.id)));
-          }
         },
         messageOwnerIds,
         selectedContactChatIds,
@@ -2901,9 +2888,9 @@ export const WhatsAppChatModal: React.FC<Props> = ({
 
     try {
       if (type === 'UNFRIEND') {
-        await unfriendUser(user.id, targetId);
-        setFriends((prev) => prev.filter((f) => f.id !== targetId));
-        if (selectedContact?.id === targetId) {
+        await unfriendUser(effectiveUserId || user.id, targetId, allMyUserIds);
+        setFriends((prev) => prev.filter((f) => !isSameUser(f.id, targetId) && !isSameUser(f.uid, targetId)));
+        if (selectedContact && (isSameUser(selectedContact.id, targetId) || isSameUser(selectedContact.uid, targetId))) {
           setSelectedContact(null);
         }
         showToast(`❌ ${targetName} ko friend list se hata diya gaya hai.`);

@@ -1099,6 +1099,11 @@ const _executeSaveUserToLive = async (user: any): Promise<boolean> => {
       }
     } catch (_) {}
 
+    // Guest accounts are stored only locally in browser; do not register them in live database
+    if (user.isGuest || user.isAnonymous || String(user.id).startsWith('guest_')) {
+      return true;
+    }
+
     // EXTRACT BULKY DATA FOR SEGREGATION
     const {
       mcqHistory, usageHistory, progress, testResults, inbox,

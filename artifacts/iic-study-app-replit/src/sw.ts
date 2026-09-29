@@ -27,17 +27,18 @@ type NstaPushPayload = {
 
 const showNstaNotification = (payload: NstaPushPayload) => {
   const data = payload.data || {};
-  const title = data.title || payload.notification?.title || 'NSTA Study App';
-  const body = data.body || payload.notification?.body || 'New notification received!';
+  const notification = payload.notification || {};
+  const title = notification.title || data.title || 'NSTA Study App';
+  const body = notification.body || data.body || 'New notification received!';
   const type = data.type || 'DEFAULT';
   const url = data.url || '/';
   const urgent = type === 'CHAT' || type === 'FRIEND_REQUEST' || type === 'DIRECT_MESSAGE';
 
   const options = {
     body,
-    icon: data.icon || data.senderPhoto || payload.notification?.icon || '/favicon.svg',
+    icon: notification.icon || data.icon || data.senderPhoto || '/favicon.svg',
     badge: '/favicon.svg',
-    tag: data.senderId ? `nsta-${type}-${data.senderId}` : `nsta-${type}`,
+    tag: data.senderId ? `nsta-${type}-${data.senderId}` : `nsta-${type}-${Date.now()}`,
     renotify: urgent,
     requireInteraction: urgent,
     vibrate: urgent ? [200, 100, 200] : [80],
@@ -54,9 +55,8 @@ const showNstaNotification = (payload: NstaPushPayload) => {
   return self.registration.showNotification(title, options);
 };
 
-// Keep an explicit Push API listener in the PWA worker. This makes push
-// capability discoverable to PWA validators while Firebase handles FCM
-// messages through onBackgroundMessage below.
+// Handle all background push notifications (Web Push + Firebase Cloud Messaging)
+// Displays alert banner and sound/vibration even when app is closed or device is locked
 self.addEventListener('push', (event: PushEvent) => {
   if (!event.data) return;
 
@@ -66,13 +66,6 @@ self.addEventListener('push', (event: PushEvent) => {
   } catch {
     payload = { data: { body: event.data.text() } };
   }
-
-  // The Firebase Messaging SDK owns FCM delivery. The fallback is only for
-  // ordinary Web Push payloads that arrive through the browser Push API.
-  const isFirebaseMessage = Boolean(
-    payload.from || payload.messageId || payload.collapse_key || payload.fcmOptions,
-  );
-  if (isFirebaseMessage) return;
 
   event.waitUntil(showNstaNotification(payload));
 });

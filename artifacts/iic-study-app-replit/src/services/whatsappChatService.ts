@@ -121,152 +121,8 @@ export interface ConversationSummary {
   isPinned?: boolean;
 }
 
-// ── Default Seeded Classmates & Groups (Institute Classmates with Online & Offline Statuses) ────────────
-export const INSTITUTE_CLASSMATES: ChatContact[] = [
-  {
-    id: 'student_rohit_v',
-    name: 'Rohit Verma',
-    classLevel: 'Class 10',
-    isOnline: false,
-    lastSeen: Date.now() - 45 * 60 * 1000,
-    statusText: 'Maths Quadratic Equations solving 📐',
-    role: 'STUDENT',
-    subscriptionLevel: 'ULTRA',
-    subscriptionTier: 'YEARLY',
-  },
-  {
-    id: 'student_priya_s',
-    name: 'Priya Sharma',
-    classLevel: 'Class 12',
-    isOnline: false,
-    lastSeen: Date.now() - 2 * 3600 * 1000,
-    statusText: 'Physics Electrostatics practice ⚡',
-    role: 'STUDENT',
-    subscriptionLevel: 'BASIC',
-    subscriptionTier: 'MONTHLY',
-  },
-  {
-    id: 'student_amit_k',
-    name: 'Amit Kumar',
-    classLevel: 'Class 11',
-    isOnline: false,
-    lastSeen: Date.now() - 3 * 3600 * 1000,
-    statusText: 'Chemistry Organic notes revision 🧪',
-    role: 'STUDENT',
-    subscriptionLevel: 'BASIC',
-    subscriptionTier: 'MONTHLY',
-  },
-  {
-    id: 'student_ananya_s',
-    name: 'Ananya Singh',
-    classLevel: 'Class 10',
-    isOnline: false,
-    lastSeen: Date.now() - 5 * 3600 * 1000,
-    statusText: 'Biology NCERT line-by-line reading 🌿',
-    role: 'STUDENT',
-    subscriptionLevel: 'ULTRA',
-    subscriptionTier: 'LIFETIME',
-  },
-  {
-    id: 'student_vikash_p',
-    name: 'Vikash Patel',
-    classLevel: 'Competition (JEE)',
-    isOnline: false,
-    lastSeen: Date.now() - 8 * 3600 * 1000,
-    statusText: 'JEE Main mock test solving 🎯',
-    role: 'STUDENT',
-    subscriptionLevel: 'ULTRA',
-    subscriptionTier: 'YEARLY',
-  },
-  {
-    id: 'student_sneha_g',
-    name: 'Sneha Gupta',
-    classLevel: 'Class 9',
-    isOnline: false,
-    lastSeen: Date.now() - 12 * 3600 * 1000,
-    statusText: 'Class 9 Science cell chapter complete 🔬',
-    role: 'STUDENT',
-    subscriptionLevel: 'FREE',
-    subscriptionTier: 'FREE',
-  },
-  {
-    id: 'student_rahul_m',
-    name: 'Rahul Mehra',
-    classLevel: 'Class 10',
-    isOnline: false,
-    lastSeen: Date.now() - 24 * 3600 * 1000,
-    statusText: 'Offline • At tuition batch 📚',
-    role: 'STUDENT',
-    subscriptionLevel: 'FREE',
-    subscriptionTier: 'FREE',
-  },
-  {
-    id: 'student_aditya_r',
-    name: 'Aditya Raj',
-    classLevel: 'Class 11',
-    isOnline: false,
-    lastSeen: Date.now() - 28 * 3600 * 1000,
-    statusText: 'Self-study mode on 🔕',
-    role: 'STUDENT',
-    subscriptionLevel: 'BASIC',
-    subscriptionTier: 'MONTHLY',
-  },
-  {
-    id: 'student_pooja_y',
-    name: 'Pooja Yadav',
-    classLevel: 'Class 12',
-    isOnline: false,
-    lastSeen: Date.now() - 36 * 3600 * 1000,
-    statusText: 'Solving Bihar Board 12th PYQs 📝',
-    role: 'STUDENT',
-    subscriptionLevel: 'FREE',
-    subscriptionTier: 'FREE',
-  },
-  {
-    id: 'student_manish_t',
-    name: 'Manish Tiwari',
-    classLevel: 'Class 9',
-    isOnline: false,
-    lastSeen: Date.now() - 48 * 3600 * 1000,
-    statusText: 'Offline • Evening study session 📖',
-    role: 'STUDENT',
-    subscriptionLevel: 'FREE',
-    subscriptionTier: 'FREE',
-  },
-  {
-    id: 'student_ritu_k',
-    name: 'Ritu Kumari',
-    classLevel: 'Class 12',
-    isOnline: false,
-    lastSeen: Date.now() - 14 * 3600 * 1000,
-    statusText: 'English & Hindi grammar revision ✍️',
-    role: 'STUDENT',
-    subscriptionLevel: 'ULTRA',
-    subscriptionTier: 'YEARLY',
-  },
-  {
-    id: 'student_aman_j',
-    name: 'Aman Jha',
-    classLevel: 'Class 11',
-    isOnline: false,
-    lastSeen: Date.now() - 24 * 3600 * 1000,
-    statusText: 'Maths Trigonometry formulas memorizing',
-    role: 'STUDENT',
-    subscriptionLevel: 'BASIC',
-    subscriptionTier: 'MONTHLY',
-  },
-  {
-    id: 'student_deepak_s',
-    name: 'Deepak Soni',
-    classLevel: 'Competition (NEET)',
-    isOnline: false,
-    lastSeen: Date.now() - 36 * 3600 * 1000,
-    statusText: 'NEET Biology Human Physiology drills 🧬',
-    role: 'STUDENT',
-    subscriptionLevel: 'FREE',
-    subscriptionTier: 'FREE',
-  },
-];
+// ── Default Seeded Classmates & Groups (Empty: Only real registered students appear) ────────────
+export const INSTITUTE_CLASSMATES: ChatContact[] = [];
 
 export const SEEDED_CONTACTS: ChatContact[] = INSTITUTE_CLASSMATES;
 
@@ -1516,19 +1372,31 @@ export const fetchRegisteredStudents = async (myUserId: string): Promise<ChatCon
     }
   } catch {}
 
-  // 3. Always include institute classmates / seeds so the directory is never empty (all default to offline)
-  INSTITUTE_CLASSMATES.forEach((c) => {
-    const isSelf = isSameUser(c.id, myUserId);
-    if (!isSelf && !seenIds.has(c.id)) {
-      seenIds.add(c.id);
-      result.push({
-        ...c,
-        isOnline: false,
-      });
+  // Only return real registered students from Firebase, filtered of any self, mock, guest, or placeholder items
+  const isRealRegisteredStudent = (student: ChatContact): boolean => {
+    if (!student || !student.id) return false;
+    const uidLower = student.id.toLowerCase();
+    if (
+      uidLower.startsWith('student_') ||
+      uidLower.startsWith('peer_') ||
+      uidLower.startsWith('guest_') ||
+      uidLower.startsWith('temp_') ||
+      uidLower.startsWith('mock_')
+    ) {
+      return false;
     }
-  });
+    const name = (student.name || '').trim();
+    if (!name || name === 'Guest Student' || name === 'Student' || name === 'Guest') {
+      return false;
+    }
+    // Must be a registered student with Email, Google, Mobile, or official Roll ID
+    const hasEmail = Boolean(student.email && student.email.includes('@'));
+    const hasDisplayId = Boolean(student.displayId && (student.displayId.startsWith('NSTA-') || student.displayId.startsWith('IIC-')));
+    const hasMobile = Boolean(student.mobile && student.mobile.replace(/\D/g, '').length >= 10);
+    return hasEmail || hasDisplayId || hasMobile;
+  };
 
-  return result;
+  return result.filter(isRealRegisteredStudent);
 };
 
 /**
@@ -2184,8 +2052,24 @@ export const subscribeToFriends = (
   const rawTargetIds = [myUserId, cleanMy, ...(extraUserIds || [])];
   const targetIds = Array.from(new Set(rawTargetIds.map(sanitizeRtdbKey).filter(Boolean)));
 
+  const unfriendedPeers = new Set<string>();
+  // Load any local unfriended records for this user
+  try {
+    const rawUnfriended = localStorage.getItem(`nsta_unfriended_${myUserId}`);
+    if (rawUnfriended) {
+      const arr = JSON.parse(rawUnfriended);
+      if (Array.isArray(arr)) {
+        arr.forEach((k: string) => { if (k) unfriendedPeers.add(sanitizeRtdbKey(k)); });
+      }
+    }
+  } catch {}
+
   const sourceBuckets = new Map<string, Map<string, ChatContact>>();
-  const local = getLocalFriends(myUserId);
+  const local = getLocalFriends(myUserId).filter((f) => {
+    const cleanId = sanitizeRtdbKey(f.id);
+    const cleanUid = f.uid ? sanitizeRtdbKey(f.uid) : '';
+    return !unfriendedPeers.has(cleanId) && (!cleanUid || !unfriendedPeers.has(cleanUid));
+  });
   if (local.length > 0) {
     const localBucket = new Map<string, ChatContact>();
     local.forEach((f) => localBucket.set(f.id, f));
@@ -2204,7 +2088,15 @@ export const subscribeToFriends = (
         }
       });
     });
-    const list = Array.from(combinedMap.values());
+    const list = Array.from(combinedMap.values()).filter((friend) => {
+      const cleanId = sanitizeRtdbKey(friend.id);
+      const cleanUid = friend.uid ? sanitizeRtdbKey(friend.uid) : '';
+      if (unfriendedPeers.has(cleanId) || (cleanUid && unfriendedPeers.has(cleanUid))) return false;
+      for (const uId of unfriendedPeers) {
+        if (isSameUser(friend.id, uId) || (friend.uid && isSameUser(friend.uid, uId))) return false;
+      }
+      return true;
+    });
     callback(list);
     saveAllLocalFriends(myUserId, list);
   };
@@ -2218,14 +2110,19 @@ export const subscribeToFriends = (
       const unsub = onValue(
         friendsRef,
         (snapshot) => {
-          // Once a remote snapshot arrives it is authoritative. Otherwise a
-          // stale local cache can re-add a friend after refresh/unfriend.
           sourceBuckets.delete('local');
           bucket.clear();
           const val = snapshot.val();
           if (val && typeof val === 'object') {
             Object.values(val).forEach((item: any) => {
               if (item && item.id) {
+                const cleanItemId = sanitizeRtdbKey(item.id);
+                const cleanItemUid = item.uid ? sanitizeRtdbKey(item.uid) : '';
+                if (unfriendedPeers.has(cleanItemId) || (cleanItemUid && unfriendedPeers.has(cleanItemUid))) {
+                  // Current user can delete stale node from their own RTDB friends path
+                  remove(ref(rtdb, `chat/friends/${targetKey}/${cleanItemId}`)).catch(() => {});
+                  return;
+                }
                 const now = Date.now();
                 const resolvedLastSeen = item.lastSeen || item.lastActiveAt || item.friendedAt || (now - 8 * 60 * 1000);
                 bucket.set(item.id, {
@@ -2249,10 +2146,60 @@ export const subscribeToFriends = (
         }
       );
       unsubs.push(unsub);
+
+      // Real-time unfriend action listener: When friend unfriends me, remove immediately on this client
+      const actionRef = ref(rtdb, `chat/friend_actions/${targetKey}`);
+      const unsubAction = onValue(actionRef, (snapshot) => {
+        const val = snapshot.val();
+        if (val && typeof val === 'object') {
+          let hasChanges = false;
+          Object.entries(val).forEach(([peerKey, act]: [string, any]) => {
+            if (act && act.type === 'UNFRIENDED') {
+              const cleanPeer = sanitizeRtdbKey(peerKey);
+              unfriendedPeers.add(cleanPeer);
+              if (act.unfriendedBy) unfriendedPeers.add(sanitizeRtdbKey(act.unfriendedBy));
+              try {
+                localStorage.setItem(`nsta_unfriended_${myUserId}`, JSON.stringify(Array.from(unfriendedPeers)));
+              } catch {}
+
+              sourceBuckets.forEach((b) => {
+                b.delete(peerKey);
+                b.delete(cleanPeer);
+                Array.from(b.keys()).forEach((k) => {
+                  const entry = b.get(k);
+                  if (entry && (isSameUser(entry.id, peerKey) || isSameUser(entry.uid, peerKey) || isSameUser(entry.id, cleanPeer))) {
+                    b.delete(k);
+                    hasChanges = true;
+                  }
+                });
+              });
+              saveAllLocalFriends(
+                myUserId,
+                getLocalFriends(myUserId).filter((f) => !isSameUser(f.id, peerKey) && !isSameUser(f.uid, peerKey) && !isSameUser(f.id, cleanPeer))
+              );
+              // Clean up friend entry from my own RTDB path since I have write access to my own targetKey
+              remove(ref(rtdb, `chat/friends/${targetKey}/${peerKey}`)).catch(() => {});
+              remove(ref(rtdb, `chat/friends/${targetKey}/${cleanPeer}`)).catch(() => {});
+              // Also clean up from my own Firestore friends subcollection
+              if (db) {
+                deleteDoc(doc(db, 'users', targetKey, 'friends', peerKey)).catch(() => {});
+                deleteDoc(doc(db, 'users', targetKey, 'friends', cleanPeer)).catch(() => {});
+                deleteDoc(doc(db, 'users', myUserId, 'friends', peerKey)).catch(() => {});
+                deleteDoc(doc(db, 'users', myUserId, 'friends', cleanPeer)).catch(() => {});
+              }
+              hasChanges = true;
+            }
+          });
+          if (hasChanges) {
+            emit();
+          }
+        }
+      });
+      unsubs.push(unsubAction);
     } catch {}
   });
 
-  // Dual-source redundancy: Cloud Firestore friends subcollection & accepted friend requests
+  // Firestore direct friends subcollection: users/{tId}/friends
   try {
     if (db) {
       const primaryTargetIds = Array.from(new Set([myUserId, ...(extraUserIds || [])].filter(Boolean))).slice(0, 10);
@@ -2260,7 +2207,6 @@ export const subscribeToFriends = (
         try {
           const fsFriendsBucket = new Map<string, ChatContact>();
           sourceBuckets.set(`firestore_friends_${tId}`, fsFriendsBucket);
-          // 1. Direct friends subcollection: users/{tId}/friends
           const unsubFriendsSub = onSnapshot(
             collection(db, 'users', tId, 'friends'),
             (snap) => {
@@ -2268,6 +2214,12 @@ export const subscribeToFriends = (
               snap.forEach((docSnap) => {
                 const data = docSnap.data();
                 if (data && docSnap.id) {
+                  const cleanDocId = sanitizeRtdbKey(docSnap.id);
+                  if (unfriendedPeers.has(cleanDocId) || unfriendedPeers.has(sanitizeRtdbKey(data.uid || ''))) {
+                    // Stale document in my own subcollection - delete it cleanly
+                    deleteDoc(docSnap.ref).catch(() => {});
+                    return;
+                  }
                   fsFriendsBucket.set(docSnap.id, {
                     id: docSnap.id,
                     name: data.name || 'Friend',
@@ -2286,35 +2238,6 @@ export const subscribeToFriends = (
             () => {}
           );
           unsubs.push(unsubFriendsSub);
-
-          // 2. Sent friend requests that have been accepted: friend_requests where fromId == tId and status == 'ACCEPTED'
-          const acceptedFriendsBucket = new Map<string, ChatContact>();
-          sourceBuckets.set(`firestore_accepted_${tId}`, acceptedFriendsBucket);
-          const unsubAcceptedReqs = onSnapshot(
-            query(collection(db, 'friend_requests'), where('fromId', '==', tId), where('status', '==', 'ACCEPTED')),
-            (snap) => {
-              acceptedFriendsBucket.clear();
-              snap.forEach((docSnap) => {
-                const data = docSnap.data();
-                if (data && data.toId) {
-                  acceptedFriendsBucket.set(data.toId, {
-                    id: data.toId,
-                    name: data.toName || data.friend?.name || 'Friend',
-                    photoURL: data.toPhoto || data.friend?.photoURL || '',
-                    isOnline: false,
-                    lastSeen: data.acceptedAt || Date.now(),
-                    statusText: 'Friend 🤝 · Available to chat',
-                    classLevel: 'Friend',
-                    uid: data.toUid || data.friend?.uid || '',
-                    email: data.toEmail || data.friend?.email || '',
-                  });
-                }
-              });
-              emit();
-            },
-            () => {}
-          );
-          unsubs.push(unsubAcceptedReqs);
         } catch {}
       });
     }
@@ -2548,7 +2471,7 @@ function saveAllLocalFriends(userId: string, friends: ChatContact[]) {
 /**
  * Unfriend a user: removes friendship from RTDB and local storage.
  */
-export const unfriendUser = async (myUserId: string, friendId: string): Promise<boolean> => {
+export const unfriendUser = async (myUserId: string, friendId: string, extraMyIds?: string[]): Promise<boolean> => {
   const knownFriend = getLocalFriends(myUserId).find(
     (friend) => isSameUser(friend.id, friendId) || isSameUser(friend.uid, friendId),
   );
@@ -2559,8 +2482,9 @@ export const unfriendUser = async (myUserId: string, friendId: string): Promise<
         .map((value) => String(value)),
     ),
   );
+  const rawMyIds = Array.from(new Set([myUserId, ...(extraMyIds || [])].filter(Boolean)));
   const myKeys = Array.from(
-    new Set([myUserId].filter(Boolean).map(sanitizeRtdbKey)),
+    new Set(rawMyIds.map(sanitizeRtdbKey)),
   );
   const friendKeys = Array.from(
     new Set(
@@ -2568,38 +2492,59 @@ export const unfriendUser = async (myUserId: string, friendId: string): Promise<
     ),
   );
 
+  // Store in persistent local unfriend list for each of my user IDs
+  rawMyIds.forEach((mId) => {
+    try {
+      const key = `nsta_unfriended_${mId}`;
+      const raw = localStorage.getItem(key);
+      const existing: string[] = raw ? JSON.parse(raw) : [];
+      const updated = Array.from(new Set([...existing, friendId, ...friendKeys]));
+      localStorage.setItem(key, JSON.stringify(updated));
+    } catch {}
+  });
+
   try {
-    // Remove every alias pair in one atomic update. Previously only the two
-    // visible IDs were deleted, leaving email/UID aliases to recreate the
-    // friendship after refresh.
-    const updates: Record<string, null> = {};
+    // 1. Write an authoritative unfriend event so the peer's client immediately
+    // removes friendship and cancels all active chats and listeners
+    const actionUpdates: Record<string, any> = {};
     myKeys.forEach((myKey) => {
       friendKeys.forEach((friendKey) => {
-        updates[`chat/friends/${myKey}/${friendKey}`] = null;
-        updates[`chat/friends/${friendKey}/${myKey}`] = null;
-        updates[`chat/friend_requests/${myKey}/${friendKey}`] = null;
-        updates[`chat/friend_requests/${friendKey}/${myKey}`] = null;
-        updates[`chat/friend_requests_sent/${myKey}/${friendKey}`] = null;
-        updates[`chat/friend_requests_sent/${friendKey}/${myKey}`] = null;
-        updates[`chat/friend_accepted/${myKey}/${friendKey}`] = null;
-        updates[`chat/friend_accepted/${friendKey}/${myKey}`] = null;
+        actionUpdates[`chat/friends/${myKey}/${friendKey}`] = null;
+        actionUpdates[`chat/friend_requests/${myKey}/${friendKey}`] = null;
+        actionUpdates[`chat/friend_requests_sent/${myKey}/${friendKey}`] = null;
+        actionUpdates[`chat/friend_accepted/${myKey}/${friendKey}`] = null;
+        actionUpdates[`chat/friend_actions/${friendKey}/${myKey}`] = {
+          type: 'UNFRIENDED',
+          unfriendedBy: myUserId,
+          timestamp: Date.now(),
+        };
+        actionUpdates[`chat/friend_actions/${myKey}/${friendKey}`] = null;
       });
     });
-    await update(ref(rtdb), updates);
+    await update(ref(rtdb), actionUpdates).catch(async () => {
+      // Fallback for strict individual user node rules
+      for (const myKey of myKeys) {
+        for (const friendKey of friendKeys) {
+          await remove(ref(rtdb, `chat/friends/${myKey}/${friendKey}`)).catch(() => {});
+          await remove(ref(rtdb, `chat/friend_requests/${myKey}/${friendKey}`)).catch(() => {});
+          await remove(ref(rtdb, `chat/friend_requests_sent/${myKey}/${friendKey}`)).catch(() => {});
+          await set(ref(rtdb, `chat/friend_actions/${friendKey}/${myKey}`), {
+            type: 'UNFRIENDED',
+            unfriendedBy: myUserId,
+            timestamp: Date.now(),
+          }).catch(() => {});
+        }
+      }
+    });
+
+    // Also attempt removing the friend's node directly if rules permit
+    friendKeys.forEach((friendKey) => {
+      myKeys.forEach((myKey) => {
+        remove(ref(rtdb, `chat/friends/${friendKey}/${myKey}`)).catch(() => {});
+      });
+    });
   } catch (e) {
     console.warn('[Nsta Messenger] Error unfriending user in RTDB:', e);
-    // Keep the user's own paths removable even when Firebase rules reject a
-    // peer-side write. The peer's listener will also see the revocation when
-    // rules permit the atomic update above.
-    await Promise.allSettled(
-      friendKeys.flatMap((friendKey) =>
-        myKeys.flatMap((myKey) => [
-          remove(ref(rtdb, `chat/friends/${myKey}/${friendKey}`)).catch(() => {}),
-          remove(ref(rtdb, `chat/friend_requests/${myKey}/${friendKey}`)).catch(() => {}),
-          remove(ref(rtdb, `chat/friend_requests_sent/${myKey}/${friendKey}`)).catch(() => {}),
-        ]),
-      ),
-    );
   }
 
   // Remove both Firestore sources too. Accepted requests and friends

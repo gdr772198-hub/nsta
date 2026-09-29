@@ -2,15 +2,20 @@
   "name": "workspace",
   "version": "0.0.0",
   "license": "MIT",
-  "scripts": {
-    "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
-    "build": "pnpm --filter @workspace/iic-study-app-replit run build",
-    "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
-  },
   "private": true,
-  "dependencies": {
-    "@replit/connectors-sdk": "^0.4.3"
+  "workspaces": [
+    "artifacts/iic-study-app-replit",
+    "artifacts/api-server",
+    "artifacts/mockup-sandbox",
+    "lib/*",
+    "scripts"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=@workspace/iic-study-app-replit",
+    "build": "npm run build --workspace=@workspace/iic-study-app-replit",
+    "typecheck:libs": "tsc --build",
+    "typecheck": "npm run typecheck:libs && npm run typecheck --workspace=@workspace/iic-study-app-replit",
+    "lint": "tsc --build"
   },
   "devDependencies": {
     "prettier": "^3.9.6",

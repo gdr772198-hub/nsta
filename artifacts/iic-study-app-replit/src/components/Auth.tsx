@@ -143,8 +143,9 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
 
   const triggerLoginSuccess = (user: User) => {
     const validId = user.id || user.uid;
+    const isGuest = Boolean(user.isGuest || user.isAnonymous);
     let displayId = user.displayId;
-    if (!displayId || displayId.startsWith('IIC-') || /^\d{8,12}$/.test(displayId)) {
+    if (!isGuest && (!displayId || displayId.startsWith('IIC-') || /^\d{8,12}$/.test(displayId))) {
       const digits = displayId ? displayId.replace(/\D/g, '').slice(-6).padStart(6, '0') : String(Math.floor(100000 + Math.random() * 900000));
       displayId = `NSTA-${digits}`;
     }
@@ -152,7 +153,7 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
       ...user,
       id: validId,
       uid: validId,
-      displayId,
+      displayId: isGuest ? '' : displayId,
       profileCompleted: true
     };
     onLogin(safeUser);
@@ -279,7 +280,8 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
       }
 
       const uid = auth.currentUser?.uid || existingUser?.uid || ('guest_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6));
-      const guestDisplayId = existingUser?.displayId || `GUEST-${uid.slice(0, 6).toUpperCase()}`;
+      // Guest users do not have a permanent UID/displayId until bound with Google
+      const guestDisplayId = '';
 
       const guestUser: User = {
         ...(existingUser || {}),
@@ -313,7 +315,7 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
       if (logActivity) logActivity("LOGIN", "Entered as Guest", guestUser);
       triggerLoginSuccess(guestUser);
 
-      // In background, ensure Firebase anonymous session is active & synced
+      // In background, ensure Firebase anonymous session is active for storage access, but do NOT register guest in users collection
       if (!auth.currentUser) {
         signInAnonymously(auth).then((res) => {
           if (res.user?.uid && res.user.uid !== guestUser.uid) {
@@ -321,13 +323,10 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
             guestUser.id = res.user.uid;
             localStorage.setItem('nst_current_user', JSON.stringify(guestUser));
             localStorage.setItem('nst_last_user_id', res.user.uid);
-            saveUserToLive(guestUser, { immediate: false }).catch(() => {});
           }
         }).catch((err) => {
           console.warn('[Auth] Background signInAnonymously notice:', err);
         });
-      } else {
-        saveUserToLive(guestUser, { immediate: false }).catch(() => {});
       }
     } catch (err: any) {
       console.error('[Auth] Guest login failed:', err);
@@ -361,10 +360,14 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
             ...(appUser || {}),
             id: uid,
             uid: uid,
+            displayId: appUser?.displayId || `NST-${uid.slice(0, 6).toUpperCase()}`,
             email: appUser?.email || input.toLowerCase(),
             name: appUser?.name || res.user.displayName || "Student",
             mobile: appUser?.mobile || "",
             role: appUser?.role || "STUDENT",
+            isGuest: false,
+            isAnonymous: false,
+            provider: 'email',
             securityQuestion: appUser?.securityQuestion || DEFAULT_QUESTIONS[0],
             securityAnswer: appUser?.securityAnswer || "",
             board: appUser?.board || "CBSE",
@@ -375,9 +378,10 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
             profileCompleted: true
           };
 
-           void saveUserToLive(completeUser, { immediate: true });
+          void saveUserToLive(completeUser, { immediate: true });
           localStorage.setItem('nst_current_user', JSON.stringify(completeUser));
           localStorage.setItem('nst_last_user_id', uid);
+          localStorage.removeItem('nst_is_guest');
 
           if (logActivity) logActivity("LOGIN", "Logged In via Email", completeUser);
           triggerLoginSuccess(completeUser);
@@ -429,9 +433,12 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
             ...raw,
             id: uid,
             uid: uid,
-            displayId: raw.displayId || targetUser.displayId,
+            displayId: raw.displayId || targetUser.displayId || `NST-${uid.slice(0, 6).toUpperCase()}`,
             email: raw.email || "",
             mobile: raw.mobile || "",
+            isGuest: false,
+            isAnonymous: false,
+            provider: raw.provider || 'email',
             securityQuestion: raw.securityQuestion || DEFAULT_QUESTIONS[0],
             securityAnswer: raw.securityAnswer || "",
             profileCompleted: true
@@ -440,6 +447,7 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
            if (!await saveUserToLive(finalUser, { immediate: true })) throw new Error('Account could not be saved to the backend.');
            localStorage.setItem('nst_current_user', JSON.stringify(finalUser));
            localStorage.setItem('nst_last_user_id', uid);
+           localStorage.removeItem('nst_is_guest');
 
           if (logActivity) logActivity("LOGIN", "Logged In via Student ID", finalUser);
           triggerLoginSuccess(finalUser);
@@ -511,6 +519,8 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
         securityQuestion: formData.securityQuestion,
         securityAnswer: cleanAnswer,
         role: 'STUDENT',
+        isGuest: false,
+        isAnonymous: false,
         createdAt: new Date().toISOString(),
         credits: signupCoins,
         streak: 1,
@@ -540,6 +550,7 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
       void saveUserToLive(newStudentUser, { immediate: true });
       localStorage.setItem('nst_current_user', JSON.stringify(newStudentUser));
       localStorage.setItem('nst_last_user_id', uid);
+      localStorage.removeItem('nst_is_guest');
       try {
         localStorage.removeItem('nsta_first_assembly_seen');
         sessionStorage.removeItem('nsta_home_assembly_seen');

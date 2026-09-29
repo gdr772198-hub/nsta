@@ -1497,6 +1497,15 @@ export const StudentDashboard: React.FC<Props> = ({
     : (settings?.htmlDownloadLimitFree ?? 2);
   const _dlHtmlLeft  = Math.max(0, (_dlHtmlLimit + _lvlBonus.dlBonus) - _dlHtmlUsed);
 
+  // Derived guest flag: Only anonymous guests without any authenticated account (email, google, or registered ID)
+  const isGuestUser = Boolean(
+    (user?.isGuest || user?.isAnonymous || String(user?.id || '').startsWith('guest_')) &&
+    !user?.email &&
+    user?.provider !== 'email' &&
+    user?.provider !== 'google' &&
+    !(user?.displayId && String(user.displayId).startsWith('NSTA-') && user?.name && user.name !== 'Guest Student')
+  );
+
   /**
    * Wraps any download call with daily limit enforcement.
    * Returns false if blocked (limit hit), true if allowed.
@@ -4141,7 +4150,7 @@ export const StudentDashboard: React.FC<Props> = ({
     description?: string,
     perks?: string[]
   ) => {
-    if (user?.isGuest || user?.isAnonymous) {
+    if (isGuestUser) {
       setGuestRestrictionModal({
         isOpen: true,
         featureName,
@@ -14025,23 +14034,37 @@ export const StudentDashboard: React.FC<Props> = ({
                             <div className="min-w-0">
                               <span className="text-[7.5px] font-bold uppercase tracking-wider block" style={{ color: _pTxtSubColor }}>Roll ID</span>
                               <span className="text-[10px] font-mono font-bold truncate block tracking-wider" style={{ color: _light ? _pTxtColor : '#fde047' }}>
-                                {user.displayId || user.id}
+                                {isGuestUser ? 'Not Assigned' : (user.displayId || user.id)}
                               </span>
                             </div>
                           </div>
-                          <button
-                            onClick={() => { try { navigator.clipboard.writeText(user.displayId || user.id); showAlert('Student ID copied!', 'SUCCESS'); } catch {} }}
-                            className="shrink-0 px-2 py-0.5 rounded-md text-[8.5px] font-bold active:scale-95 transition-all cursor-pointer flex items-center gap-1"
-                            style={{
-                              background: _light ? `${tierTheme.primary}14` : 'rgba(234, 179, 8, 0.15)',
-                              border: _light ? `1px solid ${tierTheme.primary}30` : '1px solid rgba(234, 179, 8, 0.35)',
-                              color: _light ? tierTheme.primary : '#fde047',
-                            }}
-                            title="Copy Student ID"
-                          >
-                            <Copy size={8.5} />
-                            <span>Copy</span>
-                          </button>
+                          {isGuestUser ? (
+                            <button
+                              onClick={() => setGuestRestrictionModal({
+                                isOpen: true,
+                                featureName: 'Student Roll ID & UID',
+                                customMessage: 'Guest account me Roll ID generate nahi hota hai. Apne account ko Google se bind karein taaki aapko official Student Roll ID mil sake aur progress safe rahe!'
+                              })}
+                              className="shrink-0 px-2 py-0.5 rounded-md text-[8.5px] font-bold active:scale-95 transition-all cursor-pointer flex items-center gap-1 bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                              title="Google se Bind karein"
+                            >
+                              <span>Bind Google</span>
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => { try { navigator.clipboard.writeText(user.displayId || user.id); showAlert('Student ID copied!', 'SUCCESS'); } catch {} }}
+                              className="shrink-0 px-2 py-0.5 rounded-md text-[8.5px] font-bold active:scale-95 transition-all cursor-pointer flex items-center gap-1"
+                              style={{
+                                background: _light ? `${tierTheme.primary}14` : 'rgba(234, 179, 8, 0.15)',
+                                border: _light ? `1px solid ${tierTheme.primary}30` : '1px solid rgba(234, 179, 8, 0.35)',
+                                color: _light ? tierTheme.primary : '#fde047',
+                              }}
+                              title="Copy Student ID"
+                            >
+                              <Copy size={8.5} />
+                              <span>Copy</span>
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -14675,7 +14698,7 @@ export const StudentDashboard: React.FC<Props> = ({
           </div>
 
           {/* ── GUEST MODE BANNER: BIND WITH GOOGLE ── */}
-          {(user?.isGuest || user?.isAnonymous) && (
+          {isGuestUser && (
             <div className="mx-3 mb-3 p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/20 via-orange-500/15 to-amber-500/20 border border-amber-500/40 shadow-lg text-left relative overflow-hidden">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-amber-500/25 border border-amber-500/50 flex items-center justify-center text-xl shrink-0">
@@ -32489,7 +32512,7 @@ Explanation: Yahan explanation...`}</p>
           perks={premiumUpgradeModal.perks}
           onUpgrade={() => {
             setPremiumUpgradeModal(null);
-            if (user?.isGuest || user?.isAnonymous) {
+            if (isGuestUser) {
               setGuestRestrictionModal({
                 isOpen: true,
                 featureName: premiumUpgradeModal.featureName || 'VIP Subscription',

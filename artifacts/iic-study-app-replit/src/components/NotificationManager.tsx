@@ -143,36 +143,34 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
 };
 
 const FCM_SERVICE_WORKER_PATH = '/firebase-messaging-sw.js';
-const FCM_SERVICE_WORKER_SCOPE = '/firebase-messaging/';
 
 const getFcmServiceWorkerRegistration = async (): Promise<ServiceWorkerRegistration> => {
-  // Keep FCM on its own scope. Reusing the Workbox PWA registration can leave
-  // getToken attached to the wrong PushSubscription after a PWA update, which
-  // makes foreground alerts appear to work while closed-app delivery stops.
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
+    throw new Error('ServiceWorker not supported in this environment');
+  }
+
   const registrations = await navigator.serviceWorker.getRegistrations();
-  const scopedRegistration = registrations.find(
-    (registration) =>
-      registration.scope.endsWith(FCM_SERVICE_WORKER_SCOPE) ||
-      registration.active?.scriptURL.endsWith(FCM_SERVICE_WORKER_PATH),
+  
+  // Prefer the primary active root-scoped service worker (PWA worker),
+  // which browser OS push daemons reliably wake up even when the device is locked.
+  const activeRoot = registrations.find(
+    (r) => (r.active && (r.scope === window.location.origin + '/' || r.scope.endsWith('/')))
   );
-  if (scopedRegistration) return scopedRegistration;
+  if (activeRoot) return activeRoot;
 
-  // Remove the legacy root-scoped FCM registration if an older build created
-  // one. The root scope belongs to the PWA worker.
-  await Promise.all(
-    registrations
-      .filter(
-        (registration) =>
-          registration.active?.scriptURL.endsWith(FCM_SERVICE_WORKER_PATH) &&
-          !registration.scope.endsWith(FCM_SERVICE_WORKER_SCOPE),
-      )
-      .map((registration) => registration.unregister()),
-  );
+  if (registrations.length > 0 && registrations[0].active) {
+    return registrations[0];
+  }
 
-  return navigator.serviceWorker.register(FCM_SERVICE_WORKER_PATH, {
-    scope: FCM_SERVICE_WORKER_SCOPE,
-    updateViaCache: 'none',
-  });
+  // Fallback to registering firebase-messaging-sw.js
+  try {
+    return await navigator.serviceWorker.register(FCM_SERVICE_WORKER_PATH, {
+      updateViaCache: 'none',
+    });
+  } catch (err) {
+    console.warn('[NotificationManager] Register fallback warning:', err);
+    return await navigator.serviceWorker.ready;
+  }
 };
 
 export const subscribeUserToPush = async (userId?: string): Promise<string | null> => {

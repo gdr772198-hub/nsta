@@ -45,6 +45,7 @@ export const bindGuestWithGoogle = async (currentUser: User): Promise<User> => {
     ...(existingProfile || {}),
     id: googleUser.uid,
     uid: googleUser.uid,
+    displayId: existingProfile?.displayId || currentUser.displayId || `NST-${googleUser.uid.slice(0, 6).toUpperCase()}`,
     name: googleUser.displayName || existingProfile?.name || (currentUser.name !== 'Guest Student' ? currentUser.name : 'Student'),
     email: googleUser.email || existingProfile?.email || currentUser.email || '',
     profilePhoto: googleUser.photoURL || existingProfile?.profilePhoto || currentUser.profilePhoto,

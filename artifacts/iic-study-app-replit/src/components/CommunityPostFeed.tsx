@@ -132,7 +132,7 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
   onShowComposerChange,
   onUserUpdate,
 }) => {
-  const isGuestUser = !!(user?.isGuest || user?.isAnonymous || user?.role === 'GUEST');
+  const isGuestUser = !user?.email && user?.provider !== 'email' && user?.provider !== 'google' && !!(user?.isGuest || user?.isAnonymous || user?.role === 'GUEST');
   const [guestModalOpen, setGuestModalOpen] = useState(false);
   const [guestModalContext, setGuestModalContext] = useState('Community Interaction');
   const { appTheme } = useAppTheme();
