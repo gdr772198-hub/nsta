@@ -1,0 +1,11 @@
+{
+  "name": "Remix Remix Remix N NstA2",
+  "description": "Imported from GitHub: gdr772198-hub/nsta",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

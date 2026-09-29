@@ -1,10 +1,10 @@
 import { Router, type IRouter } from "express";
-import healthRouter from "./health.js";
-import notificationsRouter from "./notifications.js";
+import healthRouter from "./health";
+import telegramRouter from "./telegram";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
-router.use(notificationsRouter);
+router.use("/telegram", telegramRouter);
 
 export default router;

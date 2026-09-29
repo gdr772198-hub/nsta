@@ -53,7 +53,6 @@ import { uploadImageToImgBB, compressImage } from '../services/imgbbService';
 import { uploadToCloudinary, getOptimizedVideoUrl } from '../services/cloudinaryService';
 import { ImageCropper } from './ImageCropper';
 import { GuestRestrictionModal } from './GuestRestrictionModal';
-import { notifyCommunityUpdateInBackground } from './NotificationManager';
 import { User } from '../types';
 import { useAppTheme } from '../utils/themeContext';
 import { getLevelInfo } from '../utils/levelSystem';
@@ -695,16 +694,6 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
       }
 
       await set(newCommentRef, commentData);
-
-      if (targetPost?.userId && targetPost.userId !== user.id) {
-        void notifyCommunityUpdateInBackground({
-          recipientIds: [targetPost.userId],
-          senderId: user.id,
-          senderName: user.name || 'NSTA Student',
-          body: `${user.name || 'Kisi student'} ne aapke community post par comment kiya hai.`,
-          url: '/?open=community',
-        });
-      }
 
       // Clear input & image preview
       setCommentInputs((prev) => ({ ...prev, [postId]: '' }));

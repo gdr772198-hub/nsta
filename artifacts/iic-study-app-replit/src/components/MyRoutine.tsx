@@ -43,7 +43,6 @@ import { DailyEventPage, getRevisionSubjectTheme } from './DailyEventPage';
 import { useAppTheme } from '../utils/themeContext';
 import { pedroSpeak, stopPedroVoice } from '../utils/pedroVoiceManager';
 import { getRoutineSpeechSummary } from './PedroAssistant';
-import { notifyStudyProgressMilestone } from './NotificationManager';
 import { SevenDayRoutineModal } from './SevenDayRoutineModal';
 import { SmartRoutineWizard } from './SmartRoutineWizard';
 import { getSlotUnlockStatus } from '../utils/routineStorage';
@@ -2714,12 +2713,6 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, activeBoard, activeC
       return next;
     });
     const note = allNotes.find(n => n.id === lessonId);
-    void notifyStudyProgressMilestone({
-      recipientIds: [user?.id].filter(Boolean),
-      senderId: user?.id,
-      milestone: 100,
-      lessonTitle: (note as any)?.lessonTitle || lessonId,
-    });
 
     // ── Schedule completed lesson for Revision Hub review (due tomorrow) ──
     try {

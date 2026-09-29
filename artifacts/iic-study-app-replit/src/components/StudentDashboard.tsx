@@ -88,8 +88,6 @@ import { SubscriptionEngine } from "../utils/engines/subscriptionEngine";
 import { PedroEngine } from "../utils/engines/pedroEngine";
 import { recalculateSubscriptionStatus } from "../utils/subscriptionUtils";
 import { RewardEngine } from "../utils/engines/rewardEngine";
-import { NotificationSettings } from "./NotificationSettings";
-import { notifyStudyProgressMilestone } from "./NotificationManager";
 import {
   isCreditSubActive,
   canClaimCreditSubToday,
@@ -5625,19 +5623,6 @@ export const StudentDashboard: React.FC<Props> = ({
       const leftSec = Math.max(0, dynamicReqSec - totalSecs);
 
       setReadingProgressInfo({ pct, leftSec, reqSec: dynamicReqSec });
-
-      if (pct >= 50 && user?.id) {
-        const milestoneKey = `nst_progress_50_${user.id}_${_lid}_${_pi}`;
-        if (!localStorage.getItem(milestoneKey)) {
-          localStorage.setItem(milestoneKey, new Date().toISOString());
-          void notifyStudyProgressMilestone({
-            recipientIds: [user.id],
-            senderId: user.id,
-            milestone: 50,
-            lessonTitle: _lid,
-          });
-        }
-      }
 
       if (totalSecs >= dynamicReqSec) {
         markRoutinePageRead(_lid, _pi);
@@ -16886,7 +16871,7 @@ export const StudentDashboard: React.FC<Props> = ({
             </button>
           </div>
 
-          {/* RIGHT: event + streak + mail + notifications + 5 connection dots + 3-dot menu */}
+          {/* RIGHT: event + streak + mail + 5 connection dots + 3-dot menu */}
           <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
             {/* Event badge — shows BEFORE streak; auto-hides when no active/upcoming events */}
             {(() => {
@@ -17505,8 +17490,23 @@ export const StudentDashboard: React.FC<Props> = ({
               );
             })()}
 
-            {/* Notification settings — moved into the top bar */}
-            <NotificationSettings userId={user.id} placement="topbar" />
+            {/* Nsta Messenger Direct Button with Friend Request Badge */}
+            <button
+              id="topbar-messenger-btn"
+              onClick={() => {
+                hapticMedium();
+                setShowWhatsAppChatModal(true);
+              }}
+              className="relative p-1.5 rounded-xl transition-all text-white hover:bg-white/10 active:scale-95 shrink-0"
+              title="Nsta Messenger & Friend Requests"
+            >
+              <MessageSquare size={17} className="text-emerald-300 hover:text-white transition-colors" />
+              {incomingFriendRequestsCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-1 rounded-full bg-emerald-500 text-white text-[9px] font-black flex items-center justify-center shadow animate-pulse border border-white/20">
+                  {incomingFriendRequestsCount > 9 ? '9+' : incomingFriendRequestsCount}
+                </span>
+              )}
+            </button>
 
             {/* My Offline Downloads Hub button */}
             <button
