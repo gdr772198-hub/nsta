@@ -531,6 +531,20 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       selectedContact?.mobile,
     ],
   );
+  const selectedContactChatIds = React.useMemo(
+    () => Array.from(new Set([
+      selectedContact?.id,
+      selectedContact?.uid,
+      selectedContact?.displayId,
+      selectedContact?.mobile,
+    ].filter((value): value is string => Boolean(value && value.trim())))),
+    [
+      selectedContact?.id,
+      selectedContact?.uid,
+      selectedContact?.displayId,
+      selectedContact?.mobile,
+    ],
+  );
 
   // Synchronize activeTab if initialTab changes
   useEffect(() => {
@@ -2312,8 +2326,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
             setSentRequests((prev) => prev.filter((r) => !isSameUser(r.toId, selectedContact.id)));
           }
         },
-        allMyUserIds,
-        selectedContactPushIds,
+        messageOwnerIds,
+        selectedContactChatIds,
       );
     } else if (selectedGroup && effectiveUserId) {
       const grpId = selectedGroup.id;
@@ -2334,7 +2348,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     return () => {
       if (unsub) unsub();
     };
-  }, [selectedContact, selectedGroup, effectiveUserId, allMyUserIdsKey, selectedContactPushIds]);
+  }, [selectedContact, selectedGroup, effectiveUserId, messageOwnerIds, selectedContactChatIds]);
 
   // Handle exiting chat (Back button or modal close): Clear Snapchat vanish messages and lock chat if enabled
   const handleExitChat = () => {
@@ -3203,7 +3217,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
         {
           ...(currentReply ? { replyTo: currentReply } : {}),
           recipientIds: selectedContactPushIds,
-          senderIds: allMyUserIds,
+          senderIds: messageOwnerIds,
         }
       );
     } else if (selectedGroup) {

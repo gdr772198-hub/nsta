@@ -413,6 +413,14 @@ export const getDirectConversationId = (uid1: string, uid2: string): string => {
   return [sanitizeRtdbKey(uid1), sanitizeRtdbKey(uid2)].sort().join('_');
 };
 
+// Keep realtime subscriptions bounded. Imported profiles can expose many
+// aliases, but the stable account ID, profile UID, and auth UID are enough to
+// bridge the known document/auth identity mismatch without opening dozens of
+// RTDB listeners for one chat.
+const MAX_DIRECT_ID_ALIASES = 3;
+const getDirectIdentityIds = (primary: string, aliases: string[] = []): string[] =>
+  Array.from(new Set([primary, ...aliases].filter(Boolean))).slice(0, MAX_DIRECT_ID_ALIASES);
+
 // Distinct colors for group member name highlights (WhatsApp style)
 const NAME_COLORS = [
   '#0284c7', '#059669', '#d97706', '#dc2626', '#7c3aed',
@@ -489,8 +497,8 @@ export const sendPrivateMessage = async (
   // imported data (Firestore document id, auth uid, email/display id). Write
   // to every known sender/recipient pair so both clients resolve the same
   // conversation even when they use different identity fields.
-  const senderIds = Array.from(new Set([myUserId, ...(extra?.senderIds || [])].filter(Boolean)));
-  const recipientIds = Array.from(new Set([peerUserId, ...(extra?.recipientIds || [])].filter(Boolean)));
+  const senderIds = getDirectIdentityIds(myUserId, extra?.senderIds);
+  const recipientIds = getDirectIdentityIds(peerUserId, extra?.recipientIds);
   const conversationIds = Array.from(
     new Set(senderIds.flatMap((senderId) =>
       recipientIds.map((recipientId) => getDirectConversationId(senderId, recipientId))
@@ -605,8 +613,8 @@ export const subscribeToDirectMessages = (
   myUserIds: string[] = [],
   peerUserIds: string[] = []
 ): (() => void) => {
-  const myIds = Array.from(new Set([myUserId, ...myUserIds].filter(Boolean)));
-  const peerIds = Array.from(new Set([peerUserId, ...peerUserIds].filter(Boolean)));
+  const myIds = getDirectIdentityIds(myUserId, myUserIds);
+  const peerIds = getDirectIdentityIds(peerUserId, peerUserIds);
   const conversationIds = Array.from(
     new Set(myIds.flatMap((myId) =>
       peerIds.map((peerId) => getDirectConversationId(myId, peerId))
@@ -629,6 +637,15 @@ export const subscribeToDirectMessages = (
   }
 
   const remoteBuckets = new Map<string, ChatMessage[]>();
+  let mergeScheduled = false;
+  const scheduleMergeAndEmit = () => {
+    if (mergeScheduled) return;
+    mergeScheduled = true;
+    queueMicrotask(() => {
+      mergeScheduled = false;
+      mergeAndEmit();
+    });
+  };
 
   // Merging logic that prevents messages from disappearing while strictly filtering out deleted messages
   const mergeAndEmit = () => {
@@ -685,39 +702,39 @@ export const subscribeToDirectMessages = (
           conversationId,
           val && typeof val === 'object' ? Object.values(val) as ChatMessage[] : []
         );
-        mergeAndEmit();
+        scheduleMergeAndEmit();
       },
       (error) => {
         console.warn('[WhatsApp] RTDB listen error, using local:', error);
         remoteBuckets.set(conversationId, []);
-        mergeAndEmit();
+        scheduleMergeAndEmit();
       }
     );
     unsubs.push(unsubRtdb);
 
-    // Deleted-for-everyone registry must use the same aliases as the message
-    // room, otherwise a delete in one identity-pair room can reappear in the
-    // other room.
-    const deletedRef = ref(rtdb, `chat/whatsapp_direct_deleted/${conversationId}`);
-    const unsubDeleted = onValue(
-      deletedRef,
-      (snapshot) => {
-        const val = snapshot.val();
-        if (val && typeof val === 'object') {
-          let hasNew = false;
-          Object.keys(val).forEach((id) => {
-            if (!isMessageDeletedForEveryone(id)) {
-              addMessageToDeletedForEveryone(id);
-              hasNew = true;
-            }
-          });
-          if (hasNew) mergeAndEmit();
-        }
-      },
-      () => {}
-    );
-    unsubs.push(unsubDeleted);
   });
+
+  // Deletion metadata stays on the primary room. Avoid multiplying this
+  // secondary listener for every identity alias.
+  const deletedRef = ref(rtdb, `chat/whatsapp_direct_deleted/${conversationIds[0]}`);
+  const unsubDeleted = onValue(
+    deletedRef,
+    (snapshot) => {
+      const val = snapshot.val();
+      if (val && typeof val === 'object') {
+        let hasNew = false;
+        Object.keys(val).forEach((id) => {
+          if (!isMessageDeletedForEveryone(id)) {
+            addMessageToDeletedForEveryone(id);
+            hasNew = true;
+          }
+        });
+        if (hasNew) scheduleMergeAndEmit();
+      }
+    },
+    () => {}
+  );
+  unsubs.push(unsubDeleted);
 
   // Firestore listener disabled to ensure 0 Firestore read quota consumption
   return () => {
