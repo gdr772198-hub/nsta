@@ -1,6 +1,0 @@
-{
-  "buildCommand": "npm run build --workspace=@workspace/iic-study-app-replit",
-  "outputDirectory": "artifacts/iic-study-app-replit/dist/public",
-  "installCommand": "npm install --legacy-peer-deps",
-  "framework": "vite"
-}
