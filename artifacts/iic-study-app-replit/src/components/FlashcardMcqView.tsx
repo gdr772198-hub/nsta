@@ -4,8 +4,10 @@ import {
   ArrowLeft, ChevronRight, ChevronLeft, RotateCw, Volume2, Square, Shuffle,
   Lightbulb, Edit2, X, MoreVertical, RefreshCw, BookOpen, Tv, CheckCircle,
   Maximize2, Minimize2, LayoutGrid, Users, Radio, Sun, Moon, Scroll,
-  Timer, VolumeX, Eye, EyeOff, Slash, HelpCircle, Sparkles, Award, Bookmark, Scissors
+  Timer, VolumeX, Eye, EyeOff, Slash, HelpCircle, Sparkles, Award, Bookmark, Scissors, PenTool,
+  Plus, Minus, Presentation
 } from 'lucide-react';
+import { AdminSolveCanvas } from './AdminSolveCanvas';
 import type { MCQItem } from '../types';
 import type { User, SystemSettings } from '../types';
 import { speakText, stopSpeech } from '../utils/textToSpeech';
@@ -183,6 +185,36 @@ export const FlashcardMcqView: React.FC<Props> = ({
   const [projectorSelections, setProjectorSelections] = useState<Record<number, number>>({});
   const [projectorSkipped, setProjectorSkipped] = useState<Set<number>>(new Set());
   const [projectorNavigatorOpen, setProjectorNavigatorOpen] = useState(false);
+  // Admin Board • Blank Space & Ratio Controls (default: 25% = 5/20)
+  const [projectorAdminBoardOpen, setProjectorAdminBoardOpen] = useState(false);
+  const [projectorBoardRatioPct, setProjectorBoardRatioPct] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('nsta_projector_board_ratio_pct');
+      return saved ? Math.min(90, Math.max(15, Number(saved))) : 25;
+    } catch {
+      return 25;
+    }
+  });
+  const updateBoardRatio = useCallback((pct: number) => {
+    const clamped = Math.min(90, Math.max(15, Math.round(pct)));
+    setProjectorBoardRatioPct(clamped);
+    try { localStorage.setItem('nsta_projector_board_ratio_pct', String(clamped)); } catch {}
+  }, []);
+
+  // Question Grid Ratio Controls (default: 25% = 5/20)
+  const [projectorGridRatioPct, setProjectorGridRatioPct] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('nsta_projector_grid_ratio_pct');
+      return saved ? Math.min(90, Math.max(15, Number(saved))) : 25;
+    } catch {
+      return 25;
+    }
+  });
+  const updateGridRatio = useCallback((pct: number) => {
+    const clamped = Math.min(90, Math.max(15, Math.round(pct)));
+    setProjectorGridRatioPct(clamped);
+    try { localStorage.setItem('nsta_projector_grid_ratio_pct', String(clamped)); } catch {}
+  }, []);
   // Review screen — shown after Submit
   const [projectorShowReview, setProjectorShowReview] = useState(false);
 
@@ -769,6 +801,22 @@ export const FlashcardMcqView: React.FC<Props> = ({
       } else if (e.key === 'm' || e.key === 'M') {
         e.preventDefault();
         handleToggleSound();
+      } else if (e.key === 'g' || e.key === 'G') {
+        e.preventDefault();
+        setProjectorNavigatorOpen(prev => {
+          const next = !prev;
+          if (next) setProjectorAdminBoardOpen(false);
+          return next;
+        });
+        playSoundClick();
+      } else if (e.key === 'b' || e.key === 'B') {
+        e.preventDefault();
+        setProjectorAdminBoardOpen(prev => {
+          const next = !prev;
+          if (next) setProjectorNavigatorOpen(false);
+          return next;
+        });
+        playSoundClick();
       } else if (e.key === 's' || e.key === 'S') {
         e.preventDefault();
         if (projectorQIndex < questions.length - 1) {
@@ -1717,12 +1765,51 @@ export const FlashcardMcqView: React.FC<Props> = ({
 
                 {/* Question Navigator (9-dot grid) */}
                 <button
-                  onClick={() => { setProjectorNavigatorOpen(open => !open); playSoundClick(); }}
-                  title="Question Palette & Navigator"
+                  onClick={() => {
+                    setProjectorNavigatorOpen(open => {
+                      const next = !open;
+                      if (next) setProjectorAdminBoardOpen(false);
+                      return next;
+                    });
+                    playSoundClick();
+                  }}
+                  title={projectorNavigatorOpen ? "Close Question Grid" : `Question Palette & Switcher (${Math.round((projectorGridRatioPct / 100) * 20)}/20 Left)`}
                   aria-label="Question Palette"
                   style={{ flexShrink:0, width:36, height:36, background: projectorNavigatorOpen ? '#6366f1' : pillBg, border: `1px solid ${projectorNavigatorOpen ? '#4f46e5' : pillBorder}`, borderRadius:12, color: projectorNavigatorOpen ? '#ffffff' : pillText, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}
                 >
                   <LayoutGrid size={16} />
+                </button>
+
+                {/* White Board (Blank Board with Custom Ratio) */}
+                <button
+                  onClick={() => {
+                    setProjectorAdminBoardOpen(open => {
+                      const next = !open;
+                      if (next) setProjectorNavigatorOpen(false);
+                      return next;
+                    });
+                    playSoundClick();
+                  }}
+                  title={projectorAdminBoardOpen ? "Close White Board" : `White Board • Blank Space (${Math.round((projectorBoardRatioPct / 100) * 20)}/20 Right)`}
+                  aria-label="White Board"
+                  style={{
+                    flexShrink: 0,
+                    height: 36,
+                    padding: '0 10px',
+                    background: projectorAdminBoardOpen ? (isThemeDark ? '#065f46' : '#dcfce7') : pillBg,
+                    border: `1px solid ${projectorAdminBoardOpen ? '#10b981' : pillBorder}`,
+                    borderRadius: 12,
+                    color: projectorAdminBoardOpen ? '#10b981' : pillText,
+                    fontSize: 11,
+                    fontWeight: 900,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 5,
+                  }}
+                >
+                  <Presentation size={14} />
+                  <span className="hidden sm:inline">White Board ({Math.round((projectorBoardRatioPct / 100) * 20)}/20)</span>
                 </button>
 
                 {/* Keyboard Shortcuts Help Button */}
@@ -1764,256 +1851,677 @@ export const FlashcardMcqView: React.FC<Props> = ({
               </div>
             )}
 
-            {/* Scrollable Content: MCQ Practice Card scaled & themed (18/20 in rotated mode) */}
+            {/* ── Main Viewport Area: 20-Grid Restructured Layout ── */}
             <div style={{
-              flex: isEffectiveLandscape ? '0 0 90vh' : 1,
-              height: isEffectiveLandscape ? '90vh' : undefined,
-              overflowY: 'auto',
-              padding: isEffectiveLandscape ? '4px 10px' : projectorFocused ? '24px' : '20px 24px 16px',
-              minHeight: 0
+              flex: 1,
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'row',
+              overflow: 'hidden',
+              position: 'relative',
+              width: '100%',
             }}>
-              <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-                {projectorNavigatorOpen && (
-                  <div style={projectorFocused
-                    ? { position:'absolute', top:58, right:12, zIndex:40, width:'min(380px, calc(100% - 24px))', padding:12, background:headerBg, border:`1px solid ${pillBorder}`, borderRadius:16, boxShadow:'0 16px 40px rgba(0,0,0,0.3)' }
-                    : { marginBottom:16 }}>
-                    <McqQuestionNavigator
-                      total={total}
-                      currentIndex={projectorQIndex}
-                      answers={projectorSelections}
-                      skipped={projectorSkipped}
-                      bookmarked={projectorBookmarked}
-                      themeMode={projectorTheme}
-                      onJump={(index) => {
-                        setProjectorQIndex(index);
-                        setProjectorReveal(false);
-                        setProjectorSelected(projectorSelections[index] ?? null);
-                        setProjectorNavigatorOpen(false);
-                        playSoundClick();
+              {/* MODE 1: QUESTION SWITCH GRID (Configurable Ratio, default 5/20) */}
+              {projectorNavigatorOpen && (
+                <>
+                  <div
+                    style={{
+                      width: isEffectiveLandscape ? `${projectorGridRatioPct}%` : '100%',
+                      minWidth: isEffectiveLandscape ? 220 : undefined,
+                      height: '100%',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      borderRight: `2px solid ${pillBorder}`,
+                      background: isThemeDark ? '#090d16' : isThemeSepia ? '#fef3c7' : '#f8fafc',
+                      flexShrink: 0,
+                      overflow: 'hidden',
+                      zIndex: 25,
+                    }}
+                  >
+                    {/* Grid Header with Ratio Controls */}
+                    <div
+                      style={{
+                        padding: '8px 12px',
+                        borderBottom: `1px solid ${pillBorder}`,
+                        background: headerBg,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        flexShrink: 0,
+                        gap: 6,
+                        flexWrap: 'wrap',
                       }}
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <LayoutGrid size={15} className="text-indigo-500 shrink-0" />
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 900, color: headerText, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span>Grid</span>
+                            <span
+                              className="px-1.5 py-0.5 rounded text-[9px] font-black"
+                              style={{ background: isThemeDark ? 'rgba(99,102,241,0.2)' : '#e0e7ff', color: isThemeDark ? '#a5b4fc' : '#4338ca' }}
+                              title={`Grid Ratio: ${Math.round((projectorGridRatioPct / 100) * 20)}/20 (${projectorGridRatioPct}%)`}
+                            >
+                              {Math.round((projectorGridRatioPct / 100) * 20)}/20
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Grid Ratio Quick Controls */}
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => updateGridRatio(projectorGridRatioPct - 5)}
+                          disabled={projectorGridRatioPct <= 15}
+                          title="Grid Chhota Karo (Decrease Size)"
+                          className={`w-5 h-5 rounded flex items-center justify-center border text-[10px] font-black transition-colors ${
+                            projectorGridRatioPct <= 15
+                              ? 'opacity-40 cursor-not-allowed'
+                              : isThemeDark
+                                ? 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          <Minus size={10} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateGridRatio(25)}
+                          title="5/20 Ratio (25%)"
+                          className={`px-1.5 py-0.5 rounded text-[9px] font-black border transition-colors ${
+                            projectorGridRatioPct === 25
+                              ? 'bg-indigo-600 text-white border-indigo-500'
+                              : isThemeDark
+                                ? 'bg-slate-800 text-slate-400 border-slate-700'
+                                : 'bg-white text-slate-600 border-slate-200'
+                          }`}
+                        >
+                          5/20
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateGridRatio(50)}
+                          title="10/20 Ratio (50% Split)"
+                          className={`px-1.5 py-0.5 rounded text-[9px] font-black border transition-colors ${
+                            projectorGridRatioPct === 50
+                              ? 'bg-indigo-600 text-white border-indigo-500'
+                              : isThemeDark
+                                ? 'bg-slate-800 text-slate-400 border-slate-700'
+                                : 'bg-white text-slate-600 border-slate-200'
+                          }`}
+                        >
+                          10/20
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateGridRatio(projectorGridRatioPct + 5)}
+                          disabled={projectorGridRatioPct >= 85}
+                          title="Grid Bada Karo (Increase Size)"
+                          className={`w-5 h-5 rounded flex items-center justify-center border text-[10px] font-black transition-colors ${
+                            projectorGridRatioPct >= 85
+                              ? 'opacity-40 cursor-not-allowed'
+                              : isThemeDark
+                                ? 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          <Plus size={10} />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setProjectorNavigatorOpen(false)}
+                          style={{
+                            padding: 4,
+                            borderRadius: 6,
+                            border: `1px solid ${pillBorder}`,
+                            background: pillBg,
+                            color: pillText,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                          title="Close Question Grid"
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Grid Numbers: Click auto-switches and closes grid */}
+                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 12 }}>
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns:
+                            projectorGridRatioPct >= 65
+                              ? 'repeat(auto-fill, minmax(72px, 1fr))'
+                              : projectorGridRatioPct >= 42
+                                ? 'repeat(auto-fill, minmax(58px, 1fr))'
+                                : 'repeat(4, 1fr)',
+                          gap: 8,
+                        }}
+                      >
+                      {questions.map((_, idx) => {
+                        const isCurrent = idx === projectorQIndex;
+                        const isAns = projectorSelections[idx] !== undefined;
+                        const isSkip = projectorSkipped.has(idx);
+                        const isMarked = projectorBookmarked.has(idx);
+
+                        let btnBg = pillBg;
+                        let btnBorder = pillBorder;
+                        let btnColor = pillText;
+
+                        if (isCurrent) {
+                          btnBg = '#6366f1';
+                          btnBorder = '#4f46e5';
+                          btnColor = '#ffffff';
+                        } else if (isAns) {
+                          btnBg = isThemeDark ? '#064e3b' : '#dcfce7';
+                          btnBorder = '#10b981';
+                          btnColor = isThemeDark ? '#34d399' : '#15803d';
+                        } else if (isSkip) {
+                          btnBg = isThemeDark ? '#451a03' : '#fef3c7';
+                          btnBorder = '#f59e0b';
+                          btnColor = isThemeDark ? '#fbbf24' : '#b45309';
+                        } else if (isMarked) {
+                          btnBg = isThemeDark ? '#3b0764' : '#f3e8ff';
+                          btnBorder = '#a855f7';
+                          btnColor = isThemeDark ? '#c084fc' : '#7e22ce';
+                        }
+
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => {
+                              setProjectorQIndex(idx);
+                              setProjectorReveal(false);
+                              setProjectorSelected(projectorSelections[idx] ?? null);
+                              // User Requirement: "jab user select kar kega question tab greed hat jayega question switch jarne wlaa aur question ab aajayega full screen pe"
+                              setProjectorNavigatorOpen(false);
+                              playSoundClick();
+                            }}
+                            style={{
+                              height: 42,
+                              borderRadius: 12,
+                              border: `2px solid ${btnBorder}`,
+                              background: btnBg,
+                              color: btnColor,
+                              fontWeight: 900,
+                              fontSize: 13,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              transition: 'all 0.15s ease',
+                              boxShadow: isCurrent ? '0 4px 12px rgba(99,102,241,0.35)' : 'none',
+                            }}
+                          >
+                            <span>{idx + 1}</span>
+                            {isAns && <span style={{ fontSize: 9, lineHeight: 1, marginTop: -2 }}>✓</span>}
+                            {isMarked && !isAns && <span style={{ fontSize: 9, lineHeight: 1, marginTop: -2 }}>★</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Status Legend */}
+                    <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 12, background: pillBg, border: `1px solid ${pillBorder}`, fontSize: 11, fontWeight: 700, color: headerSubtext, display: 'flex', flexDirection: 'column', gap: 5 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 99, background: '#6366f1' }} />
+                        <span>Indigo: Abhi ka Sawal</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 99, background: '#10b981' }} />
+                        <span>Green: Answered ({projectorAnswered.size})</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 99, background: '#f59e0b' }} />
+                        <span>Yellow: Skipped ({projectorSkipped.size})</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Resizer Splitter Bar for Question Grid */}
+                {isEffectiveLandscape && (
+                  <div
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      const startX = e.clientX;
+                      const startPct = projectorGridRatioPct;
+                      const totalWidth = window.innerWidth;
+                      const onPointerMove = (me: PointerEvent) => {
+                        const deltaX = me.clientX - startX;
+                        const deltaPct = (deltaX / totalWidth) * 100;
+                        updateGridRatio(startPct + deltaPct);
+                      };
+                      const onPointerUp = () => {
+                        window.removeEventListener('pointermove', onPointerMove);
+                        window.removeEventListener('pointerup', onPointerUp);
+                      };
+                      window.addEventListener('pointermove', onPointerMove);
+                      window.addEventListener('pointerup', onPointerUp);
+                    }}
+                    style={{
+                      width: 12,
+                      cursor: 'col-resize',
+                      zIndex: 35,
+                      background: 'transparent',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      margin: '0 -6px',
+                      touchAction: 'none',
+                      userSelect: 'none',
+                      flexShrink: 0,
+                    }}
+                    className="group"
+                    title="Drag karo Grid ratio resize karne ke liye (Double click for 50/50 split)"
+                    onDoubleClick={() => updateGridRatio(projectorGridRatioPct === 50 ? 25 : 50)}
+                  >
+                    <div
+                      style={{
+                        width: 3,
+                        height: 48,
+                        borderRadius: 99,
+                        background: isThemeDark ? '#334155' : '#cbd5e1',
+                        transition: 'all 0.15s ease',
+                      }}
+                      className="group-hover:bg-indigo-500 group-hover:h-16 group-hover:w-1"
                     />
                   </div>
                 )}
+              </>
+            )}
 
-                <McqPracticeCard
-                  q={pq}
-                  questionNumber={pq.questionNumber ?? projectorQIndex + 1}
-                  selectedOption={projectorCurrentSelection}
-                  answered={projectorCurrentSelection !== null || projectorReveal}
-                  showResult={projectorCurrentSelection !== null || projectorReveal}
-                  variant="projector"
-                  fontSize={projectorFontSize}
-                  themeMode={projectorTheme}
-                  isBookmarked={projectorBookmarked.has(projectorQIndex)}
-                  onToggleBookmark={() => toggleBookmark(projectorQIndex)}
-                  eliminatedOptions={projectorEliminated[projectorQIndex]}
-                  onToggleEliminate={(oi) => toggleEliminateOption(projectorQIndex, oi)}
-                  showEliminateTool={showEliminateTool}
-                  onSelect={handleProjectorOptionSelect}
-                  actions={
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (speaking) {
-                          stopSpeech();
-                          setSpeaking(false);
-                        } else {
-                          const _stmts = (pq.statements || []).join(' ');
-                          const _opts = (pq.options || []).map((o, i) => `Option ${String.fromCharCode(65 + i)}: ${o}`).join('. ');
-                          const text = [pq.question, _stmts, _opts].filter(Boolean).join(' ');
-                          speakText(text, null, 1.0, 'hi-IN', () => setSpeaking(true), () => setSpeaking(false));
-                        }
+              {/* MCQ QUESTION AREA (15/20 when Grid or Admin Board open, 20/20 Fullscreen otherwise) */}
+              <div
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  height: '100%',
+                  overflowY: 'auto',
+                  padding: isEffectiveLandscape ? '12px 18px 24px' : projectorFocused ? '24px' : '20px 24px 24px',
+                  WebkitOverflowScrolling: 'touch',
+                }}
+              >
+                <div style={{ maxWidth: projectorNavigatorOpen || projectorAdminBoardOpen ? '100%' : 1240, margin: '0 auto' }}>
+                  <McqPracticeCard
+                    q={pq}
+                    questionNumber={pq.questionNumber ?? projectorQIndex + 1}
+                    selectedOption={projectorCurrentSelection}
+                    answered={projectorCurrentSelection !== null || projectorReveal}
+                    showResult={projectorCurrentSelection !== null || projectorReveal}
+                    variant="projector"
+                    twoColumnOptions={true}
+                    fontSize={projectorFontSize}
+                    themeMode={projectorTheme}
+                    isBookmarked={projectorBookmarked.has(projectorQIndex)}
+                    onToggleBookmark={() => toggleBookmark(projectorQIndex)}
+                    eliminatedOptions={projectorEliminated[projectorQIndex]}
+                    onToggleEliminate={(oi) => toggleEliminateOption(projectorQIndex, oi)}
+                    showEliminateTool={showEliminateTool}
+                    onSelect={handleProjectorOptionSelect}
+                    actions={
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (speaking) {
+                            stopSpeech();
+                            setSpeaking(false);
+                          } else {
+                            const _stmts = (pq.statements || []).join(' ');
+                            const _opts = (pq.options || []).map((o, i) => `Option ${String.fromCharCode(65 + i)}: ${o}`).join('. ');
+                            const text = [pq.question, _stmts, _opts].filter(Boolean).join(' ');
+                            speakText(text, null, 1.0, 'hi-IN', () => setSpeaking(true), () => setSpeaking(false));
+                          }
+                        }}
+                        title={speaking ? 'Stop Speaking' : 'Read Question Aloud (Hindi/English)'}
+                        aria-label="Read Question Aloud"
+                        style={{
+                          width: 32,
+                          height: 32,
+                          borderRadius: 10,
+                          border: `1px solid ${pillBorder}`,
+                          background: speaking ? '#fee2e2' : pillBg,
+                          color: speaking ? '#ef4444' : pillText,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {speaking ? <Square size={13} style={{ fill: 'currentColor' } as React.CSSProperties} /> : <Volume2 size={15} />}
+                      </button>
+                    }
+                  />
+
+                  {/* Comprehensive Teacher / Student Explanation */}
+                  {(projectorCurrentSelection !== null || projectorReveal) && pq.explanation && (
+                    <div style={{
+                      maxWidth: 1240,
+                      margin: '18px auto 0',
+                      background: isThemeDark ? '#0f1d32' : isThemeSepia ? '#fef3c7' : '#fefce8',
+                      border: `2px solid ${isThemeDark ? '#0284c7' : isThemeSepia ? '#f59e0b' : '#fde047'}`,
+                      borderRadius: 16,
+                      padding: '16px 20px',
+                      fontSize: projectorFontSize,
+                      color: isThemeDark ? '#e0f2fe' : isThemeSepia ? '#78350f' : '#713f12',
+                      lineHeight: 1.55,
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.06)'
+                    }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6, fontWeight:900, color: isThemeDark ? '#38bdf8' : isThemeSepia ? '#b45309' : '#a16207' }}>
+                        <Lightbulb size={18} />
+                        <span>Solution & Explanation:</span>
+                      </div>
+                      <div dangerouslySetInnerHTML={{ __html: formatExplanationHtml(pq.explanation) }} />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* MODE 2: ADMIN BOARD (Configurable Ratio, default 5/20, completely blank space) */}
+              {projectorAdminBoardOpen && (
+                <>
+                  {/* Resizer Splitter Bar for Admin Board */}
+                  {isEffectiveLandscape && (
+                    <div
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        const startX = e.clientX;
+                        const startPct = projectorBoardRatioPct;
+                        const totalWidth = window.innerWidth;
+                        const onPointerMove = (me: PointerEvent) => {
+                          const deltaX = startX - me.clientX; // moving left increases right board width
+                          const deltaPct = (deltaX / totalWidth) * 100;
+                          updateBoardRatio(startPct + deltaPct);
+                        };
+                        const onPointerUp = () => {
+                          window.removeEventListener('pointermove', onPointerMove);
+                          window.removeEventListener('pointerup', onPointerUp);
+                        };
+                        window.addEventListener('pointermove', onPointerMove);
+                        window.addEventListener('pointerup', onPointerUp);
                       }}
-                      title={speaking ? 'Stop Speaking' : 'Read Question Aloud (Hindi/English)'}
-                      aria-label="Read Question Aloud"
                       style={{
-                        width: 32,
-                        height: 32,
-                        borderRadius: 10,
-                        border: `1px solid ${pillBorder}`,
-                        background: speaking ? '#fee2e2' : pillBg,
-                        color: speaking ? '#ef4444' : pillText,
+                        width: 12,
+                        cursor: 'col-resize',
+                        zIndex: 35,
+                        background: 'transparent',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        cursor: 'pointer',
+                        margin: '0 -6px',
+                        touchAction: 'none',
+                        userSelect: 'none',
+                        flexShrink: 0,
                       }}
+                      className="group"
+                      title="Touch ya drag karke White Board size kam / besi karein (Double click for 50/50 split)"
+                      onDoubleClick={() => updateBoardRatio(projectorBoardRatioPct === 50 ? 25 : 50)}
                     >
-                      {speaking ? <Square size={13} style={{ fill: 'currentColor' } as React.CSSProperties} /> : <Volume2 size={15} />}
-                    </button>
-                  }
-                />
-              </div>
+                      <div
+                        style={{
+                          width: 3,
+                          height: 48,
+                          borderRadius: 99,
+                          background: isThemeDark ? '#334155' : '#cbd5e1',
+                          transition: 'all 0.15s ease',
+                        }}
+                        className="group-hover:bg-indigo-500 group-hover:h-16 group-hover:w-1"
+                      />
+                    </div>
+                  )}
 
-              {/* Comprehensive Teacher / Student Explanation */}
-              {(projectorCurrentSelection !== null || projectorReveal) && pq.explanation && (
-                <div style={{
-                  maxWidth: 1200,
-                  margin: '18px auto 0',
-                  background: isThemeDark ? '#0f1d32' : isThemeSepia ? '#fef3c7' : '#fefce8',
-                  border: `2px solid ${isThemeDark ? '#0284c7' : isThemeSepia ? '#f59e0b' : '#fde047'}`,
-                  borderRadius: 16,
-                  padding: '16px 20px',
-                  fontSize: projectorFontSize,
-                  color: isThemeDark ? '#e0f2fe' : isThemeSepia ? '#78350f' : '#713f12',
-                  lineHeight: 1.55,
-                  boxShadow: '0 4px 16px rgba(0,0,0,0.06)'
-                }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6, fontWeight:900, color: isThemeDark ? '#38bdf8' : isThemeSepia ? '#b45309' : '#a16207' }}>
-                    <Lightbulb size={18} />
-                    <span>Solution & Explanation:</span>
+                  <div
+                    style={{
+                      width: isEffectiveLandscape ? `${projectorBoardRatioPct}%` : '100%',
+                      minWidth: isEffectiveLandscape ? 220 : undefined,
+                      height: '100%',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      flexShrink: 0,
+                      overflow: 'hidden',
+                      zIndex: 25,
+                    }}
+                  >
+                    <AdminSolveCanvas
+                      themeMode={projectorTheme}
+                      onClose={() => setProjectorAdminBoardOpen(false)}
+                      boardRatioPct={projectorBoardRatioPct}
+                      onSetBoardRatioPct={updateBoardRatio}
+                    />
                   </div>
-                  <div dangerouslySetInnerHTML={{ __html: formatExplanationHtml(pq.explanation) }} />
-                </div>
+                </>
               )}
             </div>
 
-            {/* Standard Bottom Navigation Bar: 1/20 (5vh in rotated mode, hidden in focus mode) */}
+            {/* ── Fixed Bottom Navigation Bar (Fixed Height 54px, Fixed Padding, Never Jumps) ── */}
             {!projectorFocused && (
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
-                padding: isEffectiveLandscape ? '2px 8px' : '10px 12px',
-                height: isEffectiveLandscape ? '5vh' : undefined,
-                minHeight: isEffectiveLandscape ? 26 : undefined,
-                maxHeight: isEffectiveLandscape ? 38 : undefined,
+                justifyContent: 'space-between',
+                padding: '0 16px',
+                height: 54,
+                minHeight: 54,
+                maxHeight: 54,
                 borderTop: `2px solid ${footerBorder}`,
                 background: footerBg,
                 flexShrink: 0,
-                gap: isEffectiveLandscape ? 4 : 8
+                zIndex: 30,
+                gap: 8,
+                boxShadow: '0 -2px 10px rgba(0,0,0,0.05)',
               }}>
-                {/* Prev Question */}
-                <button
-                  onClick={() => {
-                    const index = Math.max(0, projectorQIndex - 1);
-                    setProjectorQIndex(index);
-                    setProjectorReveal(false);
-                    setProjectorSelected(projectorSelections[index] ?? null);
-                    playSoundClick();
-                  }}
-                  disabled={projectorQIndex === 0}
-                  style={{
-                    height: isEffectiveLandscape ? 'calc(5vh - 4px)' : 42,
-                    minHeight: isEffectiveLandscape ? 22 : undefined,
-                    background: projectorQIndex === 0 ? (isThemeDark ? '#1e293b' : '#e2e8f0') : '#3b82f6',
-                    color: projectorQIndex === 0 ? (isThemeDark ? '#64748b' : '#94a3b8') : '#ffffff',
-                    border: 'none',
-                    borderRadius: 10,
-                    padding: isEffectiveLandscape ? '0 8px' : '0 14px',
-                    fontSize: isEffectiveLandscape ? 11 : 13,
-                    fontWeight: 800,
-                    cursor: projectorQIndex === 0 ? 'not-allowed' : 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 3,
-                    flexShrink: 0
-                  }}
-                >
-                  <ChevronLeft size={isEffectiveLandscape ? 13 : 16} /> Prev
-                </button>
-
-                {/* Skip Question */}
-                <button
-                  onClick={() => {
-                    if (projectorQIndex < total - 1) {
-                      setProjectorSkipped(prev => new Set([...prev, projectorQIndex]));
-                      const index = projectorQIndex + 1;
+                {/* Left Action Buttons */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                  {/* Prev Question */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const index = Math.max(0, projectorQIndex - 1);
                       setProjectorQIndex(index);
                       setProjectorReveal(false);
                       setProjectorSelected(projectorSelections[index] ?? null);
                       playSoundClick();
-                    }
-                  }}
-                  disabled={projectorShowReview || (projectorQIndex === total - 1 && projectorCurrentSelection !== null)}
-                  style={{
-                    height: isEffectiveLandscape ? 'calc(5vh - 4px)' : 42,
-                    minHeight: isEffectiveLandscape ? 22 : undefined,
-                    background: isThemeDark ? '#1e293b' : '#fffbeb',
-                    color: isThemeDark ? '#fbbf24' : '#b45309',
-                    border: `1px solid ${isThemeDark ? '#334155' : '#fcd34d'}`,
-                    borderRadius: 10,
-                    padding: isEffectiveLandscape ? '0 8px' : '0 12px',
-                    fontSize: isEffectiveLandscape ? 11 : 13,
-                    fontWeight: 800,
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0
-                  }}
-                >
-                  Skip
-                </button>
+                    }}
+                    disabled={projectorQIndex === 0}
+                    style={{
+                      height: 38,
+                      background: projectorQIndex === 0 ? (isThemeDark ? '#1e293b' : '#e2e8f0') : '#3b82f6',
+                      color: projectorQIndex === 0 ? (isThemeDark ? '#64748b' : '#94a3b8') : '#ffffff',
+                      border: 'none',
+                      borderRadius: 10,
+                      padding: '0 14px',
+                      fontSize: 12,
+                      fontWeight: 800,
+                      cursor: projectorQIndex === 0 ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 4,
+                      flexShrink: 0,
+                    }}
+                  >
+                    <ChevronLeft size={16} /> Prev
+                  </button>
 
-                {/* Submit Quiz or Progress */}
-                <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {/* Grid Toggle Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProjectorNavigatorOpen(open => {
+                        const next = !open;
+                        if (next) setProjectorAdminBoardOpen(false);
+                        return next;
+                      });
+                      playSoundClick();
+                    }}
+                    title={`Question Grid (${Math.round((projectorGridRatioPct / 100) * 20)}/20 Left)`}
+                    style={{
+                      height: 38,
+                      background: projectorNavigatorOpen ? '#6366f1' : pillBg,
+                      color: projectorNavigatorOpen ? '#ffffff' : pillText,
+                      border: `1px solid ${projectorNavigatorOpen ? '#4f46e5' : pillBorder}`,
+                      borderRadius: 10,
+                      padding: '0 10px',
+                      fontSize: 11,
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      flexShrink: 0,
+                    }}
+                  >
+                    <LayoutGrid size={15} />
+                    <span className="hidden sm:inline">Grid ({Math.round((projectorGridRatioPct / 100) * 20)}/20)</span>
+                  </button>
+
+                  {/* White Board Toggle Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProjectorAdminBoardOpen(open => {
+                        const next = !open;
+                        if (next) setProjectorNavigatorOpen(false);
+                        return next;
+                      });
+                      playSoundClick();
+                    }}
+                    title={`White Board • Blank Space (${Math.round((projectorBoardRatioPct / 100) * 20)}/20 Right)`}
+                    style={{
+                      height: 38,
+                      background: projectorAdminBoardOpen ? (isThemeDark ? '#065f46' : '#dcfce7') : pillBg,
+                      color: projectorAdminBoardOpen ? '#10b981' : pillText,
+                      border: `1px solid ${projectorAdminBoardOpen ? '#10b981' : pillBorder}`,
+                      borderRadius: 10,
+                      padding: '0 10px',
+                      fontSize: 11,
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Presentation size={14} />
+                    <span className="hidden sm:inline">White Board ({Math.round((projectorBoardRatioPct / 100) * 20)}/20)</span>
+                  </button>
+                </div>
+
+                {/* Center: Submit Quiz or Progress */}
+                <div style={{ flex: 1, maxWidth: 360, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   {canSubmit ? (
                     <button
+                      type="button"
                       onClick={submitProjectorQuiz}
                       style={{
                         width: '100%',
-                        height: isEffectiveLandscape ? 'calc(5vh - 4px)' : 42,
-                        minHeight: isEffectiveLandscape ? 22 : undefined,
+                        height: 38,
                         background: 'linear-gradient(135deg,#10b981,#059669)',
                         color: '#ffffff',
                         border: 'none',
                         borderRadius: 10,
-                        padding: isEffectiveLandscape ? '0 8px' : '0 10px',
-                        fontSize: isEffectiveLandscape ? 11 : 13,
+                        padding: '0 12px',
+                        fontSize: 12,
                         fontWeight: 800,
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        gap: 4,
+                        gap: 5,
                         whiteSpace: 'nowrap',
-                        boxShadow: '0 4px 16px rgba(16,185,129,0.35)'
+                        boxShadow: '0 4px 14px rgba(16,185,129,0.3)'
                       }}
                     >
-                      <CheckCircle size={isEffectiveLandscape ? 12 : 15} /> Submit ({projectorAnswered.size}/{total})
+                      <CheckCircle size={15} /> Submit ({projectorAnswered.size}/{total})
                     </button>
                   ) : (
-                    <div style={{ width: '100%', height: isEffectiveLandscape ? 'calc(5vh - 4px)' : 42, display:'flex', flexDirection:'column', alignItems:'center', justifyContent: 'center', gap:2 }}>
-                      <div style={{ width:'100%', height: isEffectiveLandscape ? 4 : 6, background:pillBg, borderRadius:99, overflow:'hidden', border:`1px solid ${pillBorder}` }}>
-                        <div style={{ height:'100%', background:'#3b82f6', borderRadius:99, width:`${(projectorAnswered.size / submitThreshold) * 100}%`, transition:'width 0.3s' }} />
+                    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2 }}>
+                      <div style={{ width: '100%', height: 6, background: pillBg, borderRadius: 99, overflow: 'hidden', border: `1px solid ${pillBorder}` }}>
+                        <div style={{ height: '100%', background: '#3b82f6', borderRadius: 99, width: `${(projectorAnswered.size / submitThreshold) * 100}%`, transition: 'width 0.3s' }} />
                       </div>
-                      <span style={{ fontSize: isEffectiveLandscape ? 9 : 10, fontWeight:700, color:headerSubtext, whiteSpace: 'nowrap' }}>{projectorAnswered.size}/{submitThreshold} to Submit</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: headerSubtext, whiteSpace: 'nowrap' }}>
+                        {projectorAnswered.size}/{submitThreshold} to Submit
+                      </span>
                     </div>
                   )}
                 </div>
 
-                {/* Next Question */}
-                <button
-                  onClick={() => {
-                    const index = Math.min(total - 1, projectorQIndex + 1);
-                    setProjectorQIndex(index);
-                    setProjectorReveal(false);
-                    setProjectorSelected(projectorSelections[index] ?? null);
-                    playSoundClick();
-                  }}
-                  disabled={projectorQIndex === total - 1}
-                  style={{
-                    height: isEffectiveLandscape ? 'calc(5vh - 4px)' : 42,
-                    minHeight: isEffectiveLandscape ? 22 : undefined,
-                    background: projectorQIndex === total - 1 ? (isThemeDark ? '#1e293b' : '#e2e8f0') : '#3b82f6',
-                    color: projectorQIndex === total - 1 ? (isThemeDark ? '#64748b' : '#94a3b8') : '#ffffff',
-                    border: 'none',
-                    borderRadius: 10,
-                    padding: isEffectiveLandscape ? '0 8px' : '0 14px',
-                    fontSize: isEffectiveLandscape ? 11 : 13,
-                    fontWeight: 800,
-                    cursor: projectorQIndex === total - 1 ? 'not-allowed' : 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 3,
-                    flexShrink: 0
-                  }}
-                >
-                  Next <ChevronRight size={isEffectiveLandscape ? 13 : 16} />
-                </button>
+                {/* Right Action Buttons */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                  {/* Skip Question */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (projectorQIndex < total - 1) {
+                        setProjectorSkipped(prev => new Set([...prev, projectorQIndex]));
+                        const index = projectorQIndex + 1;
+                        setProjectorQIndex(index);
+                        setProjectorReveal(false);
+                        setProjectorSelected(projectorSelections[index] ?? null);
+                        playSoundClick();
+                      }
+                    }}
+                    disabled={projectorShowReview || (projectorQIndex === total - 1 && projectorCurrentSelection !== null)}
+                    style={{
+                      height: 38,
+                      background: isThemeDark ? '#1e293b' : '#fffbeb',
+                      color: isThemeDark ? '#fbbf24' : '#b45309',
+                      border: `1px solid ${isThemeDark ? '#334155' : '#fcd34d'}`,
+                      borderRadius: 10,
+                      padding: '0 12px',
+                      fontSize: 12,
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                    }}
+                  >
+                    Skip
+                  </button>
+
+                  {/* Next Question */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const index = Math.min(total - 1, projectorQIndex + 1);
+                      setProjectorQIndex(index);
+                      setProjectorReveal(false);
+                      setProjectorSelected(projectorSelections[index] ?? null);
+                      playSoundClick();
+                    }}
+                    disabled={projectorQIndex === total - 1}
+                    style={{
+                      height: 38,
+                      background: projectorQIndex === total - 1 ? (isThemeDark ? '#1e293b' : '#e2e8f0') : '#3b82f6',
+                      color: projectorQIndex === total - 1 ? (isThemeDark ? '#64748b' : '#94a3b8') : '#ffffff',
+                      border: 'none',
+                      borderRadius: 10,
+                      padding: '0 14px',
+                      fontSize: 12,
+                      fontWeight: 800,
+                      cursor: projectorQIndex === total - 1 ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 4,
+                      flexShrink: 0,
+                    }}
+                  >
+                    Next <ChevronRight size={16} />
+                  </button>
+                </div>
               </div>
             )}
 
@@ -2103,6 +2611,8 @@ export const FlashcardMcqView: React.FC<Props> = ({
                       { key: '1 / 2 / 3 / 4 (or A / B / C / D)', desc: 'Option Chuno (Select Choice)' },
                       { key: 'R', desc: 'Jawab Dikhao / Chhupao (Reveal / Hide Answer)' },
                       { key: 'T', desc: 'Theme Badlo (Dark Board / Daylight / Sepia)' },
+                      { key: 'G', desc: 'Question Grid Switcher (Resizable Ratio)' },
+                      { key: 'B', desc: 'Admin Blank Board (Resizable Ratio)' },
                       { key: 'F', desc: 'Fullscreen Mode Toggle' },
                       { key: 'S', desc: 'Sawal Skip Karo' },
                       { key: 'M', desc: 'Sound Mute / Unmute' },

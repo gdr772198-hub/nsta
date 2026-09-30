@@ -18,7 +18,9 @@
     "lint": "tsc --build"
   },
   "devDependencies": {
+    "katex": "^0.16.22",
     "prettier": "^3.9.6",
-    "typescript": "~5.9.3"
+    "typescript": "~5.9.3",
+    "vite": "^7.3.2"
   }
 }

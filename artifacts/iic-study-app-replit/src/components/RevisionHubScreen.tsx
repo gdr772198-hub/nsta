@@ -22,6 +22,8 @@ import { CreditConfirmationModal } from './CreditConfirmationModal';
 import { renderMathInHtml } from '../utils/mathUtils';
 import { UNLOCK_COSTS } from '../utils/limits';
 import { isSubjectMatch } from '../constants';
+import { isSequentialLearningCompletedForLesson } from '../utils/routineAutoTrack';
+import { loadRoutineData } from '../utils/routineStorage';
 import McqQuestionDisplay from './McqQuestionDisplay';
 import McqPracticeCard from './McqPracticeCard';
 import McqQuestionNavigator from './McqQuestionNavigator';
@@ -329,16 +331,48 @@ export const RevisionHubScreen: React.FC<Props> = ({
       alert(`⏳ "${lesson.lessonTitle}"\n\nIs lesson mein abhi Topic-wise MCQs upload nahi huye hain (Coming Soon).\nAdmin jald hi questions add karenge.`);
       return;
     }
-    const isCreditEconomy = user?.studyMode === 'CREDIT';
-    if (!onUpdateUser || !isCreditEconomy) { setMcqSelectedLesson(lesson); return; }
+
+    const _isAdm = user?.role === 'ADMIN' || user?.role === 'SUB_ADMIN';
+    if (_isAdm && user?.studyMode !== 'CREDIT') {
+      setMcqSelectedLesson(lesson);
+      return;
+    }
+
+    const lessonTarget = lesson.lessonId || lesson.id || lesson.lessonTitle;
+    const isSeqDone = isSequentialLearningCompletedForLesson(lessonTarget);
+    const isCreditOff = user?.studyMode !== 'CREDIT';
+
+    // Rule 3: Free ONLY if user is in Credit-Off mode AND has completed Sequential Learning (Notes + MCQ)
+    if (isCreditOff && isSeqDone) {
+      setMcqSelectedLesson(lesson);
+      return;
+    }
+
+    // Check if lesson is part of user's routine for 50% discount
+    const routineData = loadRoutineData();
+    const isRoutineLesson = Boolean(
+      initialLessonTitle === lesson.lessonTitle ||
+      (routineData?.subjects && routineData.subjects.some((s: any) => s.name === lesson.subject || s.id === lesson.subject))
+    );
+
+    const costCredits = isRoutineLesson ? 50 : 100;
+    const costDiamonds = isRoutineLesson ? 12 : 25; // 1 diamond = 4 credits
+
+    const unlockTitle = isRoutineLesson
+      ? `⚡ ${lesson.lessonTitle || 'Lesson'} (Routine 50% OFF)`
+      : `⚡ ${lesson.lessonTitle || 'Lesson'} MCQ Access (100 Coins)`;
+
     setPendingLesson(lesson);
     setCoinModal({
-      title: '📖 Lesson MCQ Access',
-      cost: LESSON_OPEN_COST,
-      diamondCost: LESSON_OPEN_DIAMOND_COST,
+      title: unlockTitle,
+      cost: costCredits,
+      diamondCost: costDiamonds,
       onConfirmCredits: () => {
-        const updated = applyDeduction(user, LESSON_OPEN_COST);
-        if (updated) { onUpdateUser(updated); saveUserToLive(updated); }
+        const updated = applyDeduction(user, costCredits);
+        if (updated) {
+          onUpdateUser?.(updated);
+          saveUserToLive(updated);
+        }
         setCoinModal(null);
         setMcqSelectedLesson(lesson);
         setPendingLesson(null);
@@ -347,9 +381,9 @@ export const RevisionHubScreen: React.FC<Props> = ({
         const curDiamonds = user.diamonds || 0;
         const updated: User = {
           ...user,
-          diamonds: Math.max(0, curDiamonds - LESSON_OPEN_DIAMOND_COST),
+          diamonds: Math.max(0, curDiamonds - costDiamonds),
         };
-        onUpdateUser(updated);
+        onUpdateUser?.(updated);
         try {
           localStorage.setItem("nst_current_user", JSON.stringify(updated));
           if (updated?.id) {
@@ -686,7 +720,7 @@ export const RevisionHubScreen: React.FC<Props> = ({
            const canGoForward = isAnswered || (sessionQIndex > 0 && sessionQIndex < totalQuestions - 1);
 
           return (
-          <div className="p-4 max-w-xl mx-auto space-y-4">
+          <div className="p-4 max-w-xl mx-auto space-y-4 pb-32">
 
             {/* Running score counter */}
             <div className="flex items-center gap-2">
@@ -787,8 +821,8 @@ export const RevisionHubScreen: React.FC<Props> = ({
                ) : undefined}
              />
 
-             {/* Bottom navigation row */}
-            <div className="space-y-2 pt-1">
+             {/* Fixed Bottom navigation row */}
+            <div className="fixed bottom-0 left-0 right-0 z-30 bg-white/95 backdrop-blur-md border-t border-slate-200 px-4 py-2.5 shadow-xl max-w-xl mx-auto space-y-2">
               <div className="flex gap-2">
                 {/* Prev button */}
                 <button
@@ -1133,6 +1167,35 @@ export const RevisionHubScreen: React.FC<Props> = ({
                         return (
                           <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: `${primary}18`, color: primary }}>
                             {cnt} MCQs
+                          </span>
+                        );
+                      })()}
+                      {(() => {
+                        const lessonTarget = lesson.lessonId || lesson.id || lesson.lessonTitle;
+                        const isSeqDone = isSequentialLearningCompletedForLesson(lessonTarget);
+                        const isCreditOff = user?.studyMode !== 'CREDIT';
+                        if (isCreditOff && isSeqDone) {
+                          return (
+                            <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                              ✓ Free (Sequential Done)
+                            </span>
+                          );
+                        }
+                        const routineData = loadRoutineData();
+                        const isRoutine = Boolean(
+                          initialLessonTitle === lesson.lessonTitle ||
+                          (routineData?.subjects && routineData.subjects.some((s: any) => s.name === lesson.subject || s.id === lesson.subject))
+                        );
+                        if (isRoutine) {
+                          return (
+                            <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                              ⚡ 50 🪙 (Routine 50% OFF)
+                            </span>
+                          );
+                        }
+                        return (
+                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700">
+                            🔒 100 🪙
                           </span>
                         );
                       })()}

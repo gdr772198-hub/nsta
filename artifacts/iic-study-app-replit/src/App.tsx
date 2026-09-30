@@ -1017,17 +1017,29 @@ const App: React.FC = () => {
       let hasUpdates = false;
       let newReward: PendingReward | null = null;
 
+      const isGuestUser = Boolean(state.user.isGuest || state.user.isAnonymous || String(state.user.id || '').startsWith('guest_'));
       const lastLoginRaw = state.user.lastLoginDate ? new Date(state.user.lastLoginDate) : null;
       const lastLoginDateString = lastLoginRaw ? lastLoginRaw.toDateString() : '';
 
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
 
+      const createdRaw = state.user.createdAt ? new Date(state.user.createdAt) : null;
+      const isAccountCreatedToday = !createdRaw || createdRaw.toDateString() === today;
+      const isFirstLogin = !state.user.lastLoginDate || isAccountCreatedToday || isGuestUser;
+
+      // Guest accounts on day 1 must strictly stay at Day 1 streak
+      if (isGuestUser && isAccountCreatedToday && updatedUser.streak !== 1) {
+          updatedUser.streak = 1;
+          updatedUser.longestStreak = 1;
+          hasUpdates = true;
+      }
+
       if (lastLoginDateString !== today) {
           updatedUser.lastLoginDate = new Date().toISOString();
           hasUpdates = true;
 
-          if (lastLoginDateString === yesterday.toDateString()) {
+          if (lastLoginDateString === yesterday.toDateString() && !isFirstLogin && !isGuestUser) {
               const prev = updatedUser.streak || 0;
               updatedUser.streak = prev + 1;
               const _sbeBoost = (state.settings?.scoreBoostEvent?.enabled)
@@ -1056,7 +1068,7 @@ const App: React.FC = () => {
               const prev = updatedUser.streak || 0;
               updatedUser.streak = 1;
               if (!updatedUser.longestStreak) updatedUser.longestStreak = 1;
-              if (localStorage.getItem('nst_streak_popup_date') !== today) {
+              if (localStorage.getItem('nst_streak_popup_date') !== today && !isGuestUser) {
                   localStorage.setItem('nst_streak_popup_date', today);
                   setStreakLoginPopup({ newStreak: 1, prevStreak: prev > 1 ? prev : 0, isNewRecord: false });
               }
@@ -1354,7 +1366,7 @@ const App: React.FC = () => {
   useEffect(() => {
       let unsubscribeUser: (() => void) | undefined;
 
-      if (state.user && !state.originalAdmin) {
+      if (state.user && !state.originalAdmin && !state.user.isGuest && !state.user.isAnonymous && !String(state.user.id || '').startsWith('guest_')) {
           unsubscribeUser = subscribeToUser(state.user.id, (cloudUser) => {
               if (cloudUser) {
                   setState(prev => {

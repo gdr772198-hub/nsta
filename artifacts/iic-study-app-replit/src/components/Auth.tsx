@@ -273,36 +273,37 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
   const handleContinueAsGuest = () => {
     setError(null);
     try {
-      const cached = localStorage.getItem('nst_current_user');
-      let existingUser: any = null;
-      if (cached) {
-        try { existingUser = JSON.parse(cached); } catch {}
-      }
-
-      const uid = auth.currentUser?.uid || existingUser?.uid || ('guest_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6));
-      // Guest users do not have a permanent UID/displayId until bound with Google
+      // Clean guest initialization: fresh unique ID, strictly Day 1 streak
+      const uid = 'guest_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
       const guestDisplayId = '';
+      const nowIso = new Date().toISOString();
+      const todayStr = new Date().toDateString();
+
+      // Suppress any false streak popups on guest creation day (starts at Day 1)
+      try {
+        localStorage.setItem('nst_streak_popup_date', todayStr);
+      } catch (_) {}
 
       const guestUser: User = {
-        ...(existingUser || {}),
         id: uid,
         uid: uid,
         displayId: guestDisplayId,
-        name: existingUser?.name && existingUser.name !== 'Guest Student' ? existingUser.name : 'Guest Student',
-        email: existingUser?.email || '',
-        mobile: existingUser?.mobile || '',
+        name: 'Guest Student',
+        email: '',
+        mobile: '',
         role: 'STUDENT',
         isGuest: true,
         isAnonymous: true,
-        board: existingUser?.board || 'CBSE',
-        classLevel: existingUser?.classLevel || '10',
-        credits: typeof existingUser?.credits === 'number' ? existingUser.credits : 50,
-        streak: existingUser?.streak ?? 1,
-        totalScore: existingUser?.totalScore ?? 0,
-        createdAt: existingUser?.createdAt || new Date().toISOString(),
-        lastLoginDate: new Date().toISOString().split('T')[0],
-        redeemedCodes: existingUser?.redeemedCodes || [],
-        studyMode: existingUser?.studyMode || 'WITHOUT_CREDIT',
+        board: 'CBSE',
+        classLevel: '10',
+        credits: 50,
+        streak: 1,
+        longestStreak: 1,
+        totalScore: 0,
+        createdAt: nowIso,
+        lastLoginDate: nowIso,
+        redeemedCodes: [],
+        studyMode: 'WITHOUT_CREDIT',
         profileCompleted: true,
       };
 
@@ -317,14 +318,7 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
 
       // In background, ensure Firebase anonymous session is active for storage access, but do NOT register guest in users collection
       if (!auth.currentUser) {
-        signInAnonymously(auth).then((res) => {
-          if (res.user?.uid && res.user.uid !== guestUser.uid) {
-            guestUser.uid = res.user.uid;
-            guestUser.id = res.user.uid;
-            localStorage.setItem('nst_current_user', JSON.stringify(guestUser));
-            localStorage.setItem('nst_last_user_id', res.user.uid);
-          }
-        }).catch((err) => {
+        signInAnonymously(auth).catch((err) => {
           console.warn('[Auth] Background signInAnonymously notice:', err);
         });
       }

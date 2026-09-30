@@ -1023,7 +1023,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
   const allTabs = [
     ...(!settings?.hideSubscriptionsStore ? [
       ...(isCreditEconomy
-        ? [{ id: 'VIP_PLUS' as const, label: 'VIP+', emoji: 'í ½í²Ž', color: '#38bdf8', bg: 'rgba(56,189,248,0.18)', border: 'rgba(56,189,248,0.45)', glow: 'rgba(56,189,248,0.35)' }]
+        ? [{ id: 'VIP_PLUS' as const, label: 'VIP+', emoji: 'ï¿½ï¿½', color: '#38bdf8', bg: 'rgba(56,189,248,0.18)', border: 'rgba(56,189,248,0.45)', glow: 'rgba(56,189,248,0.35)' }]
         : [{ id: 'SUBSCRIPTION' as const, label: 'VIP', emoji: 'ðŸ‘‘', color: '#c084fc', bg: 'rgba(192,132,252,0.16)', border: 'rgba(192,132,252,0.35)', glow: 'rgba(192,132,252,0.25)' }]
       ),
     ] : []),

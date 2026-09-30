@@ -82,7 +82,7 @@ import { isSequentialReadingEnforced, isFirstLessonOfSubject, SEQUENTIAL_STEPS }
 import { recordLogin, updateSessionDuration, getLoginHistory, formatDuration, formatLoginTime, type LoginSession } from "../utils/loginHistory";
 import { getNewContentItems, markContentItemSeen, markAllContentItemsSeen, formatContentDate, type ContentNotifItem } from "../utils/contentNotifications";
 import { clearAllRecentReads, saveRecentHomework, getRecentHomeworks, removeRecentHomework, getRecentChapters, removeRecentChapter, saveRecentLucent, getRecentLucent, removeRecentLucent, markNoteFullyRead, getFullyReadMap, markReadToday, getReadingStreak, getReadDates, getBestReadingDay, getTodayItemCount, type RecentChapterEntry, type RecentHwEntry, type RecentLucentEntry, type StreakInfo, type BestDay } from "../utils/recentReads";
-import { markRoutinePageRead, markRoutineMcqDone, isRoutinePageRead, isRoutineMcqDone, updateRoutineMcqScore, recordMistake, addPageTime, resetPageTime, calculatePageRequiredReadingSec, isLessonAutoComplete, isLessonRewarded, markLessonRewarded, markRoutinePageMcqDone, updateRoutinePageMcqScore, isRoutinePageMcqDone, getRoutinePageMcqScore, getAutoPageBoxState, getPageTime, getLessonStats, getMultiLessonStats, getProgressColor5, getProgressTicks, markRoutineSameTopicRevDone, isRoutineSameTopicRevDone, markRoutineTodayTopicRevDone, isRoutineTodayTopicRevDone, markRoutineMistakeRevDone, isRoutineMistakeRevDone, getSequentialPageStep, isPageSequenceCompleted } from "../utils/routineAutoTrack";
+import { markRoutinePageRead, markRoutineMcqDone, isRoutinePageRead, isRoutineMcqDone, updateRoutineMcqScore, recordMistake, addPageTime, resetPageTime, calculatePageRequiredReadingSec, isLessonAutoComplete, isLessonRewarded, markLessonRewarded, markRoutinePageMcqDone, updateRoutinePageMcqScore, isRoutinePageMcqDone, getRoutinePageMcqScore, getAutoPageBoxState, getPageTime, getLessonStats, getMultiLessonStats, getProgressColor5, getProgressTicks, markRoutineSameTopicRevDone, isRoutineSameTopicRevDone, markRoutineTodayTopicRevDone, isRoutineTodayTopicRevDone, markRoutineMistakeRevDone, isRoutineMistakeRevDone, getSequentialPageStep, isPageSequenceCompleted, isSequentialLearningCompletedForLesson } from "../utils/routineAutoTrack";
 import { loadRoutineData, saveRoutineData, checkAndResetDaily, generateDailyTask, advanceLessonInCycle, getDiscountFactor, hasActiveDiscount, getPageReadReward, LESSON_COMPLETE_REWARD, unlockRevisionLesson, getUserSubTier, getDailyClaimAmount, getUnclaimedCoins, ensureTodayClaimEntry, claimAllPendingCoins } from "../utils/routineStorage";
 import { SubscriptionEngine } from "../utils/engines/subscriptionEngine";
 import { PedroEngine } from "../utils/engines/pedroEngine";
@@ -259,8 +259,33 @@ import {
   Link2,
   Edit3,
 } from "lucide-react";
-import { FaWhatsapp, FaYoutube, FaInstagram } from "react-icons/fa";
-import { SiGmail } from "react-icons/si";
+
+const FaWhatsapp = ({ size = 18 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M17.472 14.382c-.301-.15-1.78-.879-2.056-.98-.276-.101-.477-.15-.678.15-.2.301-.778.98-.954 1.18-.176.2-.352.226-.653.076-.301-.15-1.272-.469-2.424-1.497-.897-.798-1.503-1.784-1.68-2.085-.176-.301-.019-.464.132-.614.136-.135.301-.352.452-.528.15-.176.2-.301.301-.502.101-.2.05-.377-.025-.528-.075-.15-.678-1.634-.929-2.236-.244-.588-.493-.508-.678-.517-.176-.009-.377-.01-.578-.01-.2 0-.528.075-.804.377-.276.301-1.055 1.03-1.055 2.512s1.08 2.914 1.231 3.115c.15.201 2.126 3.247 5.151 4.555.72.311 1.282.497 1.72.636.723.23 1.381.198 1.901.12.58-.088 1.78-.728 2.03-1.431.25-.703.25-1.306.175-1.431-.075-.125-.276-.201-.577-.351zM12.04 2C6.517 2 2.03 6.486 2.03 12.008c0 1.98.58 3.826 1.583 5.385L2 22l4.764-1.572A9.972 9.972 0 0 0 12.04 22c5.522 0 10.01-4.486 10.01-10.008 0-5.523-4.488-10.008-10.01-10.008z" />
+  </svg>
+);
+
+const FaInstagram = ({ size = 18 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="2" y="2" width="20" height="20" rx="5" ry="5"/>
+    <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/>
+    <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/>
+  </svg>
+);
+
+const FaYoutube = ({ size = 18 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+  </svg>
+);
+
+const SiGmail = ({ size = 17 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+    <polyline points="22,6 12,13 2,6"/>
+  </svg>
+);
 import { speakText, stopSpeech, stripHtml } from "../utils/textToSpeech";
 import { parseMCQText, normalizeMcqPaste, extractStatements } from "../utils/mcqParser";
 import { getMcqStatements } from "../utils/mcqStructure";
@@ -5132,6 +5157,83 @@ export const StudentDashboard: React.FC<Props> = ({
   }, [activeTab, showRevisionHubScreen, showUpdatesPage, showMyRoutine, showChat]);
   // lessonTitle for auto-navigation when opening Revision Hub from Routine/Daily Event (coins already paid).
   const [initialRevisionLessonTitle, setInitialRevisionLessonTitle] = useState<string | null>(null);
+
+  /**
+   * Safely opens Revision Hub enforcing unlock rules:
+   * 1. 100 Coins (25 Diamonds) standard entry.
+   * 2. Routine entry / lesson gets 50% OFF -> 50 Coins (12 Diamonds).
+   * 3. FREE ONLY IF: User is in Credit-OFF mode AND has completed Sequential Learning (Notes read + MCQ completed) for that lesson.
+   */
+  const openRevisionHubSafely = useCallback((options?: {
+    lessonId?: string;
+    lessonTitle?: string;
+    autoStartMcq?: boolean;
+    isFromRoutine?: boolean;
+    onSuccess?: () => void;
+  }) => {
+    const lessonTitle = options?.lessonTitle;
+    const lessonId = options?.lessonId;
+    const autoStartMcq = options?.autoStartMcq;
+    const isFromRoutine = Boolean(options?.isFromRoutine);
+    const onSuccess = options?.onSuccess;
+
+    if (autoStartMcq) {
+      setInitialRevisionAutoStartMcq(true);
+    } else {
+      setInitialRevisionAutoStartMcq(false);
+    }
+
+    const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
+    if ((_isAdm && user.studyMode !== 'CREDIT') || isStudyContentAlwaysUnlocked()) {
+      setInitialRevisionLessonTitle(lessonTitle || null);
+      setShowDailyEventPage(false);
+      setShowMyRoutine(false);
+      setShowRevisionHubScreen(true);
+      onSuccess?.();
+      return;
+    }
+
+    const lessonTarget = lessonId || lessonTitle;
+    const isSeqDone = lessonTarget ? isSequentialLearningCompletedForLesson(lessonTarget) : false;
+    const isCreditOff = (user.studyMode || 'WITHOUT_CREDIT') !== 'CREDIT';
+
+    // ── Free Unlock Rule ──
+    // ONLY IF Credit-OFF mode is selected AND sequential learning is completed!
+    if (isCreditOff && isSeqDone) {
+      setInitialRevisionLessonTitle(lessonTitle || null);
+      setShowDailyEventPage(false);
+      setShowMyRoutine(false);
+      setShowRevisionHubScreen(true);
+      onSuccess?.();
+      showAlert('✅ Free Revision Hub Unlocked via Sequential Learning!', 'SUCCESS');
+      return;
+    }
+
+    // ── Otherwise: Revision Hub costs 100 Coins (Routine 50% discount -> 50 Coins) ──
+    const cost = isFromRoutine ? 50 : 100;
+    const originalCost = 100;
+    const discountPct = isFromRoutine ? 50 : 0;
+    const costDiamonds = isFromRoutine ? 12 : 25; // 1 Diamond = 4 Credits
+
+    const reason = isFromRoutine
+      ? (lessonTitle ? `Revision Hub — ${lessonTitle} (Routine 50% OFF)` : 'Revision Hub Access (Routine 50% OFF)')
+      : (lessonTitle ? `Revision Hub — ${lessonTitle} (100 Coins)` : 'Revision Hub Access (100 Coins)');
+
+    setCoinGate({
+      cost,
+      originalCost,
+      discountPct,
+      costDiamonds,
+      reason,
+      action: () => {
+        setInitialRevisionLessonTitle(lessonTitle || null);
+        setShowDailyEventPage(false);
+        setShowMyRoutine(false);
+        setShowRevisionHubScreen(true);
+        onSuccess?.();
+      },
+    });
+  }, [user, isStudyContentAlwaysUnlocked, showAlert]);
   // Routine gate popup — shown when user tries to open a lesson in a routineApplied subject
   const [routineGate, setRoutineGate] = useState<{ entry: any; pageIdx: number } | null>(null);
   // Fire window events when RevisionHub opens/closes so App.tsx can defer HomeStatsToast
@@ -13187,7 +13289,7 @@ export const StudentDashboard: React.FC<Props> = ({
                             type="button"
                             onClick={() => {
                               hapticStrong();
-                              setShowRevisionHubScreen(true);
+                              openRevisionHubSafely({ isFromRoutine: false });
                             }}
                             className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left active:scale-[0.985] transition-all cursor-pointer flex flex-col justify-between group flex-1"
                             style={_rev3D ? {
@@ -24945,9 +25047,14 @@ export const StudentDashboard: React.FC<Props> = ({
                           showAlert('🔒 Pehle Step 2: MCQ Practice poora karein!', 'INFO');
                           return;
                         }
-                        markRoutineSameTopicRevDone(entry.id, safeIndex);
-                        setInitialRevisionLessonTitle(entry.lessonTitle || null);
-                        setShowRevisionHubScreen(true);
+                        openRevisionHubSafely({
+                          lessonId: entry.id,
+                          lessonTitle: entry.lessonTitle || null,
+                          isFromRoutine: true,
+                          onSuccess: () => {
+                            markRoutineSameTopicRevDone(entry.id, safeIndex);
+                          },
+                        });
                       }}
                       className={`px-2 py-1 rounded-lg text-[10px] font-black transition flex items-center gap-1 cursor-pointer ${
                         _isRevSameD
@@ -24969,9 +25076,12 @@ export const StudentDashboard: React.FC<Props> = ({
                           showAlert('🔒 Pehle Step 3: Revision Hub (Same Topic) poora karein!', 'INFO');
                           return;
                         }
-                        markRoutineTodayTopicRevDone(entry.id, safeIndex);
-                        setInitialRevisionLessonTitle(null);
-                        setShowRevisionHubScreen(true);
+                        openRevisionHubSafely({
+                          isFromRoutine: true,
+                          onSuccess: () => {
+                            markRoutineTodayTopicRevDone(entry.id, safeIndex);
+                          },
+                        });
                       }}
                       className={`px-2 py-1 rounded-lg text-[10px] font-black transition flex items-center gap-1 cursor-pointer ${
                         _isRevTodayD
@@ -26246,36 +26356,12 @@ RULES:
             setShowMyRoutine(true);
           }}
           onOpenRevisionHub={(lessonId?: string, lessonTitle?: string, autoStartMcq?: boolean) => {
-            if (autoStartMcq) {
-              setInitialRevisionAutoStartMcq(true);
-            } else {
-              setInitialRevisionAutoStartMcq(false);
-            }
-            if (lessonTitle) {
-              const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
-              if ((_isAdm && user.studyMode !== 'CREDIT') || isStudyContentAlwaysUnlocked()) {
-                setInitialRevisionLessonTitle(lessonTitle);
-                setShowDailyEventPage(false);
-                setShowRevisionHubScreen(true);
-                return;
-              }
-              setCoinGate({
-                cost: 50,
-                originalCost: 100,
-                discountPct: 50,
-                reason: 'Revision Hub MCQ Session (Routine 50% OFF)',
-                action: () => {
-                  setInitialRevisionLessonTitle(lessonTitle);
-                  setShowDailyEventPage(false);
-                  setShowRevisionHubScreen(true);
-                },
-              });
-              return;
-              } else {
-              setInitialRevisionLessonTitle(null);
-            }
-            setShowDailyEventPage(false);
-            setShowRevisionHubScreen(true);
+            openRevisionHubSafely({
+              lessonId,
+              lessonTitle,
+              autoStartMcq,
+              isFromRoutine: true,
+            });
           }}
           onPracticeMistakes={(mistakes) => {
             setHomeMistakes(mistakes);
@@ -26353,7 +26439,7 @@ RULES:
             }}
             onClaimDailyChallenge={handleClaimDailyChallenge20}
             onOpenRevisionHub={() => {
-              setShowRevisionHubScreen(true);
+              openRevisionHubSafely({ isFromRoutine: true });
             }}
             onOpenMessenger={() => {
               if (!_isPaidUser) {
@@ -26880,36 +26966,12 @@ RULES:
             }
           }}
           onOpenRevisionHub={(lessonId?: string, lessonTitle?: string, autoStartMcq?: boolean) => {
-            if (autoStartMcq) {
-              setInitialRevisionAutoStartMcq(true);
-            } else {
-              setInitialRevisionAutoStartMcq(false);
-            }
-            if (lessonTitle) {
-              const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
-              if ((_isAdm && user.studyMode !== 'CREDIT') || isStudyContentAlwaysUnlocked()) {
-                setInitialRevisionLessonTitle(lessonTitle);
-                setShowMyRoutine(false);
-                setShowRevisionHubScreen(true);
-                return;
-              }
-              setCoinGate({
-                cost: 50,
-                originalCost: 100,
-                discountPct: 50,
-                reason: 'Revision Hub MCQ Session (Routine 50% OFF)',
-                action: () => {
-                  setInitialRevisionLessonTitle(lessonTitle);
-                  setShowMyRoutine(false);
-                  setShowRevisionHubScreen(true);
-                },
-              });
-              return;
-              } else {
-              setInitialRevisionLessonTitle(null);
-            }
-            setShowMyRoutine(false);
-            setShowRevisionHubScreen(true);
+            openRevisionHubSafely({
+              lessonId,
+              lessonTitle,
+              autoStartMcq,
+              isFromRoutine: true,
+            });
           }}
           onPracticeMistakes={(mistakes) => {
             setHomeMistakes(mistakes);
@@ -26917,32 +26979,11 @@ RULES:
             setShowMistakePractice(true);
           }}
           onGoToRevision={(lessonId, lessonTitle) => {
-            // Coming from Routine → 50-coin gate first, then open RevisionHub auto-navigated
-            if (lessonTitle) {
-              const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
-              if ((_isAdm && user.studyMode !== 'CREDIT') || isStudyContentAlwaysUnlocked()) {
-                setInitialRevisionLessonTitle(lessonTitle);
-                setShowMyRoutine(false);
-                setShowRevisionHubScreen(true);
-                return;
-              }
-              setCoinGate({
-                cost: 50,
-                originalCost: 100,
-                discountPct: 50,
-                reason: 'Revision Hub MCQ Session (Routine 50% OFF)',
-                action: () => {
-                  setInitialRevisionLessonTitle(lessonTitle);
-                  setShowMyRoutine(false);
-                  setShowRevisionHubScreen(true);
-                },
-              });
-              return;
-              } else {
-              setInitialRevisionLessonTitle(null);
-            }
-            setShowMyRoutine(false);
-            setShowRevisionHubScreen(true);
+            openRevisionHubSafely({
+              lessonId,
+              lessonTitle,
+              isFromRoutine: true,
+            });
           }}
         />
       )}
@@ -29892,7 +29933,7 @@ RULES:
                 } else if (tab === 'ROUTINE') {
                   setShowMyRoutine(true);
                 } else if (tab === 'REVISION_HUB') {
-                  setShowRevisionHubScreen(true);
+                  openRevisionHubSafely({ isFromRoutine: false });
                 } else {
                   setShowUpdatesPage(false);
                   onTabChange(tab as any);
@@ -29937,7 +29978,7 @@ RULES:
                 } else if (actionKey === 'DEMO_ROUTINE') {
                   setShowMyRoutine(true);
                 } else if (actionKey === 'DEMO_REVISION') {
-                  setShowRevisionHubScreen(true);
+                  openRevisionHubSafely({ isFromRoutine: false });
                 } else if (actionKey === 'DEMO_COMPETITION') {
                   setSyllabusMode('COMPETITION');
                   setActiveSessionClass('COMPETITION');
@@ -30496,7 +30537,22 @@ RULES:
         );
         const isCreditMode = user.studyMode === 'CREDIT';
         const isWithoutCredit = (user.studyMode || 'WITHOUT_CREDIT') !== 'CREDIT';
-        const isFree = isWithoutCredit || (!isDiamondOnly && !isCreditMode && (cost === 0 || isPermanentlyUnlocked));
+        const isRevisionHubGate = /revision\s*hub/i.test(reason);
+
+        // Check if sequential learning is completed for this revision hub lesson
+        let isRevHubSeqDone = false;
+        if (isRevisionHubGate) {
+          const target = initialRevisionLessonTitle || (reason.includes('—') ? reason.split('—')[1]?.replace(/\([^)]*\)/g, '').trim() : '');
+          if (target) {
+            isRevHubSeqDone = isSequentialLearningCompletedForLesson(target);
+          }
+        }
+
+        // Revision Hub is NEVER free by default — only free if in Credit-OFF mode AND sequential learning is completed!
+        const isFree = isRevisionHubGate
+          ? (isWithoutCredit && isRevHubSeqDone)
+          : (isWithoutCredit || (!isDiamondOnly && !isCreditMode && (cost === 0 || isPermanentlyUnlocked)));
+
         if (isFree) {
           setTimeout(() => {
             setCoinGate(null);
@@ -30520,6 +30576,7 @@ RULES:
         // Effective Diamond Cost based on selection:
         const effectiveDiamondCost = (() => {
           if (diamondCostOverride) return diamondCostOverride;
+          if (costDiamonds) return costDiamonds;
           if (isDiamondOnly) return costDiamonds || 5;
           if (hasPageInfo) {
             if (selectedBulk) {
@@ -30592,7 +30649,7 @@ RULES:
               </div>
               <h2 className="relative z-10 text-white font-black text-[22px] tracking-tight leading-tight">{reason}</h2>
               <p className="relative z-10 text-white/60 text-[11px] mt-1.5 font-semibold uppercase tracking-[0.12em]">
-                {isDiamondOnly ? 'Diamond Exclusive Unlock' : isFree ? 'First Time Free!' : 'Premium Content Unlock'}
+                {isDiamondOnly ? 'Diamond Exclusive Unlock' : isFree ? 'Free via Sequential Learning!' : isRevisionHubGate ? (discountPct === 50 ? 'Routine 50% OFF (50 Coins)' : '100 Coins Required') : 'Premium Content Unlock'}
               </p>
               {hasPageInfo && pageInfo!.pageLabel && (
                 <p className="relative z-10 text-white/45 text-[10px] mt-1 font-semibold">{pageInfo!.pageLabel}</p>
@@ -30601,6 +30658,20 @@ RULES:
 
             {/* ── Body ── */}
             <div className="bg-white px-5 pt-5 pb-6">
+
+              {/* REVISION HUB UNLOCK RULES BANNER */}
+              {isRevisionHubGate && !isFree && (
+                <div className="mb-4 p-3.5 rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/80 text-left space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-xs font-black text-amber-800">
+                    <span>⚡</span>
+                    <span>Revision Hub Unlock Rules</span>
+                  </div>
+                  <ul className="text-[11px] text-amber-900/85 space-y-1 pl-3.5 list-disc leading-relaxed font-medium">
+                    <li>Entry Fee: <strong>{discountPct === 50 ? '50 Coins (Routine 50% OFF)' : '100 Coins'}</strong> ya <strong>{effectiveDiamondCost} 💎 Diamonds</strong> (1 💎 = 4 🪙).</li>
+                    <li><strong>Free Unlock:</strong> Sirf tab jab <strong>Credit OFF</strong> mode ho aur aapne Notes reading + MCQ session poora kiya ho (Sequential Learning).</li>
+                  </ul>
+                </div>
+              )}
 
               {/* DIAMOND ONLY UNLOCK */}
               {isDiamondOnly && (

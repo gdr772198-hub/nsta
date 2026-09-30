@@ -300,6 +300,35 @@ export function isPageSequenceCompleted(
   return getSequentialPageStep(lessonId, pageIdx, hasMcq) === 'COMPLETED';
 }
 
+/**
+ * Check if Sequential Learning rule is satisfied for a lesson:
+ * - Study Notes reading completed (at least page 0 read)
+ * - MCQ practice session completed
+ * Free unlock in Credit-Off mode requires this rule!
+ */
+export function isSequentialLearningCompletedForLesson(lessonIdOrTitle: string): boolean {
+  if (!lessonIdOrTitle) return false;
+  const d = load();
+  const id = String(lessonIdOrTitle).trim();
+  const lower = id.toLowerCase();
+
+  // Check study notes read (page 0 or any page read for this lesson)
+  const hasPageRead = Object.keys(d.pageReads).some(k => {
+    const [lid] = k.split('__');
+    return lid === id || lid.toLowerCase() === lower || (lid.length > 3 && lower.includes(lid.toLowerCase())) || (lower.length > 3 && lid.toLowerCase().includes(lower));
+  });
+
+  // Check MCQ session done
+  const hasMcqDone = Boolean(d.mcqDone[id]) ||
+    Object.keys(d.mcqDone).some(k => k === id || k.toLowerCase() === lower || (k.length > 3 && lower.includes(k.toLowerCase())) || (lower.length > 3 && k.toLowerCase().includes(lower))) ||
+    Object.keys(d.pageMcqDone).some(k => {
+      const [lid] = k.split('__');
+      return lid === id || lid.toLowerCase() === lower || (lid.length > 3 && lower.includes(lid.toLowerCase())) || (lower.length > 3 && lid.toLowerCase().includes(lower));
+    });
+
+  return hasPageRead && hasMcqDone;
+}
+
 export function isMathKey(id: string): boolean {
   const l = (id || '').toLowerCase();
   return l.includes('math') || l.includes('ganit') || l.includes('गणित');

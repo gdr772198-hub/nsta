@@ -28,7 +28,10 @@ export const CreditConfirmationModal: React.FC<Props> = ({
     const [autoEnabled, setAutoEnabled] = useState(isAutoEnabledInitial);
 
     // Without credit economy: do not show credit popup and allow usage freely
+    // EXCEPTION: Revision Hub requires 100 coins (or 50 with routine 50% discount) unless sequential learning was completed
+    const isRevisionHubModal = /revision\s*hub|mcq\s*access/i.test(title);
     const isWithoutCredit = (() => {
+        if (isRevisionHubModal) return false;
         try {
             const raw = localStorage.getItem('nst_current_user');
             if (raw) {

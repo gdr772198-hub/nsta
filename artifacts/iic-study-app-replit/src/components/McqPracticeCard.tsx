@@ -14,6 +14,7 @@ interface Props {
   onSelect?: (optionIndex: number) => void;
   actions?: React.ReactNode;
   variant?: 'default' | 'projector';
+  twoColumnOptions?: boolean;
   fontSize?: number;
   themeMode?: 'light' | 'dark' | 'sepia';
   isBookmarked?: boolean;
@@ -38,6 +39,7 @@ const McqPracticeCard: React.FC<Props> = ({
   onSelect,
   actions,
   variant = 'default',
+  twoColumnOptions = false,
   fontSize,
   themeMode = 'light',
   isBookmarked = false,
@@ -123,11 +125,17 @@ const McqPracticeCard: React.FC<Props> = ({
         </div>
       </div>
 
-      <div className={isProjector ? 'space-y-2.5 sm:space-y-3 landscape:space-y-1.5' : 'space-y-2 landscape:space-y-1.5'}>
+      {/* MCQ Options: Row 1 = Option A & B, Row 2 = Option C & D in rotated/landscape & projector mode */}
+      <div className={`grid ${
+        twoColumnOptions || isProjector
+          ? 'grid-cols-1 sm:grid-cols-2 landscape:grid-cols-2 gap-2.5 sm:gap-3 landscape:gap-2'
+          : 'grid-cols-1 landscape:grid-cols-2 gap-2.5 landscape:gap-2'
+      }`}>
         {(q.options || []).map((opt, optionIndex) => {
           const isSelected = selectedOption === optionIndex;
           const isCorrect = optionIndex === q.correctAnswer;
           const isEliminated = eliminatedOptions.has(optionIndex);
+          const isOddFifth = (q.options?.length ?? 0) === 5 && optionIndex === 4;
 
           let optionClass = '';
 
@@ -185,12 +193,12 @@ const McqPracticeCard: React.FC<Props> = ({
           }
 
           return (
-            <div key={optionIndex} className="relative group">
+            <div key={optionIndex} className={`relative group ${isOddFifth ? 'sm:col-span-2 landscape:col-span-2' : ''}`}>
               <button
                 type="button"
                 onClick={() => onSelect?.(optionIndex)}
                 disabled={!canSelect || isEliminated}
-                className={`w-full text-left ${
+                className={`w-full h-full text-left ${
                   isProjector
                     ? 'px-4 sm:px-5 py-3 sm:py-4 rounded-[18px] landscape:py-2 landscape:px-3 landscape:rounded-[12px]'
                     : 'px-4 py-3 rounded-2xl landscape:py-2 landscape:px-3 landscape:rounded-xl'

@@ -2709,8 +2709,8 @@ export const LessonView: React.FC<Props> = ({
                                )}
                            </div>
 
-                           {/* Bottom action bar */}
-                           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'16px 32px', borderTop:'3px solid #e2e8f0', background:'#f8fafc', flexShrink:0, gap:16 }}>
+                           {/* Fixed Bottom action bar: Never jumps regardless of question size */}
+                           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 24px', height:68, minHeight:68, maxHeight:68, borderTop:'3px solid #e2e8f0', background:'#f8fafc', flexShrink:0, gap:16, zIndex:30 }}>
                                <button
                                    onClick={() => {
                                        const index = Math.max(0, projectorQIndex - 1);
