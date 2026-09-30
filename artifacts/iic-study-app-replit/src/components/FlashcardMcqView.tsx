@@ -143,6 +143,37 @@ export const FlashcardMcqView: React.FC<Props> = ({
   const [projectorRotated, setProjectorRotated] = useState(false);
   const [projectorFocused, setProjectorFocused] = useState(false);
   const [fcFocused, setFcFocused] = useState(false);
+
+  // ── Screen Rotation & Landscape Mode (1/20 Top, 18/20 Content, 1/20 Bottom) ──
+  const [isDeviceLandscape, setIsDeviceLandscape] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth > window.innerHeight;
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const handleCheck = () => {
+      if (typeof window !== 'undefined') {
+        setIsDeviceLandscape(window.innerWidth > window.innerHeight);
+      }
+    };
+    window.addEventListener('resize', handleCheck);
+    window.addEventListener('orientationchange', handleCheck);
+    const handleCustomRotate = (e: any) => {
+      if (e?.detail?.orientation) {
+        setProjectorRotated(e.detail.orientation === 'landscape');
+      }
+    };
+    window.addEventListener('nst-screen-rotate', handleCustomRotate);
+    return () => {
+      window.removeEventListener('resize', handleCheck);
+      window.removeEventListener('orientationchange', handleCheck);
+      window.removeEventListener('nst-screen-rotate', handleCustomRotate);
+    };
+  }, []);
+
+  const isEffectiveLandscape = projectorRotated || isDeviceLandscape;
   // ── Projector score tracking ──
   const [projectorCorrect, setProjectorCorrect] = useState(0);
   const [projectorWrong, setProjectorWrong] = useState(0);
@@ -854,7 +885,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
   return (
     <>
     <div className="fixed inset-0 z-[200] flex flex-col h-[100dvh]" style={tierBgStyle}>
-      {!fcFocused && tabBar}
+      {!fcFocused && !isEffectiveLandscape && tabBar}
       {/* MCQ Score Popup */}
       {mcqScorePopup !== null && (
         <div style={{
@@ -1335,8 +1366,8 @@ export const FlashcardMcqView: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* App Bottom Navigation Bar (Visible in flashcard mode, hidden in focus mode) */}
-      {!fcFocused && bottomNav && (
+      {/* App Bottom Navigation Bar (Visible in flashcard mode, hidden in landscape/focus mode) */}
+      {!fcFocused && !isEffectiveLandscape && bottomNav && (
         <div className="shrink-0 w-full z-20">
           {bottomNav}
         </div>
@@ -1401,15 +1432,18 @@ export const FlashcardMcqView: React.FC<Props> = ({
 
         return createPortal(
           <div style={overlayStyle}>
-            {!projectorFocused && tabBar}
+            {!projectorFocused && !isEffectiveLandscape && tabBar}
 
-            {/* Standard Comprehensive Top Bar (Hidden only in full focus mode) */}
+            {/* Standard Comprehensive Top Bar: 1/20 (5vh in landscape/rotated) */}
             {!projectorFocused && (
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: 8,
-                padding: '9px 14px',
+                gap: isEffectiveLandscape ? 5 : 8,
+                padding: isEffectiveLandscape ? '2px 8px' : '9px 14px',
+                height: isEffectiveLandscape ? '5vh' : undefined,
+                minHeight: isEffectiveLandscape ? 26 : undefined,
+                maxHeight: isEffectiveLandscape ? 38 : undefined,
                 borderBottom: `1px solid ${headerBorder}`,
                 background: headerBg,
                 flexShrink: 0,
@@ -1433,25 +1467,51 @@ export const FlashcardMcqView: React.FC<Props> = ({
                       onProjectorModeChange?.(false);
                     }
                   }}
-                  style={{ flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', width:36, height:36, background:pillBg, border:`1px solid ${pillBorder}`, borderRadius:10, color:pillText, cursor:'pointer' }}
+                  style={{
+                    flexShrink: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: isEffectiveLandscape ? 26 : 36,
+                    height: isEffectiveLandscape ? 'calc(5vh - 6px)' : 36,
+                    minHeight: isEffectiveLandscape ? 22 : undefined,
+                    background: pillBg,
+                    border: `1px solid ${pillBorder}`,
+                    borderRadius: 10,
+                    color: pillText,
+                    cursor: 'pointer',
+                  }}
                   title="Back"
                   aria-label="Back"
                 >
-                  <ChevronLeft size={18} />
+                  <ChevronLeft size={isEffectiveLandscape ? 14 : 18} />
                 </button>
 
                 {/* Title and Projector Badge */}
-                <div style={{ flex:1, minWidth:120, flexShrink:0 }}>
-                  <div style={{ fontSize:13, fontWeight:900, color:headerText, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', lineHeight:1.2 }}>
+                <div style={{ flex:1, minWidth:100, flexShrink:0 }}>
+                  <div style={{ fontSize: isEffectiveLandscape ? 11 : 13, fontWeight:900, color:headerText, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', lineHeight:1.1 }}>
                     {sourceMeta?.lessonTitle || title || 'MCQ Practice'}
                   </div>
-                  <div style={{ fontSize:10, fontWeight:800, color: isThemeDark ? '#fbbf24' : '#d97706', textTransform:'uppercase', letterSpacing:'0.05em', lineHeight:1.2, display:'flex', alignItems:'center', gap:4, marginTop:1 }}>
-                    <Tv size={11} /> <span>PREMIUM MCQ • PROJECTOR</span>
+                  <div style={{ fontSize: isEffectiveLandscape ? 8 : 10, fontWeight:800, color: isThemeDark ? '#fbbf24' : '#d97706', textTransform:'uppercase', letterSpacing:'0.05em', lineHeight:1.1, display:'flex', alignItems:'center', gap:3, marginTop:0.5 }}>
+                    <Tv size={isEffectiveLandscape ? 9 : 11} /> <span>PREMIUM MCQ • {isEffectiveLandscape ? '18/20' : 'PROJECTOR'}</span>
                   </div>
                 </div>
 
                 {/* Live Accuracy HUD (Visible on all viewports) */}
-                <div style={{ flexShrink:0, display:'flex', alignItems:'center', gap:5, background:pillBg, border:`1px solid ${pillBorder}`, borderRadius:12, padding:'5px 9px', fontSize:11, fontWeight:800 }}>
+                <div style={{
+                  flexShrink:0,
+                  display:'flex',
+                  alignItems:'center',
+                  gap: isEffectiveLandscape ? 3 : 5,
+                  background:pillBg,
+                  border:`1px solid ${pillBorder}`,
+                  borderRadius:10,
+                  padding: isEffectiveLandscape ? '2px 6px' : '5px 9px',
+                  height: isEffectiveLandscape ? 'calc(5vh - 6px)' : undefined,
+                  minHeight: isEffectiveLandscape ? 22 : undefined,
+                  fontSize: isEffectiveLandscape ? 9 : 11,
+                  fontWeight:800
+                }}>
                   <span style={{ color:'#10b981' }}>✓ {projectorCorrect}</span>
                   <span style={{ color:headerSubtext }}>·</span>
                   <span style={{ color:'#ef4444' }}>✗ {projectorWrong}</span>
@@ -1464,9 +1524,20 @@ export const FlashcardMcqView: React.FC<Props> = ({
                 </div>
 
                 {/* Question Counter Pill */}
-                <div style={{ flexShrink:0, display:'flex', alignItems:'center', gap:4, background:pillBg, border:`1px solid ${pillBorder}`, borderRadius:12, padding:'6px 10px' }}>
-                  <span style={{ fontSize:12, fontWeight:900, color:headerText }}>{projectorQIndex + 1}</span>
-                  <span style={{ fontSize:10, color:headerSubtext, fontWeight:700 }}>/ {total}</span>
+                <div style={{
+                  flexShrink:0,
+                  display:'flex',
+                  alignItems:'center',
+                  gap:3,
+                  background:pillBg,
+                  border:`1px solid ${pillBorder}`,
+                  borderRadius:10,
+                  padding: isEffectiveLandscape ? '2px 6px' : '6px 10px',
+                  height: isEffectiveLandscape ? 'calc(5vh - 6px)' : undefined,
+                  minHeight: isEffectiveLandscape ? 22 : undefined,
+                }}>
+                  <span style={{ fontSize: isEffectiveLandscape ? 10 : 12, fontWeight:900, color:headerText }}>{projectorQIndex + 1}</span>
+                  <span style={{ fontSize: isEffectiveLandscape ? 8 : 10, color:headerSubtext, fontWeight:700 }}>/ {total}</span>
                 </div>
 
                 {/* Drill Timer Toggle */}
@@ -1476,8 +1547,9 @@ export const FlashcardMcqView: React.FC<Props> = ({
                   aria-label="Classroom Drill Timer"
                   style={{
                     flexShrink:0,
-                    height:36,
-                    padding:'0 10px',
+                    height: isEffectiveLandscape ? 'calc(5vh - 6px)' : 36,
+                    minHeight: isEffectiveLandscape ? 22 : undefined,
+                    padding: isEffectiveLandscape ? '0 6px' : '0 10px',
                     background: drillTimerMode !== 'off' ? (isThemeDark ? '#1e1b4b' : '#eef2ff') : pillBg,
                     border: `1px solid ${drillTimerMode !== 'off' ? '#818cf8' : pillBorder}`,
                     borderRadius:12,
@@ -1692,8 +1764,14 @@ export const FlashcardMcqView: React.FC<Props> = ({
               </div>
             )}
 
-            {/* Scrollable Content: MCQ Practice Card scaled & themed */}
-            <div style={{ flex:1, overflowY:'auto', padding: projectorFocused ? '24px' : '20px 24px 16px', minHeight:0 }}>
+            {/* Scrollable Content: MCQ Practice Card scaled & themed (18/20 in rotated mode) */}
+            <div style={{
+              flex: isEffectiveLandscape ? '0 0 90vh' : 1,
+              height: isEffectiveLandscape ? '90vh' : undefined,
+              overflowY: 'auto',
+              padding: isEffectiveLandscape ? '4px 10px' : projectorFocused ? '24px' : '20px 24px 16px',
+              minHeight: 0
+            }}>
               <div style={{ maxWidth: 1200, margin: '0 auto' }}>
                 {projectorNavigatorOpen && (
                   <div style={projectorFocused
@@ -1791,9 +1869,20 @@ export const FlashcardMcqView: React.FC<Props> = ({
               )}
             </div>
 
-            {/* Standard Bottom Navigation Bar (Hidden in focus mode) */}
+            {/* Standard Bottom Navigation Bar: 1/20 (5vh in rotated mode, hidden in focus mode) */}
             {!projectorFocused && (
-              <div style={{ display:'flex', alignItems:'center', padding:'10px 12px', borderTop:`2px solid ${footerBorder}`, background:footerBg, flexShrink:0, gap:8 }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                padding: isEffectiveLandscape ? '2px 8px' : '10px 12px',
+                height: isEffectiveLandscape ? '5vh' : undefined,
+                minHeight: isEffectiveLandscape ? 26 : undefined,
+                maxHeight: isEffectiveLandscape ? 38 : undefined,
+                borderTop: `2px solid ${footerBorder}`,
+                background: footerBg,
+                flexShrink: 0,
+                gap: isEffectiveLandscape ? 4 : 8
+              }}>
                 {/* Prev Question */}
                 <button
                   onClick={() => {
@@ -1805,23 +1894,24 @@ export const FlashcardMcqView: React.FC<Props> = ({
                   }}
                   disabled={projectorQIndex === 0}
                   style={{
-                    height: 42,
+                    height: isEffectiveLandscape ? 'calc(5vh - 4px)' : 42,
+                    minHeight: isEffectiveLandscape ? 22 : undefined,
                     background: projectorQIndex === 0 ? (isThemeDark ? '#1e293b' : '#e2e8f0') : '#3b82f6',
                     color: projectorQIndex === 0 ? (isThemeDark ? '#64748b' : '#94a3b8') : '#ffffff',
                     border: 'none',
-                    borderRadius: 12,
-                    padding: '0 14px',
-                    fontSize: 13,
+                    borderRadius: 10,
+                    padding: isEffectiveLandscape ? '0 8px' : '0 14px',
+                    fontSize: isEffectiveLandscape ? 11 : 13,
                     fontWeight: 800,
                     cursor: projectorQIndex === 0 ? 'not-allowed' : 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: 4,
+                    gap: 3,
                     flexShrink: 0
                   }}
                 >
-                  <ChevronLeft size={16} /> Prev
+                  <ChevronLeft size={isEffectiveLandscape ? 13 : 16} /> Prev
                 </button>
 
                 {/* Skip Question */}
@@ -1838,13 +1928,14 @@ export const FlashcardMcqView: React.FC<Props> = ({
                   }}
                   disabled={projectorShowReview || (projectorQIndex === total - 1 && projectorCurrentSelection !== null)}
                   style={{
-                    height: 42,
+                    height: isEffectiveLandscape ? 'calc(5vh - 4px)' : 42,
+                    minHeight: isEffectiveLandscape ? 22 : undefined,
                     background: isThemeDark ? '#1e293b' : '#fffbeb',
                     color: isThemeDark ? '#fbbf24' : '#b45309',
                     border: `1px solid ${isThemeDark ? '#334155' : '#fcd34d'}`,
-                    borderRadius: 12,
-                    padding: '0 12px',
-                    fontSize: 13,
+                    borderRadius: 10,
+                    padding: isEffectiveLandscape ? '0 8px' : '0 12px',
+                    fontSize: isEffectiveLandscape ? 11 : 13,
                     fontWeight: 800,
                     cursor: 'pointer',
                     display: 'flex',
@@ -1863,31 +1954,32 @@ export const FlashcardMcqView: React.FC<Props> = ({
                       onClick={submitProjectorQuiz}
                       style={{
                         width: '100%',
-                        height: 42,
+                        height: isEffectiveLandscape ? 'calc(5vh - 4px)' : 42,
+                        minHeight: isEffectiveLandscape ? 22 : undefined,
                         background: 'linear-gradient(135deg,#10b981,#059669)',
                         color: '#ffffff',
                         border: 'none',
-                        borderRadius: 12,
-                        padding: '0 10px',
-                        fontSize: 13,
+                        borderRadius: 10,
+                        padding: isEffectiveLandscape ? '0 8px' : '0 10px',
+                        fontSize: isEffectiveLandscape ? 11 : 13,
                         fontWeight: 800,
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        gap: 6,
+                        gap: 4,
                         whiteSpace: 'nowrap',
                         boxShadow: '0 4px 16px rgba(16,185,129,0.35)'
                       }}
                     >
-                      <CheckCircle size={15} /> Submit ({projectorAnswered.size}/{total})
+                      <CheckCircle size={isEffectiveLandscape ? 12 : 15} /> Submit ({projectorAnswered.size}/{total})
                     </button>
                   ) : (
-                    <div style={{ width: '100%', height: 42, display:'flex', flexDirection:'column', alignItems:'center', justifyContent: 'center', gap:3 }}>
-                      <div style={{ width:'100%', height:6, background:pillBg, borderRadius:99, overflow:'hidden', border:`1px solid ${pillBorder}` }}>
+                    <div style={{ width: '100%', height: isEffectiveLandscape ? 'calc(5vh - 4px)' : 42, display:'flex', flexDirection:'column', alignItems:'center', justifyContent: 'center', gap:2 }}>
+                      <div style={{ width:'100%', height: isEffectiveLandscape ? 4 : 6, background:pillBg, borderRadius:99, overflow:'hidden', border:`1px solid ${pillBorder}` }}>
                         <div style={{ height:'100%', background:'#3b82f6', borderRadius:99, width:`${(projectorAnswered.size / submitThreshold) * 100}%`, transition:'width 0.3s' }} />
                       </div>
-                      <span style={{ fontSize:10, fontWeight:700, color:headerSubtext, whiteSpace: 'nowrap' }}>{projectorAnswered.size}/{submitThreshold} to Submit</span>
+                      <span style={{ fontSize: isEffectiveLandscape ? 9 : 10, fontWeight:700, color:headerSubtext, whiteSpace: 'nowrap' }}>{projectorAnswered.size}/{submitThreshold} to Submit</span>
                     </div>
                   )}
                 </div>
@@ -1903,29 +1995,30 @@ export const FlashcardMcqView: React.FC<Props> = ({
                   }}
                   disabled={projectorQIndex === total - 1}
                   style={{
-                    height: 42,
+                    height: isEffectiveLandscape ? 'calc(5vh - 4px)' : 42,
+                    minHeight: isEffectiveLandscape ? 22 : undefined,
                     background: projectorQIndex === total - 1 ? (isThemeDark ? '#1e293b' : '#e2e8f0') : '#3b82f6',
                     color: projectorQIndex === total - 1 ? (isThemeDark ? '#64748b' : '#94a3b8') : '#ffffff',
                     border: 'none',
-                    borderRadius: 12,
-                    padding: '0 14px',
-                    fontSize: 13,
+                    borderRadius: 10,
+                    padding: isEffectiveLandscape ? '0 8px' : '0 14px',
+                    fontSize: isEffectiveLandscape ? 11 : 13,
                     fontWeight: 800,
                     cursor: projectorQIndex === total - 1 ? 'not-allowed' : 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: 4,
+                    gap: 3,
                     flexShrink: 0
                   }}
                 >
-                  Next <ChevronRight size={16} />
+                  Next <ChevronRight size={isEffectiveLandscape ? 13 : 16} />
                 </button>
               </div>
             )}
 
-            {/* App Bottom Navigation Bar (Visible in projector mode, hidden in focus mode) */}
-            {!projectorFocused && bottomNav && (
+            {/* App Bottom Navigation Bar (Visible in projector mode, hidden in landscape/focus mode) */}
+            {!projectorFocused && !isEffectiveLandscape && bottomNav && (
               <div style={{ zIndex: 25, flexShrink: 0, width: '100%' }}>
                 {bottomNav}
               </div>

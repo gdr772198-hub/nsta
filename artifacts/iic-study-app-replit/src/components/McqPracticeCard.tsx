@@ -65,13 +65,13 @@ const McqPracticeCard: React.FC<Props> = ({
   }
 
   return (
-    <div className="space-y-3.5">
-      <div className={`${questionCardClass} rounded-[22px] transition-colors ${isProjector ? 'p-6 sm:p-7' : 'p-4'}`}>
+    <div className="space-y-3.5 landscape:space-y-2">
+      <div className={`${questionCardClass} rounded-[22px] transition-colors ${isProjector ? 'p-5 sm:p-7 landscape:p-3 sm:landscape:p-4' : 'p-4 landscape:p-2.5'}`}>
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-2 landscape:mb-1">
               {number !== undefined && number !== null && (
-                <span className={`${isProjector ? 'text-2xl' : 'text-base'} font-black ${isDark ? 'text-amber-400' : isSepia ? 'text-amber-900' : 'text-slate-800'}`}>
+                <span className={`${isProjector ? 'text-xl sm:text-2xl landscape:text-lg' : 'text-base'} font-black ${isDark ? 'text-amber-400' : isSepia ? 'text-amber-900' : 'text-slate-800'}`}>
                   Q{number}.
                 </span>
               )}
@@ -87,11 +87,11 @@ const McqPracticeCard: React.FC<Props> = ({
                 questionClassName={
                   isProjector
                     ? isDark
-                      ? "font-bold text-slate-100 leading-relaxed tracking-wide"
+                      ? "font-bold text-slate-100 leading-relaxed tracking-wide landscape:text-sm sm:landscape:text-base"
                       : isSepia
-                        ? "font-bold text-amber-950 leading-relaxed"
-                        : "font-bold text-slate-900 leading-relaxed"
-                    : "text-[15px] font-bold text-slate-800 leading-relaxed"
+                        ? "font-bold text-amber-950 leading-relaxed landscape:text-sm sm:landscape:text-base"
+                        : "font-bold text-slate-900 leading-relaxed landscape:text-sm sm:landscape:text-base"
+                    : "text-[15px] font-bold text-slate-800 leading-relaxed landscape:text-sm"
                 }
               />
             </div>
@@ -123,7 +123,7 @@ const McqPracticeCard: React.FC<Props> = ({
         </div>
       </div>
 
-      <div className={isProjector ? 'space-y-3' : 'space-y-2'}>
+      <div className={isProjector ? 'space-y-2.5 sm:space-y-3 landscape:space-y-1.5' : 'space-y-2 landscape:space-y-1.5'}>
         {(q.options || []).map((opt, optionIndex) => {
           const isSelected = selectedOption === optionIndex;
           const isCorrect = optionIndex === q.correctAnswer;
@@ -191,13 +191,19 @@ const McqPracticeCard: React.FC<Props> = ({
                 onClick={() => onSelect?.(optionIndex)}
                 disabled={!canSelect || isEliminated}
                 className={`w-full text-left ${
-                  isProjector ? 'px-5 py-4 rounded-[18px]' : 'px-4 py-3 rounded-2xl'
+                  isProjector
+                    ? 'px-4 sm:px-5 py-3 sm:py-4 rounded-[18px] landscape:py-2 landscape:px-3 landscape:rounded-[12px]'
+                    : 'px-4 py-3 rounded-2xl landscape:py-2 landscape:px-3 landscape:rounded-xl'
                 } border-2 transition-all flex items-center gap-3 font-medium ${optionClass} ${
                   canSelect && !isEliminated ? 'active:scale-[0.99] cursor-pointer' : 'cursor-default'
                 }`}
               >
                 <span
-                  className={`${isProjector ? 'w-8 h-8 text-sm' : 'w-6 h-6 text-xs'} rounded-full border-2 flex items-center justify-center font-black shrink-0 transition-transform ${
+                  className={`${
+                    isProjector
+                      ? 'w-7 h-7 sm:w-8 sm:h-8 text-xs sm:text-sm landscape:w-6 landscape:h-6 landscape:text-xs'
+                      : 'w-6 h-6 text-xs'
+                  } rounded-full border-2 flex items-center justify-center font-black shrink-0 transition-transform ${
                     showResult && answered && isCorrect
                       ? 'bg-emerald-500 border-emerald-500 text-white scale-105'
                       : showResult && answered && isSelected
@@ -212,7 +218,7 @@ const McqPracticeCard: React.FC<Props> = ({
                   {String.fromCharCode(65 + optionIndex)}
                 </span>
                 <span
-                  className={`flex-1 leading-snug ${isProjector ? 'text-lg' : 'text-sm'} ${isEliminated ? 'line-through' : ''}`}
+                  className={`flex-1 leading-snug ${isProjector ? 'text-base sm:text-lg landscape:text-sm' : 'text-sm'} ${isEliminated ? 'line-through' : ''}`}
                   style={fontSize ? { fontSize } : undefined}
                   dangerouslySetInnerHTML={{ __html: renderMathInHtml(opt) }}
                 />

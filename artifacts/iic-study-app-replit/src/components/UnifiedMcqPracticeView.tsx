@@ -10,6 +10,7 @@ import { hapticLight, hapticMedium, hapticStrong } from '../utils/haptic';
 import McqQuestionDisplay from './McqQuestionDisplay';
 import { tryEarnScore } from '../utils/scoreSystem';
 import { getSkipDurationSeconds, formatDurationLabel, SkipEntry } from '../utils/officialMcqBank';
+import { rotateScreen } from '../utils/displayPrefs';
 
 export interface UnifiedMcqPracticeProps {
   questions: any[];
@@ -114,6 +115,52 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
   const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
   const [showExitModal, setShowExitModal] = useState<boolean>(false);
   const [isFinished, setIsFinished] = useState<boolean>(false);
+
+  // ── Screen Rotation & Landscape Mode (1/20 Top, 18/20 Content, 1/20 Bottom) ──
+  const [isManualLandscape, setIsManualLandscape] = useState<boolean>(false);
+  const [isDeviceLandscape, setIsDeviceLandscape] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth > window.innerHeight;
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const handleCheckOrientation = () => {
+      if (typeof window !== 'undefined') {
+        setIsDeviceLandscape(window.innerWidth > window.innerHeight);
+      }
+    };
+    window.addEventListener('resize', handleCheckOrientation);
+    window.addEventListener('orientationchange', handleCheckOrientation);
+    const handleCustomRotate = (e: any) => {
+      if (e?.detail?.orientation) {
+        setIsManualLandscape(e.detail.orientation === 'landscape');
+      }
+    };
+    window.addEventListener('nst-screen-rotate', handleCustomRotate);
+    return () => {
+      window.removeEventListener('resize', handleCheckOrientation);
+      window.removeEventListener('orientationchange', handleCheckOrientation);
+      window.removeEventListener('nst-screen-rotate', handleCustomRotate);
+    };
+  }, []);
+
+  const isRotatedOrLandscape = isManualLandscape || isDeviceLandscape;
+
+  const handleToggleRotate = async () => {
+    hapticLight();
+    try {
+      const res = await rotateScreen();
+      if (res !== null) {
+        setIsManualLandscape(res === 'landscape');
+      } else {
+        setIsManualLandscape(prev => !prev);
+      }
+    } catch {
+      setIsManualLandscape(prev => !prev);
+    }
+  };
 
   // Time tracking
   const [timeElapsed, setTimeElapsed] = useState<number>(0);
@@ -790,202 +837,317 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
         </div>
       )}
 
-      {/* ── TOP HEADER (Shown only when NOT embedded under parent slim bar) ── */}
-      {!hideTopHeader && (
-        <header className="bg-white border-b border-slate-200 px-3 sm:px-5 py-2 flex items-center justify-between gap-2.5 shrink-0 shadow-xs z-30 sticky top-0">
-          <div className="flex items-center gap-2.5 min-w-0 flex-1">
-            {/* Back button */}
+      {/* ── TOP HEADER / NAV BAR ── */}
+      {isRotatedOrLandscape ? (
+        /* Landscape 1/20 (5vh) Ultra-Slim Consolidated Control Bar */
+        <header
+          className="bg-white border-b border-slate-200 px-2 flex items-center justify-between gap-1.5 shrink-0 z-30 sticky top-0"
+          style={{ height: '5vh', minHeight: '26px', maxHeight: '38px' }}
+        >
+          {/* Left: Back & Question counter */}
+          <div className="flex items-center gap-1.5 min-w-0">
             <button
               type="button"
               onClick={() => {
                 hapticLight();
-                if (attemptedCount > 0) {
-                  setShowExitModal(true);
-                } else {
-                  onBack();
-                }
+                if (attemptedCount > 0) setShowExitModal(true);
+                else onBack();
               }}
-              className="p-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 active:scale-95 transition shrink-0 cursor-pointer"
+              className="h-[calc(5vh-6px)] min-h-[22px] px-2 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-700 active:scale-95 transition shrink-0 flex items-center gap-1 font-bold text-[11px]"
               title="Back"
-              aria-label="Back"
             >
-              <ArrowLeft size={18} />
+              <ArrowLeft size={13} />
+              <span className="hidden sm:inline">Back</span>
             </button>
-            
-            {/* Title & Stats */}
-            <div className="min-w-0">
-              <h1 className="font-extrabold text-slate-800 text-sm sm:text-base leading-tight truncate">
-                {title}
-              </h1>
-              <div className="flex items-center gap-2 text-[11px] text-slate-500 font-medium flex-wrap">
-                {isReattemptPhase ? (
-                  <>
-                    <span className="font-black text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
-                      ⚡ {getChanceLabel(reattemptRound)}: {currentUnsolvedPos}/{totalUnsolvedInRound} Unsolved
-                    </span>
-                    <span className="font-bold text-slate-600">
-                      (Q. {currentIndex + 1} of {totalQuestions})
-                    </span>
-                  </>
-                ) : (
-                  <span>Q. {currentIndex + 1} of {totalQuestions}</span>
-                )}
-                <span className="w-1 h-1 rounded-full bg-slate-300" />
-                <span className="text-emerald-600 font-bold">{attemptedCount} Answered</span>
-              </div>
-            </div>
+
+            <span className="font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded text-[11px] shrink-0">
+              Q{currentIndex + 1}/{totalQuestions}
+            </span>
+
+            {/* Countdown or Solved badge */}
+            {isCurrentAnswered ? (
+              <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-black px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-300">
+                <CheckCircle2 size={11} className="text-emerald-600" />
+                <span>Solved</span>
+              </span>
+            ) : (
+              <span className={`inline-flex items-center gap-1 font-mono font-black text-[10px] px-1.5 py-0.5 rounded-full border ${
+                qSecondsLeft <= 5 ? 'bg-rose-100 text-rose-700 border-rose-300' : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+              }`}>
+                <Clock size={11} />
+                <span>{qSecondsLeft}s</span>
+              </span>
+            )}
+
+            {isReattemptPhase && (
+              <span className="hidden md:inline font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded text-[10px] border border-amber-200 truncate">
+                ⚡ {getChanceLabel(reattemptRound)}
+              </span>
+            )}
           </div>
 
-          {/* Right: Timer & Palette Trigger */}
-          <div className="flex items-center gap-2 shrink-0">
-            {/* Timer pill */}
-            <div className="flex items-center gap-1.5 font-mono font-black text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-xs">
-              <Clock size={15} className="text-indigo-600" />
+          {/* Right: Quick actions (Timer, Rotate, Grid, Star, Attempted) */}
+          <div className="flex items-center gap-1 shrink-0">
+            {/* Elapsed Time */}
+            <div className="flex items-center gap-1 font-mono font-black text-[11px] px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200">
+              <Clock size={12} className="text-indigo-600" />
               <span>{formatTime(timeElapsed)}</span>
             </div>
 
-            {/* Question Palette Trigger Button */}
+            {/* Screen Rotate Button */}
+            <button
+              type="button"
+              onClick={handleToggleRotate}
+              className="h-[calc(5vh-6px)] min-h-[22px] px-2 rounded-lg bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 flex items-center gap-1 font-bold text-[11px] active:scale-95 transition"
+              title="Rotate Screen (Landscape / Portrait)"
+              aria-label="Rotate Screen"
+            >
+              <RotateCcw size={12} />
+              <span className="hidden sm:inline">Rotate</span>
+            </button>
+
+            {/* Question Palette Trigger */}
             <button
               type="button"
               onClick={() => {
                 hapticMedium();
                 setPaletteOpenState(true);
               }}
-              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-xs transition active:scale-95 cursor-pointer"
-              title="Open Question Grid"
+              className="h-[calc(5vh-6px)] min-h-[22px] px-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white flex items-center gap-1 font-bold text-[11px] active:scale-95 transition"
+              title="Question Palette Grid"
             >
-              <LayoutGrid size={15} />
-              <span className="hidden sm:inline">Grid</span>
-              <span className="bg-white/20 text-white text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold">
-                {isReattemptPhase ? `${currentUnsolvedPos}/${totalUnsolvedInRound} Left` : `${attemptedCount}/${totalQuestions}`}
-              </span>
+              <LayoutGrid size={12} />
+              <span>Grid ({attemptedCount}/{totalQuestions})</span>
+            </button>
+
+            {/* Bookmark */}
+            <button
+              type="button"
+              onClick={toggleMarkCurrent}
+              className={`h-[calc(5vh-6px)] min-h-[22px] w-[calc(5vh-6px)] min-w-[22px] rounded-lg border flex items-center justify-center transition active:scale-95 ${
+                isCurrentMarked ? 'bg-amber-100 border-amber-400 text-amber-800' : 'bg-white border-slate-200 text-slate-500'
+              }`}
+              title={isCurrentMarked ? 'Remove Mark' : 'Mark for Review'}
+            >
+              <Star size={12} className={isCurrentMarked ? 'fill-amber-500 text-amber-500' : ''} />
             </button>
           </div>
         </header>
+      ) : (
+        <>
+          {/* Normal Portrait Header */}
+          {!hideTopHeader && (
+            <header className="bg-white border-b border-slate-200 px-3 sm:px-5 py-2 flex items-center justify-between gap-2.5 shrink-0 shadow-xs z-30 sticky top-0">
+              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                {/* Back button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    hapticLight();
+                    if (attemptedCount > 0) {
+                      setShowExitModal(true);
+                    } else {
+                      onBack();
+                    }
+                  }}
+                  className="p-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 active:scale-95 transition shrink-0 cursor-pointer"
+                  title="Back"
+                  aria-label="Back"
+                >
+                  <ArrowLeft size={18} />
+                </button>
+                
+                {/* Title & Stats */}
+                <div className="min-w-0">
+                  <h1 className="font-extrabold text-slate-800 text-sm sm:text-base leading-tight truncate">
+                    {title}
+                  </h1>
+                  <div className="flex items-center gap-2 text-[11px] text-slate-500 font-medium flex-wrap">
+                    {isReattemptPhase ? (
+                      <>
+                        <span className="font-black text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                          ⚡ {getChanceLabel(reattemptRound)}: {currentUnsolvedPos}/{totalUnsolvedInRound} Unsolved
+                        </span>
+                        <span className="font-bold text-slate-600">
+                          (Q. {currentIndex + 1} of {totalQuestions})
+                        </span>
+                      </>
+                    ) : (
+                      <span>Q. {currentIndex + 1} of {totalQuestions}</span>
+                    )}
+                    <span className="w-1 h-1 rounded-full bg-slate-300" />
+                    <span className="text-emerald-600 font-bold">{attemptedCount} Answered</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right: Timer & Palette Trigger & Rotate */}
+              <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                {/* Rotate Screen button */}
+                <button
+                  type="button"
+                  onClick={handleToggleRotate}
+                  className="p-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 transition active:scale-95"
+                  title="Rotate Screen (Landscape Mode)"
+                  aria-label="Rotate Screen"
+                >
+                  <RotateCcw size={15} />
+                </button>
+
+                {/* Timer pill */}
+                <div className="flex items-center gap-1.5 font-mono font-black text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-xs">
+                  <Clock size={15} className="text-indigo-600" />
+                  <span>{formatTime(timeElapsed)}</span>
+                </div>
+
+                {/* Question Palette Trigger Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    hapticMedium();
+                    setPaletteOpenState(true);
+                  }}
+                  className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-xs transition active:scale-95 cursor-pointer"
+                  title="Open Question Grid"
+                >
+                  <LayoutGrid size={15} />
+                  <span className="hidden sm:inline">Grid</span>
+                  <span className="bg-white/20 text-white text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold">
+                    {isReattemptPhase ? `${currentUnsolvedPos}/${totalUnsolvedInRound} Left` : `${attemptedCount}/${totalQuestions}`}
+                  </span>
+                </button>
+              </div>
+            </header>
+          )}
+
+          {/* ── CONSOLIDATED CONTROLS & QUESTION NAVIGATION STRIP (Portrait 2nd Line) ── */}
+          <nav 
+            aria-label="Question Navigation and Controls Strip"
+            className="bg-white border-b border-slate-200 px-2 sm:px-3 py-1.5 flex items-center justify-between gap-1.5 shrink-0 shadow-xs z-20"
+          >
+            {/* Left: Quick question number selector */}
+            <div 
+              ref={quickStripRef}
+              className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 pr-1 min-w-0 flex-1 scroll-smooth"
+            >
+              {safeQuestions.map((_, idx) => {
+                const isAns = answers[idx] !== undefined;
+                const isMark = bookmarked.has(idx);
+                const isSkip = !isAns && skipped.has(idx);
+                const isCur = idx === currentIndex;
+
+                let pillStyle = 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200';
+                if (isAns && isMark) {
+                  pillStyle = 'bg-indigo-600 text-white border-indigo-700 font-black';
+                } else if (isAns) {
+                  pillStyle = 'bg-emerald-600 text-white border-emerald-700 font-black';
+                } else if (isMark) {
+                  pillStyle = 'bg-amber-400 text-slate-950 border-amber-500 font-black';
+                } else if (isSkip) {
+                  pillStyle = 'bg-rose-100 text-rose-700 border-rose-300 font-bold';
+                }
+
+                return (
+                  <button
+                    key={idx}
+                    type="button"
+                    data-qindex={idx}
+                    onClick={() => {
+                      hapticLight();
+                      setCurrentIndex(idx);
+                    }}
+                    className={`relative shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-lg text-xs flex items-center justify-center border transition-all active:scale-95 cursor-pointer ${pillStyle} ${
+                      isCur 
+                        ? 'ring-2 ring-indigo-600 ring-offset-2 ring-offset-white font-black scale-105 z-10' 
+                        : 'opacity-90'
+                    }`}
+                    title={`Question ${idx + 1}${isAns ? ' (Answered)' : isMark ? ' (Marked)' : ''}`}
+                  >
+                    {idx + 1}
+                    {isMark && (
+                      <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-amber-400 border border-white rounded-full flex items-center justify-center shadow-xs">
+                        <Star size={6} className="fill-amber-900 text-amber-900" />
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Right side controls: Question count, Font size, Bookmark, Community */}
+            <div className="flex items-center gap-1 shrink-0 pl-1 border-l border-slate-200">
+              <span 
+                className="text-[10px] font-mono font-bold text-slate-700 bg-slate-100 px-1.5 py-1 rounded-md border border-slate-200 shrink-0" 
+                title="Answered / Total Questions"
+              >
+                {attemptedCount}/{totalQuestions}
+              </span>
+
+              {/* Text Size Adjuster */}
+              <div className="flex items-center bg-slate-100 border border-slate-200 rounded-lg p-0.5 text-[11px] font-bold text-slate-600 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setFontSize('sm')}
+                  className={`px-1.5 py-0.5 rounded cursor-pointer transition-colors ${fontSize === 'sm' ? 'bg-white text-indigo-700 font-black shadow-xs' : 'hover:bg-slate-200 text-slate-600'}`}
+                  title="Small font"
+                >
+                  A-
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFontSize('base')}
+                  className={`px-1.5 py-0.5 rounded cursor-pointer transition-colors ${fontSize === 'base' ? 'bg-white text-indigo-700 font-black shadow-xs' : 'hover:bg-slate-200 text-slate-600'}`}
+                  title="Normal font"
+                >
+                  A
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFontSize('lg')}
+                  className={`px-1.5 py-0.5 rounded cursor-pointer transition-colors ${fontSize === 'lg' ? 'bg-white text-indigo-700 font-black shadow-xs' : 'hover:bg-slate-200 text-slate-600'}`}
+                  title="Large font"
+                >
+                  A+
+                </button>
+              </div>
+
+              {/* Bookmark Button */}
+              <button
+                type="button"
+                onClick={toggleMarkCurrent}
+                className={`w-7 h-7 flex items-center justify-center rounded-lg border transition cursor-pointer shrink-0 ${
+                  isCurrentMarked 
+                    ? 'bg-amber-100 border-amber-400 text-amber-800' 
+                    : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500'
+                }`}
+                title={isCurrentMarked ? 'Remove Mark' : 'Mark for Review'}
+              >
+                <Star size={14} className={isCurrentMarked ? 'fill-amber-500 text-amber-500' : ''} />
+              </button>
+
+              {/* Share to Community button */}
+              {onSendToMcqCommunity && (
+                <button
+                  type="button"
+                  onClick={() => onSendToMcqCommunity(currentQ)}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 transition cursor-pointer shrink-0"
+                  title="Share to MCQ Community"
+                >
+                  <Plus size={14} strokeWidth={2.5} />
+                </button>
+              )}
+            </div>
+          </nav>
+        </>
       )}
 
-      {/* ── CONSOLIDATED CONTROLS & QUESTION NAVIGATION STRIP (Single 2nd Line) ── */}
-      <nav 
-        aria-label="Question Navigation and Controls Strip"
-        className="bg-white border-b border-slate-200 px-2 sm:px-3 py-1.5 flex items-center justify-between gap-1.5 shrink-0 shadow-xs z-20"
+      {/* ── MAIN QUESTION BODY: 18/20 (90vh in rotated landscape, flex-1 in portrait) ── */}
+      <main
+        className={`overflow-y-auto w-full flex flex-col ${
+          isRotatedOrLandscape ? 'p-1 sm:p-2' : 'flex-1 p-0 sm:px-4 sm:py-4'
+        }`}
+        style={isRotatedOrLandscape ? { height: '90vh', flex: '0 0 90vh' } : undefined}
       >
-        {/* Left: Quick question number selector */}
-        <div 
-          ref={quickStripRef}
-          className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 pr-1 min-w-0 flex-1 scroll-smooth"
-        >
-          {safeQuestions.map((_, idx) => {
-            const isAns = answers[idx] !== undefined;
-            const isMark = bookmarked.has(idx);
-            const isSkip = !isAns && skipped.has(idx);
-            const isCur = idx === currentIndex;
-
-            let pillStyle = 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200';
-            if (isAns && isMark) {
-              pillStyle = 'bg-indigo-600 text-white border-indigo-700 font-black';
-            } else if (isAns) {
-              pillStyle = 'bg-emerald-600 text-white border-emerald-700 font-black';
-            } else if (isMark) {
-              pillStyle = 'bg-amber-400 text-slate-950 border-amber-500 font-black';
-            } else if (isSkip) {
-              pillStyle = 'bg-rose-100 text-rose-700 border-rose-300 font-bold';
-            }
-
-            return (
-              <button
-                key={idx}
-                type="button"
-                data-qindex={idx}
-                onClick={() => {
-                  hapticLight();
-                  setCurrentIndex(idx);
-                }}
-                className={`relative shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-lg text-xs flex items-center justify-center border transition-all active:scale-95 cursor-pointer ${pillStyle} ${
-                  isCur 
-                    ? 'ring-2 ring-indigo-600 ring-offset-2 ring-offset-white font-black scale-105 z-10' 
-                    : 'opacity-90'
-                }`}
-                title={`Question ${idx + 1}${isAns ? ' (Answered)' : isMark ? ' (Marked)' : ''}`}
-              >
-                {idx + 1}
-                {isMark && (
-                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-amber-400 border border-white rounded-full flex items-center justify-center shadow-xs">
-                    <Star size={6} className="fill-amber-900 text-amber-900" />
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Right side controls: Question count, Font size, Bookmark, Community (compact single line) */}
-        <div className="flex items-center gap-1 shrink-0 pl-1 border-l border-slate-200">
-          {/* Attempted / Total counter pill */}
-          <span 
-            className="text-[10px] font-mono font-bold text-slate-700 bg-slate-100 px-1.5 py-1 rounded-md border border-slate-200 shrink-0" 
-            title="Answered / Total Questions"
-          >
-            {attemptedCount}/{totalQuestions}
-          </span>
-
-          {/* Text Size Adjuster */}
-          <div className="flex items-center bg-slate-100 border border-slate-200 rounded-lg p-0.5 text-[11px] font-bold text-slate-600 shrink-0">
-            <button
-              type="button"
-              onClick={() => setFontSize('sm')}
-              className={`px-1.5 py-0.5 rounded cursor-pointer transition-colors ${fontSize === 'sm' ? 'bg-white text-indigo-700 font-black shadow-xs' : 'hover:bg-slate-200 text-slate-600'}`}
-              title="Small font"
-            >
-              A-
-            </button>
-            <button
-              type="button"
-              onClick={() => setFontSize('base')}
-              className={`px-1.5 py-0.5 rounded cursor-pointer transition-colors ${fontSize === 'base' ? 'bg-white text-indigo-700 font-black shadow-xs' : 'hover:bg-slate-200 text-slate-600'}`}
-              title="Normal font"
-            >
-              A
-            </button>
-            <button
-              type="button"
-              onClick={() => setFontSize('lg')}
-              className={`px-1.5 py-0.5 rounded cursor-pointer transition-colors ${fontSize === 'lg' ? 'bg-white text-indigo-700 font-black shadow-xs' : 'hover:bg-slate-200 text-slate-600'}`}
-              title="Large font"
-            >
-              A+
-            </button>
-          </div>
-
-          {/* Bookmark / Review Star Button */}
-          <button
-            type="button"
-            onClick={toggleMarkCurrent}
-            className={`w-7 h-7 flex items-center justify-center rounded-lg border transition cursor-pointer shrink-0 ${
-              isCurrentMarked 
-                ? 'bg-amber-100 border-amber-400 text-amber-800' 
-                : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-500'
-            }`}
-            title={isCurrentMarked ? 'Remove Mark' : 'Mark for Review'}
-          >
-            <Star size={14} className={isCurrentMarked ? 'fill-amber-500 text-amber-500' : ''} />
-          </button>
-
-          {/* Share to Community button */}
-          {onSendToMcqCommunity && (
-            <button
-              type="button"
-              onClick={() => onSendToMcqCommunity(currentQ)}
-              className="w-7 h-7 flex items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 transition cursor-pointer shrink-0"
-              title="Share to MCQ Community"
-            >
-              <Plus size={14} strokeWidth={2.5} />
-            </button>
-          )}
-        </div>
-      </nav>
-
-      {/* ── MAIN QUESTION BODY (Clean & Spacious, Native Full Screen) ── */}
-      <main className="flex-1 overflow-y-auto w-full flex flex-col p-0 sm:px-4 sm:py-4">
         {totalQuestions === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-white sm:rounded-2xl sm:border sm:border-slate-200 shadow-sm max-w-xl mx-auto my-auto">
             <AlertCircle size={44} className="text-slate-400 mb-3" />
@@ -1133,20 +1295,26 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
         )}
       </main>
 
-      {/* ── ERGONOMIC BOTTOM ACTION BAR (Sticky) ── */}
-      <footer className="bg-white border-t border-slate-200/90 px-3 sm:px-6 py-3 shadow-[0_-4px_12px_-2px_rgba(0,0,0,0.05)] sticky bottom-0 z-30 shrink-0 flex items-center justify-between gap-2 sm:gap-4">
-        
+      {/* ── ERGONOMIC BOTTOM ACTION BAR: 1/20 (5vh in rotated landscape, py-3 in portrait) ── */}
+      <footer 
+        className={`bg-white border-t border-slate-200/90 shadow-[0_-4px_12px_-2px_rgba(0,0,0,0.05)] sticky bottom-0 z-30 shrink-0 flex items-center justify-between ${
+          isRotatedOrLandscape ? 'px-2 gap-2' : 'px-3 sm:px-6 py-3 gap-2 sm:gap-4'
+        }`}
+        style={isRotatedOrLandscape ? { height: '5vh', minHeight: '26px', maxHeight: '38px' } : undefined}
+      >
         {/* Left: Back & Skip buttons */}
         <div className="flex items-center gap-1.5 sm:gap-2">
           <button
             type="button"
             onClick={handlePrev}
             disabled={currentIndex === 0}
-            className="flex items-center gap-1 sm:gap-1.5 px-3 sm:px-4 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs sm:text-sm disabled:opacity-30 disabled:pointer-events-none transition active:scale-95 cursor-pointer whitespace-nowrap"
+            className={`flex items-center gap-1 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold disabled:opacity-30 disabled:pointer-events-none transition active:scale-95 cursor-pointer whitespace-nowrap ${
+              isRotatedOrLandscape ? 'h-[calc(5vh-6px)] min-h-[22px] px-2.5 text-xs' : 'px-3 sm:px-4 py-2.5 text-xs sm:text-sm'
+            }`}
             aria-label="Previous question"
           >
-            <ChevronLeft size={16} />
-            <span>Back</span>
+            <ChevronLeft size={isRotatedOrLandscape ? 13 : 16} />
+            <span>Prev</span>
           </button>
         </div>
 
@@ -1154,9 +1322,11 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
         <button
           type="button"
           onClick={handleSubmitButtonClick}
-          className="flex items-center gap-1.5 px-3.5 sm:px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs sm:text-sm shadow-md shadow-emerald-600/25 transition cursor-pointer whitespace-nowrap"
+          className={`flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black shadow-md shadow-emerald-600/25 transition cursor-pointer whitespace-nowrap ${
+            isRotatedOrLandscape ? 'h-[calc(5vh-6px)] min-h-[22px] px-3 text-xs' : 'px-3.5 sm:px-5 py-2.5 text-xs sm:text-sm'
+          }`}
         >
-          <Trophy size={16} />
+          <Trophy size={isRotatedOrLandscape ? 13 : 16} />
           <span>Submit</span>
         </button>
 
@@ -1164,12 +1334,14 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
         <button
           type="button"
           onClick={handleNext}
-          className="flex items-center gap-1 sm:gap-1.5 px-3.5 sm:px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-extrabold text-xs sm:text-sm shadow-md shadow-indigo-600/25 transition cursor-pointer whitespace-nowrap"
+          className={`flex items-center gap-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-extrabold shadow-md shadow-indigo-600/25 transition cursor-pointer whitespace-nowrap ${
+            isRotatedOrLandscape ? 'h-[calc(5vh-6px)] min-h-[22px] px-3 text-xs' : 'px-3.5 sm:px-5 py-2.5 text-xs sm:text-sm'
+          }`}
         >
           <span>
-            {isCurrentAnswered ? 'Next Question' : (currentIndex >= totalQuestions - 1 ? 'Review & Submit' : 'Next Question')}
+            {isCurrentAnswered ? 'Next' : (currentIndex >= totalQuestions - 1 ? 'Review & Submit' : 'Next')}
           </span>
-          <ChevronRight size={16} />
+          <ChevronRight size={isRotatedOrLandscape ? 13 : 16} />
         </button>
       </footer>
 
