@@ -140,7 +140,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
   const [projectorQIndex, setProjectorQIndex] = useState(0);
   const [projectorReveal, setProjectorReveal] = useState(false);
   const [projectorSelected, setProjectorSelected] = useState<number | null>(null);
-  const [projectorRotated, setProjectorRotated] = useState(false);
+  const [projectorRotated, setProjectorRotated] = useState(true);
   const [projectorFocused, setProjectorFocused] = useState(false);
   const [fcFocused, setFcFocused] = useState(false);
 
@@ -383,6 +383,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
   useEffect(() => {
     if (startInProjectorMode) {
       setIsProjectorMode(true);
+      setProjectorRotated(true);
       setProjectorQIndex(0);
       setProjectorReveal(false);
       setProjectorFocused(false);
@@ -931,7 +932,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
             {/* Projector Mode */}
             {questions.length > 0 && (
               <button
-                onClick={() => { setProjectorQIndex(0); setProjectorReveal(false); setProjectorRotated(false); setProjectorAnswered(new Set()); setProjectorSkipped(new Set()); setProjectorNavigatorOpen(false); setProjectorCorrect(0); setProjectorWrong(0); setProjectorSelections({}); setProjectorShowReview(false); setIsProjectorMode(true); }}
+                onClick={() => { setProjectorQIndex(0); setProjectorReveal(false); setProjectorRotated(true); setProjectorAnswered(new Set()); setProjectorSkipped(new Set()); setProjectorNavigatorOpen(false); setProjectorCorrect(0); setProjectorWrong(0); setProjectorSelections({}); setProjectorShowReview(false); setIsProjectorMode(true); }}
                 className="p-2 rounded-full bg-white/10 hover:bg-amber-500 text-amber-300 hover:text-white active:scale-95 transition"
                 title="Projector Mode"
                 aria-label="Projector Mode"
@@ -1003,6 +1004,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
                           setProjectorNavigatorOpen(false);
                           setProjectorSelections({});
                           setProjectorShowReview(false);
+                          setProjectorRotated(true);
                           setIsProjectorMode(true);
                           onProjectorModeChange?.(true);
                         }}

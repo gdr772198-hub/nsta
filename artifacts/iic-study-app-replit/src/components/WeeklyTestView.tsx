@@ -5,13 +5,14 @@ import { WeeklyTest, MCQItem } from '../types';
 import { 
   Clock, AlertTriangle, CheckCircle, Trophy, ArrowLeft, ChevronLeft, 
   ChevronRight, Bookmark, Star, LayoutGrid, X, Check, RotateCcw, 
-  HelpCircle, Eye, AlertCircle, Sparkles, Filter, CheckCircle2
+  HelpCircle, Eye, AlertCircle, Sparkles, Filter, CheckCircle2, Tv
 } from 'lucide-react';
 import { addMistakes, removeMistakeByQuestion } from '../utils/mistakeBank';
 import { renderMathInHtml } from '../utils/mathUtils';
 import { hapticLight, hapticMedium, hapticStrong } from '../utils/haptic';
 import McqQuestionDisplay from './McqQuestionDisplay';
 import { SkipEntry, getSkipDurationSeconds, formatDurationLabel } from '../utils/officialMcqBank';
+import { FlashcardMcqView } from './FlashcardMcqView';
 
 interface Props {
   test: WeeklyTest;
@@ -65,6 +66,7 @@ export const WeeklyTestView: React.FC<Props> = ({ test, onComplete, onExit }) =>
   const [paletteFilter, setPaletteFilter] = useState<'all' | 'attempted' | 'marked' | 'skipped' | 'unattempted'>('all');
   const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
   const [showExitModal, setShowExitModal] = useState<boolean>(false);
+  const [showProjector, setShowProjector] = useState<boolean>(false);
   const [fontSize, setFontSize] = useState<'sm' | 'base' | 'lg'>('base');
 
   const [showResumeModal, setShowResumeModal] = useState<{
@@ -701,11 +703,29 @@ export const WeeklyTestView: React.FC<Props> = ({ test, onComplete, onExit }) =>
           </div>
         </div>
 
-        {/* Right: Timer & Palette Trigger */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Right: Premium MCQ, Timer & Palette Trigger */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Premium MCQ (Projector Mode) button */}
+          {safeQuestions.length > 0 && (
+            <button
+              type="button"
+              id="btn-weekly-test-projector"
+              onClick={() => {
+                hapticLight();
+                setShowProjector(true);
+              }}
+              className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-slate-950 font-black text-xs shadow-xs transition active:scale-95 cursor-pointer border border-amber-300"
+              title="Premium MCQ (Projector Mode)"
+            >
+              <Tv size={14} className="shrink-0" />
+              <span className="hidden sm:inline">Premium MCQ</span>
+              <span className="sm:hidden">Premium</span>
+            </button>
+          )}
+
           {/* Live Countdown Timer */}
           <div 
-            className={`flex items-center gap-1.5 font-mono font-black text-xs sm:text-sm px-3 py-1.5 rounded-xl shadow-xs border transition-all ${
+            className={`flex items-center gap-1.5 font-mono font-black text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 rounded-xl shadow-xs border transition-all ${
               timeLeft < 300 
                 ? 'bg-rose-50 text-rose-600 border-rose-200 animate-pulse' 
                 : 'bg-indigo-50 text-indigo-700 border-indigo-200'
@@ -1483,6 +1503,16 @@ export const WeeklyTestView: React.FC<Props> = ({ test, onComplete, onExit }) =>
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Premium MCQ (Projector Mode) Overlay ── */}
+      {showProjector && (
+        <FlashcardMcqView
+          questions={safeQuestions}
+          title={test.name || 'Weekly Test & Challenge'}
+          startInProjectorMode={true}
+          onBack={() => setShowProjector(false)}
+        />
       )}
 
     </div>

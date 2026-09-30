@@ -34,8 +34,10 @@ import {
   SkipForward,
   FastForward,
   Clock,
-  AlertTriangle
+  AlertTriangle,
+  Tv
 } from 'lucide-react';
+import { FlashcardMcqView } from './FlashcardMcqView';
 import {
   getOfficial100Mcqs,
   getOfficialDailyProgress,
@@ -128,6 +130,7 @@ export const McqHub: React.FC<McqHubProps> = ({
   const [activeSubMode, setActiveSubMode] = useState<'OFFICIAL' | 'BATTLES'>(
     initialMode || (initialMcqDraft ? 'BATTLES' : 'OFFICIAL')
   );
+  const [showProjector, setShowProjector] = useState<boolean>(false);
 
   // Sound toggle
   const [soundOn, setSoundOn] = useState<boolean>(() => isSoundEnabled());
@@ -1879,10 +1882,24 @@ export const McqHub: React.FC<McqHubProps> = ({
               </span>
             </div>
 
-            {/* Right: Compact Action Buttons (Review All, Restart, Sound) */}
+            {/* Right: Compact Action Buttons (Premium MCQ, Review All, Restart, Sound) */}
             <div className="flex items-center gap-1 shrink-0">
               {totalOfficialCount > 0 && (
                 <>
+                  <button
+                    id="mcq-btn-projector"
+                    type="button"
+                    onClick={() => {
+                      setShowProjector(true);
+                      if (soundOn) playSoundClick();
+                    }}
+                    className="h-6.5 px-2 rounded-lg border border-amber-300 bg-amber-400 hover:bg-amber-300 text-slate-950 flex items-center gap-1 text-[11px] font-black active:scale-95 transition-all cursor-pointer shadow-2xs"
+                    title="Premium MCQ (Projector Mode)"
+                  >
+                    <Tv size={12} className="text-slate-950" />
+                    <span>Premium MCQ</span>
+                  </button>
+
                   <button
                     id="mcq-btn-review-all"
                     type="button"
@@ -3985,6 +4002,18 @@ export const McqHub: React.FC<McqHubProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Premium MCQ (Projector Mode) Overlay ── */}
+      {showProjector && officialQuestions.length > 0 && (
+        <FlashcardMcqView
+          questions={officialQuestions}
+          title={`Official MCQs • ${AVAILABLE_CLASSES.find((c) => c.id === officialClass)?.label || `Class ${officialClass}`}`}
+          startInProjectorMode={true}
+          onBack={() => setShowProjector(false)}
+          user={user}
+          settings={settings}
+        />
       )}
     </div>
   );

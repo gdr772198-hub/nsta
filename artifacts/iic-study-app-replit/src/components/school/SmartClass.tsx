@@ -10,12 +10,13 @@ import {
   BookOpen, Edit3, FileText, HelpCircle, X,
   Download, WifiOff, ExternalLink, LayoutGrid, ChevronDown,
   RotateCcw, Maximize2, Minimize2, BrainCircuit, Sparkles,
-  ChevronRight, CheckCircle, RefreshCw, Trash2, Save, Plus, Check,
+  ChevronRight, CheckCircle, RefreshCw, Trash2, Save, Plus, Check, Tv,
 } from "lucide-react";
 import { saveLesson, deleteLesson } from "../../school-firebase";
 import type { LessonMCQ } from "../../school-types";
 import McqQuestionDisplay from "../McqQuestionDisplay";
 import { DirectUploadButton } from "../DirectUploadButton";
+import { FlashcardMcqView } from "../FlashcardMcqView";
 
 type Mode = "reading" | "writing" | "pdf" | "mcq";
 type NightMode = "normal" | "night" | "sepia";
@@ -114,6 +115,7 @@ export const SmartClass: React.FC<Props> = ({
   const [showModePopup, setShowModePopup]         = useState(false);
   const [showContextSheet, setShowContextSheet]   = useState(false);
   const [showAdminBoard, setShowAdminBoard]        = useState(false);
+  const [showProjector, setShowProjector]          = useState(false);
   const [savedMsg, setSavedMsg]                   = useState<string | null>(null);
 
   // ── Write Mode Score Session ────────────────────────────────────────────────
@@ -720,6 +722,18 @@ export const SmartClass: React.FC<Props> = ({
           <span className="bg-white/20 px-2.5 py-1 rounded-full text-[11px] font-black text-white whitespace-nowrap">
             {totalQ} Qs
           </span>
+          {totalQ > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowProjector(true)}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs shadow-sm transition active:scale-95 shrink-0"
+              title="Premium MCQ (Projector Mode)"
+            >
+              <Tv size={13} className="text-slate-950" />
+              <span className="hidden xs:inline">Premium MCQ</span>
+              <span className="xs:hidden">Premium</span>
+            </button>
+          )}
           {enabledModes.length > 1 && (
             <button
               onClick={() => setShowModePopup(v => !v)}
@@ -1078,6 +1092,22 @@ export const SmartClass: React.FC<Props> = ({
 
         {/* Admin Edit FAB + Sheet */}
         {adminEditUI}
+
+        {/* ── Premium MCQ (Projector Mode) Overlay ── */}
+        {showProjector && mcqs.length > 0 && (
+          <FlashcardMcqView
+            questions={mcqs.map((q: any) => ({
+              question: q.question,
+              options: q.options || [],
+              correctAnswer: typeof q.correctIndex === 'number' ? q.correctIndex : q.correctAnswer ?? 0,
+              explanation: q.explanation || '',
+            }))}
+            title={lesson.title}
+            subject="School"
+            startInProjectorMode={true}
+            onBack={() => setShowProjector(false)}
+          />
+        )}
       </div>
     );
   }

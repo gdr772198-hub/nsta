@@ -503,6 +503,13 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     };
   }, []);
 
+  // Projector / Live MCQ mode default rotated screen
+  useEffect(() => {
+    if (currentRoom?.mcqType === 'PROJECTOR_MODE' || currentRoom?.mode === 'LIVE_MCQ') {
+      setIsScreenRotated(true);
+    }
+  }, [currentRoom?.mcqType, currentRoom?.mode]);
+
   const handleToggleRotate = async () => {
     try {
       const res = await rotateScreen();
@@ -2511,22 +2518,6 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               }
             }}
           >
-            {/* Rotate Screen Button (Always in Top Bar, Same Size as Other Buttons) */}
-            <button
-              type="button"
-              onClick={handleToggleRotate}
-              className={`h-9 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition shadow-sm cursor-pointer whitespace-nowrap shrink-0 ${
-                isScreenRotated
-                  ? 'bg-purple-600/30 text-purple-200 border-purple-500/60 shadow-purple-500/20'
-                  : 'bg-slate-800/90 hover:bg-slate-700 text-slate-200 border-slate-700'
-              }`}
-              title={isScreenRotated ? 'Switch to Portrait' : 'Rotate Screen (Landscape / Portrait)'}
-              aria-label="Rotate Screen"
-            >
-              <RotateCw size={14} className={`shrink-0 transition-transform ${isScreenRotated ? 'rotate-90 text-purple-300' : ''}`} />
-              <span>Rotate</span>
-            </button>
-
             {currentRoom && (
               <button
                 type="button"
@@ -3067,14 +3058,14 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                           <span className="text-[10px] font-bold text-slate-400 uppercase">MCQ Mode:</span>
                           <button
                             onClick={() => handleSwitchMcqType('PROJECTOR_MODE')}
-                            className={`px-2.5 py-1 rounded-lg text-[10px] font-black cursor-pointer transition ${
+                            className={`px-2.5 py-1 rounded-lg text-[10px] font-black cursor-pointer transition flex items-center gap-1 ${
                               currentRoom.mcqType === 'PROJECTOR_MODE' || currentRoom.mcqType === 'MCQ_PRACTICE'
-                                ? 'bg-cyan-500 text-slate-950 shadow-sm'
+                                ? 'bg-amber-400 text-slate-950 shadow-sm'
                                 : 'bg-slate-800 text-slate-300 hover:text-white'
                             }`}
-                            title="Ek Lesson ke Pure MCQs (Notes, Lucent & Homework)"
+                            title="Premium MCQ (Projector Mode)"
                           >
-                            🎯 MCQ
+                            <span>📺</span> Premium MCQ
                           </button>
                           <button
                             onClick={() => handleSwitchMcqType('REVISION_HUB')}
@@ -3356,7 +3347,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                 <span>1. MCQ Battle Mode:</span>
                               </span>
                               <span className="text-[10px] font-bold text-slate-400">
-                                {currentRoom.mcqType === 'REVISION_HUB' ? '⚡ MCQ + Active' : '🎯 MCQ Mode Active'}
+                                {currentRoom.mcqType === 'REVISION_HUB' ? '⚡ MCQ + Active' : '📺 Premium MCQ Active'}
                               </span>
                             </div>
                             <div className="grid grid-cols-2 gap-2">
@@ -3371,16 +3362,16 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                 }}
                                 className={`p-2.5 rounded-xl border text-left cursor-pointer transition relative ${
                                   currentRoom.mcqType !== 'REVISION_HUB'
-                                    ? 'bg-cyan-600/30 border-cyan-400 text-white shadow ring-1 ring-cyan-500/50'
+                                    ? 'bg-amber-500/20 border-amber-400 text-white shadow ring-1 ring-amber-500/50'
                                     : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
                                 }`}
                               >
                                 <div className="flex items-center justify-between">
                                   <span className="text-xs font-black flex items-center gap-1">
-                                    <span>🎯</span> MCQ Mode
+                                    <span>📺</span> Premium MCQ (Projector)
                                   </span>
                                   {currentRoom.mcqType !== 'REVISION_HUB' && (
-                                    <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
                                   )}
                                 </div>
                                 <p className="text-[9px] text-slate-300 mt-0.5">Syllabus & All Competition Books</p>

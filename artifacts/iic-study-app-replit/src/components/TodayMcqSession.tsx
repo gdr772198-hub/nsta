@@ -162,7 +162,7 @@ export const TodayMcqSession: React.FC<Props> = ({ user, topics, onClose, onComp
     const [projectorAnswered, setProjectorAnswered] = useState<Set<number>>(new Set());
     const [projectorCorrect, setProjectorCorrect] = useState(0);
     const [projectorWrong, setProjectorWrong] = useState(0);
-    const [projectorRotated, setProjectorRotated] = useState(false);
+    const [projectorRotated, setProjectorRotated] = useState(true);
     const [projectorFocused, setProjectorFocused] = useState(false);
     const [projectorNavigatorOpen, setProjectorNavigatorOpen] = useState(false);
 
@@ -1353,7 +1353,7 @@ export const TodayMcqSession: React.FC<Props> = ({ user, topics, onClose, onComp
                         </span>
                     </div>
                     <button
-                        onClick={() => { setProjectorQIdx(0); setProjectorSelected(null); setProjectorAnswered(new Set()); setProjectorCorrect(0); setProjectorWrong(0); setProjectorRotated(false); setProjectorFocused(false); setIsProjectorMode(true); }}
+                        onClick={() => { setProjectorQIdx(0); setProjectorSelected(null); setProjectorAnswered(new Set()); setProjectorCorrect(0); setProjectorWrong(0); setProjectorRotated(true); setProjectorFocused(false); setIsProjectorMode(true); }}
                         className="w-8 h-8 flex items-center justify-center rounded-xl bg-amber-100 border border-amber-300 text-amber-600 active:scale-90 transition-all shrink-0"
                         title="Projector Mode"
                     >

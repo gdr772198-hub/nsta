@@ -894,18 +894,6 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
               <span>{formatTime(timeElapsed)}</span>
             </div>
 
-            {/* Screen Rotate Button */}
-            <button
-              type="button"
-              onClick={handleToggleRotate}
-              className="h-[calc(5vh-6px)] min-h-[22px] px-2 rounded-lg bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 flex items-center gap-1 font-bold text-[11px] active:scale-95 transition"
-              title="Rotate Screen (Landscape / Portrait)"
-              aria-label="Rotate Screen"
-            >
-              <RotateCcw size={12} />
-              <span className="hidden sm:inline">Rotate</span>
-            </button>
-
             {/* Question Palette Trigger */}
             <button
               type="button"
@@ -981,19 +969,8 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
                 </div>
               </div>
 
-              {/* Right: Timer & Palette Trigger & Rotate */}
+              {/* Right: Timer & Palette Trigger */}
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-                {/* Rotate Screen button */}
-                <button
-                  type="button"
-                  onClick={handleToggleRotate}
-                  className="p-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 transition active:scale-95"
-                  title="Rotate Screen (Landscape Mode)"
-                  aria-label="Rotate Screen"
-                >
-                  <RotateCcw size={15} />
-                </button>
-
                 {/* Timer pill */}
                 <div className="flex items-center gap-1.5 font-mono font-black text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-xs">
                   <Clock size={15} className="text-indigo-600" />
