@@ -6,6 +6,7 @@ import { ModernVideoPlayer } from './ModernVideoPlayer';
 import { ModernAudioPlayer } from './ModernAudioPlayer';
 import { ModernPdfViewer } from './ModernPdfViewer';
 import { OfflineDownloadsHub } from './OfflineDownloadsHub';
+import { AdminLucentMediaModal } from './AdminLucentMediaModal';
 import { createPortal } from "react-dom";
 import { FeatureHints, FeatureTipsList } from "./FeatureHints";
 import { TopBarEffectsLayer } from "../utils/topBarEffects";
@@ -358,7 +359,7 @@ import { PedroVipExpiryModal } from "./PedroVipExpiryModal";
 import { Pedro3DMascot } from "./Pedro3DMascot";
 import { Pedro3DViewerModal } from "./Pedro3DViewerModal";
 import { ProfileCameraModal } from "./ProfileCameraModal";
-import { uploadImageToTelegram } from "../services/telegramStorageService";
+import { uploadImageToTelegram, uploadToTelegramStorage } from "../services/telegramStorageService";
 import { StudentHistoryModal } from "./StudentHistoryModal";
 import { AdminWhiteBoard } from "./AdminWhiteBoard";
 import { generateDailyRoutine } from "../utils/routineGenerator";
@@ -976,6 +977,9 @@ export const StudentDashboard: React.FC<Props> = ({
   const _isAdminUser = (user as any).role === 'ADMIN' || (user as any).role === 'SUB_ADMIN';
   const [showAdminBoard, setShowAdminBoard] = React.useState(false);
   const [showDownloadsHub, setShowDownloadsHub] = React.useState(false);
+  const [showAdminLucentMediaModal, setShowAdminLucentMediaModal] = React.useState(false);
+  const [adminMediaModalEntry, setAdminMediaModalEntry] = React.useState<any>(null);
+  const [adminMediaModalPageIndex, setAdminMediaModalPageIndex] = React.useState<number>(-1);
 
   const tierTheme =
     // 1. User-selected theme must win over admin defaults after purchase/apply.
@@ -1358,7 +1362,7 @@ export const StudentDashboard: React.FC<Props> = ({
     if (_isAdm && !isCreditMode) { action(); return; }
 
     // In Without Credit Mode (Free or VIP), all study content is 0 🪙 / 0 💎 free
-    const isWithoutCredit = (user.studyMode || 'WITHOUT_CREDIT') !== 'CREDIT';
+    const isWithoutCredit = (user.studyMode || 'CREDIT') !== 'CREDIT';
     if (isWithoutCredit) {
       action();
       return;
@@ -1397,7 +1401,7 @@ export const StudentDashboard: React.FC<Props> = ({
     const isCreditMode = user.studyMode === 'CREDIT';
     const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
     if (_isAdm && !isCreditMode) { action(); return; }
-    const isWithoutCredit = (user.studyMode || 'WITHOUT_CREDIT') !== 'CREDIT';
+    const isWithoutCredit = (user.studyMode || 'CREDIT') !== 'CREDIT';
     if (isWithoutCredit) { action(); return; }
     setCoinGate({
       cost: 0,
@@ -1414,7 +1418,7 @@ export const StudentDashboard: React.FC<Props> = ({
   // Study content is permanently free & unlocked for Without Credit users (Free & VIP), and 1st lesson of every subject for all users
   const isStudyContentAlwaysUnlocked = (entry?: any) => {
     // In Credit Economy Mode (VIP+ / Credit ON), pages require credit deduction & confirmation popup
-    if (user.studyMode === 'CREDIT') return false;
+    if ((user.studyMode || 'CREDIT') === 'CREDIT') return false;
     const targetEntry = entry || lucentNoteViewer;
     if (targetEntry && isFirstLessonOfSubject(targetEntry, settings?.lucentNotes)) return true;
     // In Without Credit Mode (VIP / Credit OFF), study content is 0 credits
@@ -4056,13 +4060,26 @@ export const StudentDashboard: React.FC<Props> = ({
     window.addEventListener('nst-screen-rotate', handleOrientation);
     return () => window.removeEventListener('nst-screen-rotate', handleOrientation);
   }, []);
+
+  // Listen for video top bar toggle (NSTA logo / fullscreen tap hides/shows dashboard UI)
+  useEffect(() => {
+    const handleVideoTopBar = (e: any) => {
+      const isHidden = e.detail?.isTopBarHidden;
+      if (typeof isHidden === 'boolean') {
+        setIsLandscapeUiHidden(isHidden);
+        setLucentImmersive(isHidden);
+        setHwImmersive(isHidden);
+        setIsTopBarHidden(isHidden);
+      }
+    };
+    window.addEventListener('nsta-video-topbar-change', handleVideoTopBar);
+    return () => window.removeEventListener('nsta-video-topbar-change', handleVideoTopBar);
+  }, []);
   useEffect(() => {
     try {
       const mq = window.matchMedia('(orientation: landscape)');
       const handler = (e: MediaQueryListEvent) => {
         setIsLandscape(e.matches);
-        setIsTopBarHidden(false);
-        setIsLandscapeUiHidden(false);
       };
       mq.addEventListener('change', handler);
       return () => mq.removeEventListener('change', handler);
@@ -5402,6 +5419,46 @@ export const StudentDashboard: React.FC<Props> = ({
   const [inlineEditPoints, setInlineEditPoints] = useState<string[]>([]);
   const [inlineEditPointIdx, setInlineEditPointIdx] = useState<number | null>(null);
   const [inlineEditPointDraft, setInlineEditPointDraft] = useState('');
+  const [inlineEditUploading, setInlineEditUploading] = useState(false);
+  const [inlineEditUploadProgress, setInlineEditUploadProgress] = useState(0);
+  const inlineEditDraftTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const inlineEditFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleInsertInlinePhoto = async (file: File) => {
+    if (!file) return;
+    setInlineEditUploading(true);
+    setInlineEditUploadProgress(15);
+    try {
+      const res = await uploadToTelegramStorage(file, {
+        fileName: `notes_pic_${Date.now()}.jpg`,
+        caption: 'Notes Diagram',
+        onProgress: (pct) => setInlineEditUploadProgress(pct),
+      });
+      if (res?.url) {
+        setInlineEditUploadProgress(100);
+        const cursor = inlineEditDraftTextareaRef.current?.selectionStart ?? inlineEditPointDraft.length;
+        const before = inlineEditPointDraft.slice(0, cursor);
+        const after = inlineEditPointDraft.slice(cursor);
+        const isHtml = inlineEditModal?.type.endsWith('_html');
+        if (isHtml) {
+          const imgHtml = `\n<div style="text-align:center; margin:16px 0;"><img src="${res.url}" alt="Diagram" style="max-width:100%; border-radius:12px; margin:0 auto; box-shadow:0 2px 8px rgba(0,0,0,0.08);" /></div>\n`;
+          setInlineEditPointDraft(`${before}${imgHtml}${after}`);
+        } else {
+          // Chunk mode: insert photo markdown
+          // The words before cursor stay on top, the photo is added, and whatever follows is placed below!
+          const imgMd = `\n\n![Notes Photo](${res.url})\n\n`;
+          setInlineEditPointDraft(`${before.trimEnd()}${imgMd}${after.trimStart()}`);
+        }
+        showAlert('✅ Photo Telegram Cloud par upload ho gayi!', 'SUCCESS');
+      } else {
+        throw new Error('Upload fail');
+      }
+    } catch {
+      showAlert('Photo upload fail ho gayi. Dobara koshish karein.', 'ERROR');
+    } finally {
+      setInlineEditUploading(false);
+    }
+  };
 
   // ── Admin Page Editor (lucentPageListViewer inline editor) ──────────────────
   const [adminPageEdit, setAdminPageEdit] = useState<{ entry: LucentNoteEntry; pageIdx: number } | null>(null);
@@ -14668,21 +14725,20 @@ export const StudentDashboard: React.FC<Props> = ({
                           </div>
 
                           <div className="flex items-center gap-1 shrink-0">
-                            {_pLvl.level >= 2 && (
-                              <button
-                                onClick={() => setShowLevelLeaderboard(true)}
-                                className="px-1.5 py-0.5 rounded-md font-bold flex items-center gap-1 text-[8.5px] active:scale-95 transition-transform cursor-pointer"
-                                style={{
-                                  background: 'rgba(245,158,11,0.18)',
-                                  color: '#fbbf24',
-                                  border: '1px solid rgba(245,158,11,0.40)',
-                                }}
-                                title="Open Level Leaderboard"
-                              >
-                                <Trophy size={9} className="text-amber-400" />
-                                <span>Ranks</span>
-                              </button>
-                            )}
+                            {/* Ranks (Unlocked for all levels) */}
+                            <button
+                              onClick={() => setShowLevelLeaderboard(true)}
+                              className="px-1.5 py-0.5 rounded-md font-bold flex items-center gap-1 text-[8.5px] active:scale-95 transition-transform cursor-pointer"
+                              style={{
+                                background: 'rgba(245,158,11,0.18)',
+                                color: '#fbbf24',
+                                border: '1px solid rgba(245,158,11,0.40)',
+                              }}
+                              title="Open Level Leaderboard"
+                            >
+                              <Trophy size={9} className="text-amber-400" />
+                              <span>Ranks</span>
+                            </button>
                             <div className="px-1.5 py-0.5 rounded-md font-black text-[9px] text-slate-950 font-bold" style={{
                               background: 'linear-gradient(135deg, #fde68a, #eab308)',
                               boxShadow: '0 1px 6px rgba(234, 179, 8, 0.45)',
@@ -14942,53 +14998,51 @@ export const StudentDashboard: React.FC<Props> = ({
               );
             })()}
 
-            {/* 2. Theme Studio Row (Unlocked at Level 3) */}
-            {_pLvl.level >= 3 && (
-              <button
-                onClick={() => {
-                  themeOpenerRef.current = 'PROFILE';
-                  onTabChange('THEME_CUSTOMIZER' as any);
+            {/* 2. Theme Studio Row (Unlocked for Level 1) */}
+            <button
+              onClick={() => {
+                themeOpenerRef.current = 'PROFILE';
+                onTabChange('THEME_CUSTOMIZER' as any);
+              }}
+              className={`w-full px-4 py-3.5 flex items-center gap-3.5 ${_pHovCls} transition-colors cursor-pointer text-left`}
+              style={{ borderBottom: _pSep }}
+            >
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-xs"
+                style={{
+                  background: _light ? `${tierTheme.primary}18` : 'rgba(234, 179, 8, 0.15)',
+                  border: _light ? `1.5px solid ${tierTheme.primary}40` : '1.5px solid rgba(234, 179, 8, 0.40)',
                 }}
-                className={`w-full px-4 py-3.5 flex items-center gap-3.5 ${_pHovCls} transition-colors cursor-pointer text-left`}
-                style={{ borderBottom: _pSep }}
               >
-                <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-xs"
-                  style={{
-                    background: _light ? `${tierTheme.primary}18` : 'rgba(234, 179, 8, 0.15)',
-                    border: _light ? `1.5px solid ${tierTheme.primary}40` : '1.5px solid rgba(234, 179, 8, 0.40)',
-                  }}
-                >
-                  <Palette size={19} style={{ color: _light ? tierTheme.primary : '#fbbf24' }} />
+                <Palette size={19} style={{ color: _light ? tierTheme.primary : '#fbbf24' }} />
+              </div>
+              <div className="flex-1 text-left min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <p className={`text-sm font-bold ${_pTxt}`}>Theme Studio</p>
+                  <span
+                    className="text-[8.5px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-wide font-mono"
+                    style={{
+                      background: _light ? `${tierTheme.primary}20` : 'rgba(234, 179, 8, 0.15)',
+                      color: _light ? tierTheme.primary : '#fde047',
+                      border: _light ? `1px solid ${tierTheme.primary}35` : '1px solid rgba(234, 179, 8, 0.35)',
+                    }}
+                  >
+                    {user.personalTheme ? '🎨 Custom Active' : 'Studio'}
+                  </span>
                 </div>
-                <div className="flex-1 text-left min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <p className={`text-sm font-bold ${_pTxt}`}>Theme Studio</p>
-                    <span
-                      className="text-[8.5px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-wide font-mono"
-                      style={{
-                        background: _light ? `${tierTheme.primary}20` : 'rgba(234, 179, 8, 0.15)',
-                        color: _light ? tierTheme.primary : '#fde047',
-                        border: _light ? `1px solid ${tierTheme.primary}35` : '1px solid rgba(234, 179, 8, 0.35)',
-                      }}
-                    >
-                      {user.personalTheme ? '🎨 Custom Active' : 'Studio'}
-                    </span>
-                  </div>
-                  <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>
-                    App ke colors, top bar aur card themes badlein
-                  </p>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <span className="text-[10px] font-bold text-amber-400/90 hidden sm:inline">Customize</span>
-                  <ChevronRight size={15} style={{ color: _pTxtMutedColor }} />
-                </div>
-              </button>
-            )}
+                <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>
+                  App ke colors, top bar aur card themes badlein
+                </p>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <span className="text-[10px] font-bold text-amber-400/90 hidden sm:inline">Customize</span>
+                <ChevronRight size={15} style={{ color: _pTxtMutedColor }} />
+              </div>
+            </button>
 
-            {/* ── Padhai Ka Tareeqa (Study Mode Rules) Row (Unlocked at Level 3) ── */}
-            {_pLvl.level >= 3 && (() => {
-              const currentMode = user.studyMode || 'WITHOUT_CREDIT';
+            {/* ── Padhai Ka Tareeqa (Study Mode Rules) Row (Unlocked for Level 1) ── */}
+            {(() => {
+              const currentMode = user.studyMode || 'CREDIT';
               const isCredit = currentMode === 'CREDIT';
               return (
                 <div style={{ borderBottom: _pSep }}>
@@ -15079,73 +15133,60 @@ export const StudentDashboard: React.FC<Props> = ({
               );
             })()}
 
-            {/* 3. Score History Row (Unlocked at Level 2) */}
-            {_pLvl.level >= 2 && (
-              <button
-                onClick={() => {
-                  const userLvl = _pLvl.level;
-                  const isScoreUnlocked = _isBasicUser || _isUltraUser || user.role === 'ADMIN' || userLvl >= 2;
-                  if (!isScoreUnlocked) {
-                    showAlert('🔒 Score History Free users ke liye Level 2 par unlock hota hai. Basic aur Ultra members ke liye Level 1 se unlocked hai.', 'INFO');
-                    return;
-                  }
-                  setShowScoreHistoryDirect(true);
-                }}
-                className={`w-full px-4 py-3.5 flex items-center gap-3.5 ${_pHovCls} transition-colors cursor-pointer text-left`}
-                style={{ borderBottom: _pSep }}
-              >
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
-                  background: _light ? _pIconBg : 'rgba(234, 179, 8, 0.15)',
-                  border: _light ? _pIconBdr : '1px solid rgba(234, 179, 8, 0.40)',
-                }}>
-                  <TrendingUp size={19} style={{ color: _light ? tierTheme.primary : '#fbbf24' }} />
+            {/* 3. Score History Row (Unlocked for Level 1) */}
+            <button
+              onClick={() => {
+                setShowScoreHistoryDirect(true);
+              }}
+              className={`w-full px-4 py-3.5 flex items-center gap-3.5 ${_pHovCls} transition-colors cursor-pointer text-left`}
+              style={{ borderBottom: _pSep }}
+            >
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
+                background: _light ? _pIconBg : 'rgba(234, 179, 8, 0.15)',
+                border: _light ? _pIconBdr : '1px solid rgba(234, 179, 8, 0.40)',
+              }}>
+                <TrendingUp size={19} style={{ color: _light ? tierTheme.primary : '#fbbf24' }} />
+              </div>
+              <div className="flex-1 text-left min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <p className={`text-sm font-bold ${_pTxt}`}>Score History</p>
                 </div>
-                <div className="flex-1 text-left min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <p className={`text-sm font-bold ${_pTxt}`}>Score History</p>
-                    {!_isBasicUser && !_isUltraUser && user.role !== 'ADMIN' && (
-                      <span className="text-[8.5px] bg-amber-100 text-amber-700 px-1.5 py-0.2 rounded font-black font-mono">Lvl 2</span>
-                    )}
-                  </div>
-                  <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>Apna activity score ka pura record</p>
-                </div>
-                <ChevronRight size={15} style={{ color: _pTxtMutedColor }} className="shrink-0" />
-              </button>
-            )}
+                <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>Apna activity score ka pura record</p>
+              </div>
+              <ChevronRight size={15} style={{ color: _pTxtMutedColor }} className="shrink-0" />
+            </button>
 
-            {/* 4. Leaderboard Row (Unlocked at Level 2) */}
-            {_pLvl.level >= 2 && (
-              <button
-                onClick={() => setShowLevelLeaderboard(true)}
-                className={`w-full px-4 py-3.5 flex items-center gap-3.5 ${_pHovCls} transition-colors cursor-pointer text-left`}
-                style={{ borderBottom: _pSep }}
+            {/* 4. Leaderboard Row (Unlocked for Level 1) */}
+            <button
+              onClick={() => setShowLevelLeaderboard(true)}
+              className={`w-full px-4 py-3.5 flex items-center gap-3.5 ${_pHovCls} transition-colors cursor-pointer text-left`}
+              style={{ borderBottom: _pSep }}
+            >
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-xs"
+                style={{
+                  background: _light ? 'rgba(245,158,11,0.18)' : 'rgba(234, 179, 8, 0.15)',
+                  border: _light ? '1.5px solid rgba(245,158,11,0.40)' : '1.5px solid rgba(234, 179, 8, 0.40)',
+                }}
               >
-                <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-xs"
-                  style={{
-                    background: _light ? 'rgba(245,158,11,0.18)' : 'rgba(234, 179, 8, 0.15)',
-                    border: _light ? '1.5px solid rgba(245,158,11,0.40)' : '1.5px solid rgba(234, 179, 8, 0.40)',
-                  }}
-                >
-                  <Trophy size={19} className="text-amber-400" />
+                <Trophy size={19} className="text-amber-400" />
+              </div>
+              <div className="flex-1 text-left min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <p className={`text-sm font-bold ${_pTxt}`}>Leaderboard</p>
+                  <span className="text-[8.5px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-wide font-mono bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                    Official
+                  </span>
                 </div>
-                <div className="flex-1 text-left min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <p className={`text-sm font-bold ${_pTxt}`}>Leaderboard</p>
-                    <span className="text-[8.5px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-wide font-mono bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                      Lvl 2+
-                    </span>
-                  </div>
-                  <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>
-                    Global level rankings aur top students ki list
-                  </p>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <span className="text-[10px] font-bold text-amber-400/90 hidden sm:inline">Rank Dekhein</span>
-                  <ChevronRight size={15} style={{ color: _pTxtMutedColor }} />
-                </div>
-              </button>
-            )}
+                <p className={`text-[10px] mt-0.5 truncate ${_pTxtSub}`}>
+                  Global level rankings aur top students ki list
+                </p>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <span className="text-[10px] font-bold text-amber-400/90 hidden sm:inline">Rank Dekhein</span>
+                <ChevronRight size={15} style={{ color: _pTxtMutedColor }} />
+              </div>
+            </button>
 
             {/* 4. Link Google Account Row */}
             <button
@@ -15407,39 +15448,37 @@ export const StudentDashboard: React.FC<Props> = ({
             {showProfileSettings && (
               <div className="p-2.5 sm:p-3 bg-black/5 dark:bg-black/40 border-t" style={{ borderColor: _pSep }}>
                 <div className="grid grid-cols-2 gap-2">
-                  {/* Study Mode Quick Setting (Unlocked at Level 3) */}
-                  {_pLvl.level >= 3 && (
-                    <button
-                      type="button"
-                      onClick={() => setShowStudyModeModal(true)}
-                      className="p-2.5 rounded-xl border flex flex-col justify-between text-left active:scale-[0.97] transition-all cursor-pointer group"
-                      style={{
-                        background: _light ? 'rgba(255,255,255,0.85)' : '#141e36',
-                        borderColor: _light ? 'rgba(0,0,0,0.08)' : 'rgba(234, 179, 8, 0.28)',
-                        boxShadow: _light ? 'none' : '0 2px 10px rgba(0,0,0,0.30)',
-                      }}
-                    >
-                      <div className="flex items-center justify-between gap-1 mb-1.5 w-full">
-                        <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs" style={{
-                          background: user.studyMode === 'CREDIT' ? 'rgba(59,130,246,0.15)' : 'rgba(16,185,129,0.15)',
-                          border: `1px solid ${user.studyMode === 'CREDIT' ? 'rgba(59,130,246,0.40)' : 'rgba(16,185,129,0.40)'}`,
-                        }}>
-                          <span className="text-xs leading-none">{user.studyMode === 'CREDIT' ? '💰' : '🎓'}</span>
-                        </div>
-                        <span className={`text-[7.5px] font-black px-1.5 py-0.5 rounded font-mono shrink-0 ${
-                          user.studyMode === 'CREDIT' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                        }`}>
-                          {user.studyMode === 'CREDIT' ? 'CREDIT' : '0 CR'}
-                        </span>
+                  {/* Study Mode Quick Setting (Unlocked for Level 1) */}
+                  <button
+                    type="button"
+                    onClick={() => setShowStudyModeModal(true)}
+                    className="p-2.5 rounded-xl border flex flex-col justify-between text-left active:scale-[0.97] transition-all cursor-pointer group"
+                    style={{
+                      background: _light ? 'rgba(255,255,255,0.85)' : '#141e36',
+                      borderColor: _light ? 'rgba(0,0,0,0.08)' : 'rgba(234, 179, 8, 0.28)',
+                      boxShadow: _light ? 'none' : '0 2px 10px rgba(0,0,0,0.30)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-1 mb-1.5 w-full">
+                      <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs" style={{
+                        background: user.studyMode === 'CREDIT' ? 'rgba(59,130,246,0.15)' : 'rgba(16,185,129,0.15)',
+                        border: `1px solid ${user.studyMode === 'CREDIT' ? 'rgba(59,130,246,0.40)' : 'rgba(16,185,129,0.40)'}`,
+                      }}>
+                        <span className="text-xs leading-none">{user.studyMode === 'CREDIT' ? '💰' : '🎓'}</span>
                       </div>
-                      <div className="w-full min-w-0">
-                        <p className={`text-[11.5px] font-bold ${_pTxt} truncate leading-tight`}>Study Mode</p>
-                        <p className={`text-[9px] ${_pTxtSub} truncate mt-0.5 leading-tight`}>
-                          {user.studyMode === 'CREDIT' ? 'Credit Economy' : 'Without Credit'}
-                        </p>
-                      </div>
-                    </button>
-                  )}
+                      <span className={`text-[7.5px] font-black px-1.5 py-0.5 rounded font-mono shrink-0 ${
+                        user.studyMode === 'CREDIT' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                      }`}>
+                        {user.studyMode === 'CREDIT' ? 'CREDIT' : '0 CR'}
+                      </span>
+                    </div>
+                    <div className="w-full min-w-0">
+                      <p className={`text-[11.5px] font-bold ${_pTxt} truncate leading-tight`}>Study Mode</p>
+                      <p className={`text-[9px] ${_pTxtSub} truncate mt-0.5 leading-tight`}>
+                        {user.studyMode === 'CREDIT' ? 'Credit Economy' : 'Without Credit'}
+                      </p>
+                    </div>
+                  </button>
 
                   {/* 1. Change Name */}
                   <button
@@ -15785,37 +15824,35 @@ export const StudentDashboard: React.FC<Props> = ({
                     </div>
                   </button>
 
-                  {/* 9. Level Style */}
-                  {_pLvl.level >= 2 && (
-                    <button
-                      type="button"
-                      onClick={() => setShowLevelChooser(true)}
-                      className="p-2.5 rounded-xl border flex flex-col justify-between text-left active:scale-[0.97] transition-all cursor-pointer group"
-                      style={{
-                        background: _light ? 'rgba(255,255,255,0.85)' : '#141e36',
-                        borderColor: _light ? 'rgba(0,0,0,0.08)' : 'rgba(234, 179, 8, 0.28)',
-                        boxShadow: _light ? 'none' : '0 2px 10px rgba(0,0,0,0.30)',
-                      }}
-                    >
-                      <div className="flex items-center justify-between gap-1 mb-1.5 w-full">
-                        <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs" style={{
-                          background: `${_displayLvl.color}22`,
-                          border: `1px solid ${_displayLvl.color}55`,
-                        }}>
-                          <Trophy size={13.5} className="text-amber-400" />
-                        </div>
-                        <span className="text-[7.5px] font-black px-1.5 py-0.5 rounded font-mono shrink-0 bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                          L{_displayLvl.level}
-                        </span>
+                  {/* 9. Level Style (Unlocked for Level 1) */}
+                  <button
+                    type="button"
+                    onClick={() => setShowLevelChooser(true)}
+                    className="p-2.5 rounded-xl border flex flex-col justify-between text-left active:scale-[0.97] transition-all cursor-pointer group"
+                    style={{
+                      background: _light ? 'rgba(255,255,255,0.85)' : '#141e36',
+                      borderColor: _light ? 'rgba(0,0,0,0.08)' : 'rgba(234, 179, 8, 0.28)',
+                      boxShadow: _light ? 'none' : '0 2px 10px rgba(0,0,0,0.30)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-1 mb-1.5 w-full">
+                      <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-xs" style={{
+                        background: `${_displayLvl.color}22`,
+                        border: `1px solid ${_displayLvl.color}55`,
+                      }}>
+                        <Trophy size={13.5} className="text-amber-400" />
                       </div>
-                      <div className="w-full min-w-0">
-                        <p className={`text-[11.5px] font-bold ${_pTxt} truncate leading-tight`}>Level Style</p>
-                        <p className={`text-[9px] ${_pTxtSub} truncate mt-0.5 leading-tight`}>
-                          {displayLevel && displayLevel !== _pLvl.level ? `${_displayLvl.label}` : 'Badge customize'}
-                        </p>
-                      </div>
-                    </button>
-                  )}
+                      <span className="text-[7.5px] font-black px-1.5 py-0.5 rounded font-mono shrink-0 bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                        L{_displayLvl.level}
+                      </span>
+                    </div>
+                    <div className="w-full min-w-0">
+                      <p className={`text-[11.5px] font-bold ${_pTxt} truncate leading-tight`}>Level Style</p>
+                      <p className={`text-[9px] ${_pTxtSub} truncate mt-0.5 leading-tight`}>
+                        {displayLevel && displayLevel !== _pLvl.level ? `${_displayLvl.label}` : 'Badge customize'}
+                      </p>
+                    </div>
+                  </button>
 
                   {/* 10. Reset Settings */}
                   <button
@@ -16911,6 +16948,35 @@ export const StudentDashboard: React.FC<Props> = ({
       {/* Admin WhiteBoard floating panel — fixed z-[9999], visible in ALL modes */}
       {_isAdminUser && showAdminBoard && (
         <AdminWhiteBoard onClose={() => setShowAdminBoard(false)} />
+      )}
+      {/* Admin Lucent Media (PDF / Video / Audio) Modal */}
+      {_isAdminUser && showAdminLucentMediaModal && (adminMediaModalEntry || lucentNoteViewer || lucentPageListViewer) && (
+        <AdminLucentMediaModal
+          entry={(adminMediaModalEntry || lucentNoteViewer || lucentPageListViewer) as any}
+          initialPageIndex={adminMediaModalPageIndex >= -1 ? adminMediaModalPageIndex : (lucentNoteViewer ? lucentPageIndex : -1)}
+          onClose={() => {
+            setShowAdminLucentMediaModal(false);
+            setAdminMediaModalEntry(null);
+            setAdminMediaModalPageIndex(-1);
+          }}
+          onSaved={(updated) => {
+            if (lucentNoteViewer?.id === updated.id) {
+              setLucentNoteViewer(updated);
+            }
+            if (lucentPageListViewer?.id === updated.id) {
+              setLucentPageListViewer(updated as any);
+            }
+            if (adminMediaModalEntry?.id === updated.id) {
+              setAdminMediaModalEntry(updated);
+            }
+            // Sync with local settings if applicable
+            setLocalSettings((prev: any) => {
+              if (!prev?.lucentNotes) return prev;
+              const up = prev.lucentNotes.map((n: any) => n.id === updated.id ? updated : n);
+              return { ...prev, lucentNotes: up };
+            });
+          }}
+        />
       )}
       {/* Central Offline Downloads Hub Modal */}
       <OfflineDownloadsHub
@@ -24173,13 +24239,75 @@ export const StudentDashboard: React.FC<Props> = ({
                   );
                 })()}
               </div>
+
+              {/* Admin Add/Manage Media for this Lesson */}
+              {_isAdminUser && (
+                <button
+                  onClick={() => {
+                    setAdminMediaModalEntry(plEntry);
+                    setAdminMediaModalPageIndex(-1);
+                    setShowAdminLucentMediaModal(true);
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-black shadow-md active:scale-95 transition-all shrink-0"
+                  title="Add/Manage Video, PDF, Audio for this Lesson (Admin)"
+                >
+                  <span>🎬</span>
+                  <span className="hidden sm:inline">Add Media</span>
+                </button>
+              )}
             </div>
+
+            {/* Lesson-wide Media Bar (Video / PDF / Audio) */}
+            {(plEntry.videoUrl || plEntry.pdfUrl || plEntry.audioUrl) && (
+              <div className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white border-b border-slate-800 shrink-0 overflow-x-auto">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0">Media:</span>
+                {plEntry.videoUrl && (
+                  <button
+                    onClick={() => {
+                      lucentInitialTabRef.current = { tab: 'VIDEO' };
+                      setLucentActiveTab('VIDEO');
+                      tryOpenLucentNote(plEntry, 0, { force: true, skipResumePrompt: true });
+                    }}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold active:scale-95 transition-all shrink-0"
+                  >
+                    <span>🎬</span> Watch Video
+                  </button>
+                )}
+                {plEntry.pdfUrl && (
+                  <button
+                    onClick={() => {
+                      lucentInitialTabRef.current = { tab: 'PDF' };
+                      setLucentActiveTab('PDF');
+                      tryOpenLucentNote(plEntry, 0, { force: true, skipResumePrompt: true });
+                    }}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold active:scale-95 transition-all shrink-0"
+                  >
+                    <span>📄</span> View PDF
+                  </button>
+                )}
+                {plEntry.audioUrl && (
+                  <button
+                    onClick={() => {
+                      lucentInitialTabRef.current = { tab: 'AUDIO' };
+                      setLucentActiveTab('AUDIO');
+                      tryOpenLucentNote(plEntry, 0, { force: true, skipResumePrompt: true });
+                    }}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-[11px] font-bold active:scale-95 transition-all shrink-0"
+                  >
+                    <span>🎵</span> Listen Audio
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Page list */}
             <div className="flex-1 overflow-y-auto px-4 pt-3 pb-24 space-y-3">
               {pages.map((pg, idx) => {
                 const _isAdminUser = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
                 const cardKey = getStudyActivityKey(plEntry.id, idx);
+                const hasPgVideo = !!((pg as any).videoUrl || plEntry.videoUrl);
+                const hasPgPdf = !!((pg as any).pdfUrl || plEntry.pdfUrl);
+                const hasPgAudio = !!((pg as any).audioUrl || plEntry.audioUrl);
                 return (
                   <div key={idx} className="space-y-1">
                     <SyllabusPageCard
@@ -24202,6 +24330,21 @@ export const StudentDashboard: React.FC<Props> = ({
                         lucentInitialTabRef.current = { tab: 'NOTES', viewMode: 'html' };
                         setLucentActiveTab('NOTES');
                         setLucentNotesViewMode('html');
+                        tryOpenLucentNote(plEntry, idx, { force: true, skipResumePrompt: true });
+                      } : undefined}
+                      onOpenVideo={hasPgVideo ? () => {
+                        lucentInitialTabRef.current = { tab: 'VIDEO' };
+                        setLucentActiveTab('VIDEO');
+                        tryOpenLucentNote(plEntry, idx, { force: true, skipResumePrompt: true });
+                      } : undefined}
+                      onOpenPdf={hasPgPdf ? () => {
+                        lucentInitialTabRef.current = { tab: 'PDF' };
+                        setLucentActiveTab('PDF');
+                        tryOpenLucentNote(plEntry, idx, { force: true, skipResumePrompt: true });
+                      } : undefined}
+                      onOpenAudio={hasPgAudio ? () => {
+                        lucentInitialTabRef.current = { tab: 'AUDIO' };
+                        setLucentActiveTab('AUDIO');
                         tryOpenLucentNote(plEntry, idx, { force: true, skipResumePrompt: true });
                       } : undefined}
                       onOpenMcq={() => {
@@ -24311,13 +24454,30 @@ export const StudentDashboard: React.FC<Props> = ({
                           {pg.chunkNotes ? <span className="text-[8px] font-black px-1.5 py-[2px] rounded bg-indigo-100 text-indigo-700">CHUNK</span> : null}
                           {(pg as any).htmlNotes ? <span className="text-[8px] font-black px-1.5 py-[2px] rounded bg-violet-100 text-violet-700">HTML</span> : null}
                           {(pg.mcqs?.length || 0) > 0 ? <span className="text-[8px] font-black px-1.5 py-[2px] rounded bg-emerald-100 text-emerald-700">{pg.mcqs!.length} MCQ</span> : null}
+                          {(pg as any).videoUrl ? <span className="text-[8px] font-black px-1.5 py-[2px] rounded bg-rose-100 text-rose-700">🎬 VIDEO</span> : null}
+                          {(pg as any).pdfUrl ? <span className="text-[8px] font-black px-1.5 py-[2px] rounded bg-blue-100 text-blue-700">📄 PDF</span> : null}
+                          {(pg as any).audioUrl ? <span className="text-[8px] font-black px-1.5 py-[2px] rounded bg-purple-100 text-purple-700">🎵 AUDIO</span> : null}
                         </div>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); openAdminPageEdit(plEntry, idx); }}
-                          className="flex items-center gap-[3px] px-2 py-0.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-[9px] font-black active:scale-95 transition-all"
-                        >
-                          <Pencil size={9} /> Edit
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAdminMediaModalEntry(plEntry);
+                              setAdminMediaModalPageIndex(idx);
+                              setShowAdminLucentMediaModal(true);
+                            }}
+                            className="flex items-center gap-[3px] px-2 py-0.5 rounded-lg bg-purple-50 border border-purple-200 text-purple-700 text-[9px] font-black active:scale-95 transition-all"
+                            title="Add/Edit Video, PDF, Audio for this page"
+                          >
+                            <span>🎬</span> Media
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); openAdminPageEdit(plEntry, idx); }}
+                            className="flex items-center gap-[3px] px-2 py-0.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-[9px] font-black active:scale-95 transition-all"
+                          >
+                            <Pencil size={9} /> Edit
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -24506,9 +24666,9 @@ export const StudentDashboard: React.FC<Props> = ({
         const _adminMcqsTb = (currentPage?.mcqs || []) as MCQItem[];
         const _mcqItemsTb = _adminMcqsTb.length > 0 ? _adminMcqsTb : (lucentMcqsByPage[_tbKey] || []);
         const _hasMcqTb = _mcqItemsTb.length > 0;
-        const _hasPdfTb = !!(currentPage as any)?.pdfUrl;
-        const _hasVideoTb = !!(currentPage as any)?.videoUrl;
-        const _hasAudioTb = !!(currentPage as any)?.audioUrl;
+        const _hasPdfTb = !!(currentPage as any)?.pdfUrl || !!(entry as any)?.pdfUrl;
+        const _hasVideoTb = !!(currentPage as any)?.videoUrl || !!(entry as any)?.videoUrl;
+        const _hasAudioTb = !!(currentPage as any)?.audioUrl || !!(entry as any)?.audioUrl;
         const _save = (tab: string, vm?: string) => { try { localStorage.setItem(`iic_tab_${entry.id}`, tab); if (vm) localStorage.setItem(`iic_tabvm_${entry.id}`, vm); } catch {} };
         const _isAdm = (user.role === 'ADMIN' || user.role === 'SUB_ADMIN') && user.studyMode !== 'CREDIT';
 
@@ -24693,6 +24853,17 @@ export const StudentDashboard: React.FC<Props> = ({
                         <Pencil size={14} />
                       </button>
                     )}
+                    {/* Admin Media (PDF / Video / Audio) Modal trigger */}
+                    {_isAdminUser && (
+                      <button
+                        onClick={() => setShowAdminLucentMediaModal(true)}
+                        className="px-2.5 py-1.5 flex items-center gap-1 rounded-xl bg-purple-500/30 border border-purple-400/50 text-purple-200 hover:text-white text-xs font-black active:scale-90 transition-all shrink-0 shadow"
+                        title="Add/Edit Video, PDF, Audio (Admin)"
+                      >
+                        <span>🎬</span>
+                        <span className="hidden sm:inline">Add Media</span>
+                      </button>
+                    )}
                     {/* A− / % / A+ group */}
                     <div className="flex items-center rounded-xl overflow-hidden border border-white/25" style={{ background: 'rgba(255,255,255,0.12)' }}>
                       <button onClick={zoomOut} className="w-7 h-7 flex items-center justify-center text-white text-[11px] font-black active:scale-90 transition-all hover:bg-white/15">A−</button>
@@ -24763,6 +24934,17 @@ export const StudentDashboard: React.FC<Props> = ({
                       title="Admin WhiteBoard"
                     >
                       <Presentation size={16} />
+                    </button>
+                  )}
+                  {/* Admin Media (PDF / Video / Audio) Modal trigger */}
+                  {_isAdminUser && (
+                    <button
+                      onClick={() => setShowAdminLucentMediaModal(true)}
+                      className="px-2.5 py-1.5 flex items-center gap-1 rounded-xl bg-purple-500/30 border border-purple-400/50 text-purple-200 hover:text-white text-xs font-black active:scale-90 transition-all shrink-0 shadow"
+                      title="Add/Edit Video, PDF, Audio (Admin)"
+                    >
+                      <span>🎬</span>
+                      <span className="hidden sm:inline">Add Media</span>
                     </button>
                   )}
                   {/* Page counter + controls for non-NOTES tabs */}
@@ -24950,6 +25132,16 @@ export const StudentDashboard: React.FC<Props> = ({
                         </button>
                       );
                     })()}
+                    {_isAdm && (
+                      <button
+                        onClick={() => setShowAdminLucentMediaModal(true)}
+                        style={_tabStyle}
+                        className="flex items-center justify-center px-2 py-2 shrink-0 transition-all text-center font-black text-[11px] leading-tight bg-gradient-to-r from-purple-800 to-indigo-800 text-amber-200 hover:brightness-110 active:scale-95 border-r border-white/10"
+                        title="Add or Edit PDF, Video, Audio"
+                      >
+                        ⚡ Media Manager
+                      </button>
+                    )}
                     {_hasAudioTb && (() => {
                       const _audLocked = !_isAdm && !_isUltraUser && !isStudyContentAlwaysUnlocked();
                       return (
@@ -26270,56 +26462,110 @@ RULES:
             })()}
 
             {/* VIDEO TAB CONTENT */}
-            {lucentActiveTab === 'VIDEO' && (currentPage as any)?.videoUrl && (
+            {lucentActiveTab === 'VIDEO' && (
               <div className="flex-1 flex flex-col p-2 sm:p-4 overflow-y-auto">
-                <ModernVideoPlayer
-                  videoUrl={(currentPage as any).videoUrl}
-                  title={currentPage?.topicName || `Page ${currentPage?.pageNo}`}
-                  mediaId={`lucent_vid_${currentPage?.id || currentPage?.pageNo}`}
-                  subject={selectedSubject?.name || 'Study Page'}
-                  appLogo={settings?.appLogo}
-                  appName={settings?.appShortName || 'NSTA'}
-                  user={user}
-                  isAdmin={_isAdminUser}
-                  onBack={closeLucentViewer}
-                  onUpgradeRequired={() => onTabChange('STORE')}
-                />
+                {((currentPage as any)?.videoUrl || entry.videoUrl) ? (
+                  <ModernVideoPlayer
+                    videoUrl={(currentPage as any)?.videoUrl || entry.videoUrl}
+                    title={currentPage?.topicName || entry.lessonTitle || `Page ${currentPage?.pageNo}`}
+                    mediaId={`lucent_vid_${currentPage?.id || entry.id}_${currentPage?.pageNo || 'all'}`}
+                    subject={selectedSubject?.name || 'Study Page'}
+                    appLogo={settings?.appLogo}
+                    appName={settings?.appShortName || 'NSTA'}
+                    user={user}
+                    isAdmin={_isAdminUser}
+                    onBack={closeLucentViewer}
+                    onUpgradeRequired={() => onTabChange('STORE')}
+                  />
+                ) : (
+                  <div className="w-full max-w-md mx-auto my-auto p-6 bg-slate-900/90 border border-slate-800 rounded-2xl text-center space-y-3 text-white">
+                    <div className="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center mx-auto text-2xl">
+                      🎬
+                    </div>
+                    <h4 className="text-sm font-bold">Video Available Nahi Hai</h4>
+                    <p className="text-xs text-slate-400">Is page ya lesson ke liye abhi video add nahi kiya gaya hai.</p>
+                    {_isAdminUser && (
+                      <button
+                        onClick={() => setShowAdminLucentMediaModal(true)}
+                        className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs active:scale-95 transition"
+                      >
+                        ＋ Video Add Karein (Admin)
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
             {/* AUDIO TAB CONTENT */}
-            {lucentActiveTab === 'AUDIO' && (currentPage as any)?.audioUrl && (
+            {lucentActiveTab === 'AUDIO' && (
               <div className="flex-1 flex flex-col items-center justify-center p-4 max-w-xl mx-auto w-full">
-                <ModernAudioPlayer
-                  audioUrl={(currentPage as any).audioUrl}
-                  title={currentPage?.topicName || `Page ${currentPage?.pageNo}`}
-                  subtitle={selectedSubject?.name || 'Study Page Audio'}
-                  mediaId={`lucent_aud_${currentPage?.id || currentPage?.pageNo}`}
-                  appLogo={settings?.appLogo}
-                  appName={settings?.appShortName || 'NSTA'}
-                  user={user}
-                  isAdmin={_isAdminUser}
-                  onBack={closeLucentViewer}
-                  onUpgradeRequired={() => onTabChange('STORE')}
-                />
+                {((currentPage as any)?.audioUrl || entry.audioUrl) ? (
+                  <ModernAudioPlayer
+                    audioUrl={(currentPage as any)?.audioUrl || entry.audioUrl}
+                    title={currentPage?.topicName || entry.lessonTitle || `Page ${currentPage?.pageNo}`}
+                    subtitle={selectedSubject?.name || 'Study Page Audio'}
+                    mediaId={`lucent_aud_${currentPage?.id || entry.id}_${currentPage?.pageNo || 'all'}`}
+                    appLogo={settings?.appLogo}
+                    appName={settings?.appShortName || 'NSTA'}
+                    user={user}
+                    isAdmin={_isAdminUser}
+                    onBack={closeLucentViewer}
+                    onUpgradeRequired={() => onTabChange('STORE')}
+                  />
+                ) : (
+                  <div className="w-full max-w-md mx-auto my-auto p-6 bg-slate-900/90 border border-slate-800 rounded-2xl text-center space-y-3 text-white">
+                    <div className="w-12 h-12 rounded-2xl bg-violet-500/20 text-violet-400 flex items-center justify-center mx-auto text-2xl">
+                      🎵
+                    </div>
+                    <h4 className="text-sm font-bold">Audio Available Nahi Hai</h4>
+                    <p className="text-xs text-slate-400">Is page ya lesson ke liye abhi audio add nahi kiya gaya hai.</p>
+                    {_isAdminUser && (
+                      <button
+                        onClick={() => setShowAdminLucentMediaModal(true)}
+                        className="px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-bold text-xs active:scale-95 transition"
+                      >
+                        ＋ Audio Add Karein (Admin)
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
             {/* PDF TAB CONTENT */}
-            {lucentActiveTab === 'PDF' && (currentPage as any)?.pdfUrl && (
+            {lucentActiveTab === 'PDF' && (
               <div className="flex-1 flex flex-col p-2 sm:p-4 overflow-hidden">
-                <ModernPdfViewer
-                  pdfUrl={(currentPage as any).pdfUrl}
-                  title={currentPage?.topicName || `Page ${currentPage?.pageNo}`}
-                  subtitle={selectedSubject?.name || 'Study Page PDF'}
-                  mediaId={`lucent_pdf_${currentPage?.id || currentPage?.pageNo}`}
-                  appLogo={settings?.appLogo}
-                  appName={settings?.appShortName || 'NSTA'}
-                  user={user}
-                  isAdmin={_isAdminUser}
-                  onBack={closeLucentViewer}
-                  onUpgradeRequired={() => onTabChange('STORE')}
-                />
+                {((currentPage as any)?.pdfUrl || entry.pdfUrl) ? (
+                  <ModernPdfViewer
+                    pdfUrl={(currentPage as any)?.pdfUrl || entry.pdfUrl}
+                    title={currentPage?.topicName || entry.lessonTitle || `Page ${currentPage?.pageNo}`}
+                    subtitle={selectedSubject?.name || 'Study Page PDF'}
+                    mediaId={`lucent_pdf_${currentPage?.id || entry.id}_${currentPage?.pageNo || 'all'}`}
+                    appLogo={settings?.appLogo}
+                    appName={settings?.appShortName || 'NSTA'}
+                    user={user}
+                    isAdmin={_isAdminUser}
+                    onBack={closeLucentViewer}
+                    onUpgradeRequired={() => onTabChange('STORE')}
+                  />
+                ) : (
+                  <div className="w-full max-w-md mx-auto my-auto p-6 bg-slate-900/90 border border-slate-800 rounded-2xl text-center space-y-3 text-white">
+                    <div className="w-12 h-12 rounded-2xl bg-blue-500/20 text-blue-400 flex items-center justify-center mx-auto text-2xl">
+                      📄
+                    </div>
+                    <h4 className="text-sm font-bold">PDF Available Nahi Hai</h4>
+                    <p className="text-xs text-slate-400">Is page ya lesson ke liye abhi PDF add nahi kiya gaya hai.</p>
+                    {_isAdminUser && (
+                      <button
+                        onClick={() => setShowAdminLucentMediaModal(true)}
+                        className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs active:scale-95 transition"
+                      >
+                        ＋ PDF Add Karein (Admin)
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -27873,6 +28119,29 @@ RULES:
               rawIndices={flashcardMcqs.rawIndices}
               onStatsUpdate={() => {
                 setCompStatsVersion(v => v + 1);
+              }}
+              onUpdateQuestions={(newQuestions) => {
+                setFlashcardMcqs(prev => prev ? { ...prev, items: newQuestions } : null);
+                if (lucentNoteViewer) {
+                  const updatedPages = [...(lucentNoteViewer.pages || [])];
+                  const pageIdx = lucentPageIndex;
+                  if (updatedPages[pageIdx]) {
+                    updatedPages[pageIdx] = {
+                      ...updatedPages[pageIdx],
+                      mcqs: newQuestions,
+                    };
+                  }
+                  const updatedEntry = {
+                    ...lucentNoteViewer,
+                    pages: updatedPages,
+                  };
+                  setLucentNoteViewer(updatedEntry);
+                  const tbKey = `${lucentNoteViewer.id}_${pageIdx}`;
+                  setLucentMcqsByPage(prev => ({ ...prev, [tbKey]: newQuestions }));
+                  saveLucentEntryDirect(updatedEntry).then(() => {
+                    showAlert('✅ MCQ Picture save ho gayi! Sabhi users ko live dikhegi.', 'SUCCESS');
+                  }).catch(() => {});
+                }
               }}
               tabBar={tabBarNode}
               bottomNav={renderBottomNav(true)}
@@ -31886,6 +32155,19 @@ Explanation: Yahan explanation...`}</p>
               </button>
             </div>
 
+            {/* Hidden Telegram storage file input for inline notes */}
+            <input
+              ref={inlineEditFileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleInsertInlinePhoto(file);
+                e.target.value = '';
+              }}
+            />
+
             {/* ── HTML mode: block-wise editor ── */}
             {inlineEditModal.type.endsWith('_html') && (
               <>
@@ -31904,8 +32186,30 @@ Explanation: Yahan explanation...`}</p>
                         {isEditing ? (
                           /* ── Editing this block ── */
                           <div className="p-3 flex flex-col gap-2">
-                            <p className="text-[10px] font-black uppercase tracking-widest text-violet-500 px-1">Raw HTML — edit directly</p>
+                            <div className="flex items-center justify-between">
+                              <p className="text-[10px] font-black uppercase tracking-widest text-violet-500 px-1">Raw HTML — edit directly</p>
+                              <button
+                                type="button"
+                                disabled={inlineEditUploading}
+                                onClick={() => inlineEditFileInputRef.current?.click()}
+                                className="py-1 px-2.5 bg-violet-100 hover:bg-violet-200 text-violet-700 text-[10.5px] font-black rounded-lg border border-violet-300 active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                title="Jis word ke paas cursor hai wahan direct photo jodein (Telegram HD Storage)"
+                              >
+                                {inlineEditUploading ? (
+                                  <>
+                                    <Loader2 size={12} className="animate-spin text-violet-600" />
+                                    <span>Uploading ({inlineEditUploadProgress}%)…</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <ImageIcon size={12} />
+                                    <span>📷 Cursor ke baad Photo Jodein (Telegram)</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
                             <textarea
+                              ref={inlineEditDraftTextareaRef}
                               className="w-full p-2.5 font-mono text-[11px] text-slate-800 bg-white border border-violet-300 rounded-xl resize-none outline-none focus:ring-2 focus:ring-violet-400 leading-relaxed"
                               rows={Math.max(3, Math.ceil(inlineEditPointDraft.length / 60))}
                               value={inlineEditPointDraft}
@@ -32000,7 +32304,30 @@ Explanation: Yahan explanation...`}</p>
                         {isEditing ? (
                           /* ── Editing this point ── */
                           <div className="p-3 flex flex-col gap-2">
+                            <div className="flex items-center justify-between">
+                              <p className="text-[10px] font-black uppercase tracking-widest text-indigo-500 px-1">Point text</p>
+                              <button
+                                type="button"
+                                disabled={inlineEditUploading}
+                                onClick={() => inlineEditFileInputRef.current?.click()}
+                                className="py-1 px-2.5 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-[10.5px] font-black rounded-lg border border-indigo-300 active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                title="Jis word ke paas cursor hai wahan direct photo jodein (Telegram HD Storage)"
+                              >
+                                {inlineEditUploading ? (
+                                  <>
+                                    <Loader2 size={12} className="animate-spin text-indigo-600" />
+                                    <span>Uploading ({inlineEditUploadProgress}%)…</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <ImageIcon size={12} />
+                                    <span>📷 Cursor ke baad Photo Jodein (Telegram)</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
                             <textarea
+                              ref={inlineEditDraftTextareaRef}
                               className="w-full p-2.5 font-mono text-[12px] text-slate-800 bg-white border border-indigo-300 rounded-xl resize-none outline-none focus:ring-2 focus:ring-indigo-400 leading-relaxed"
                               rows={Math.max(2, Math.ceil(inlineEditPointDraft.length / 55))}
                               value={inlineEditPointDraft}
@@ -32063,8 +32390,8 @@ Explanation: Yahan explanation...`}</p>
                     );
                   })}
 
-                  {/* ── Add new point ── */}
-                  <div className="p-4">
+                  {/* ── Add new point / Photo ── */}
+                  <div className="p-4 space-y-2">
                     <button
                       onClick={() => {
                         const newPoints = [...inlineEditPoints, ''];
@@ -32072,9 +32399,23 @@ Explanation: Yahan explanation...`}</p>
                         setInlineEditPointIdx(newPoints.length - 1);
                         setInlineEditPointDraft('');
                       }}
-                      className="w-full py-3 border-2 border-dashed border-indigo-200 hover:border-indigo-400 text-indigo-500 hover:text-indigo-700 text-[12px] font-black rounded-xl active:scale-[0.98] transition-all"
+                      className="w-full py-3 border-2 border-dashed border-indigo-200 hover:border-indigo-400 text-indigo-500 hover:text-indigo-700 text-[12px] font-black rounded-xl active:scale-[0.98] transition-all cursor-pointer"
                     >
-                      + Naya Point Add Karo
+                      + Naya Text Point Add Karo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newPoints = [...inlineEditPoints, ''];
+                        setInlineEditPoints(newPoints);
+                        setInlineEditPointIdx(newPoints.length - 1);
+                        setInlineEditPointDraft('');
+                        setTimeout(() => inlineEditFileInputRef.current?.click(), 50);
+                      }}
+                      className="w-full py-2.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-600 hover:text-indigo-800 text-[11.5px] font-black rounded-xl active:scale-[0.98] transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <ImageIcon size={14} />
+                      <span>+ 📷 Direct Photo Point Add Karo (Telegram Cloud)</span>
                     </button>
                   </div>
                 </div>

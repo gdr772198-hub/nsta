@@ -8,6 +8,7 @@ interface PlayerWatermarkProps {
   className?: string;
   onClick?: () => void;
   isFullscreen?: boolean;
+  isTopBarHidden?: boolean;
 }
 
 export const PlayerWatermark: React.FC<PlayerWatermarkProps> = ({
@@ -18,6 +19,7 @@ export const PlayerWatermark: React.FC<PlayerWatermarkProps> = ({
   className = '',
   onClick,
   isFullscreen = false,
+  isTopBarHidden = false,
 }) => {
   const posClasses: Record<string, string> = {
     'top-right': 'top-2.5 right-2.5',
@@ -28,20 +30,26 @@ export const PlayerWatermark: React.FC<PlayerWatermarkProps> = ({
 
   const Component = onClick ? 'button' : 'div';
 
+  const defaultTitle = isTopBarHidden
+    ? 'Top Bar Dikhayein (Tap to show top bar)'
+    : isFullscreen
+    ? 'Exit Fullscreen / Toggle Top Bar'
+    : 'NSTA Logo • Tap karein to Top Bar hide/show hoga';
+
   return (
     <Component
       type={onClick ? 'button' : undefined}
       onClick={onClick}
-      title={onClick ? (isFullscreen ? 'Exit Fullscreen' : 'Fullscreen (Top & Bottom bar gayab honge)') : undefined}
-      aria-label={onClick ? 'Toggle Fullscreen' : undefined}
+      title={onClick ? defaultTitle : undefined}
+      aria-label={onClick ? 'Toggle Top Bar / Fullscreen' : undefined}
       className={`absolute z-30 select-none flex items-center gap-1.5 px-2.5 py-1 rounded-full backdrop-blur-md transition-all duration-200 active:scale-90 ${posClasses[position] || posClasses['top-right']} ${
         onClick
           ? 'pointer-events-auto cursor-pointer hover:opacity-100 hover:scale-105 active:scale-95 shadow-lg'
           : 'pointer-events-none'
-      } ${className}`}
+      } ${isTopBarHidden ? 'ring-2 ring-indigo-400/60 shadow-indigo-500/30 shadow-lg' : ''} ${className}`}
       style={{
-        background: 'rgba(15, 23, 42, 0.78)',
-        border: '1px solid rgba(255, 255, 255, 0.22)',
+        background: isTopBarHidden ? 'rgba(30, 27, 75, 0.88)' : 'rgba(15, 23, 42, 0.78)',
+        border: isTopBarHidden ? '1px solid rgba(165, 180, 252, 0.45)' : '1px solid rgba(255, 255, 255, 0.22)',
         boxShadow: '0 4px 16px rgba(0, 0, 0, 0.45)',
         opacity: onClick ? 0.95 : opacity,
       }}
@@ -59,7 +67,7 @@ export const PlayerWatermark: React.FC<PlayerWatermarkProps> = ({
       </span>
       {onClick && (
         <span className="text-[10px] text-indigo-300 font-bold ml-0.5">
-          {isFullscreen ? '⤓' : '⛶'}
+          {isTopBarHidden ? '👁️' : isFullscreen ? '⤓' : '⛶'}
         </span>
       )}
     </Component>

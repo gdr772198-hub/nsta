@@ -53,6 +53,7 @@ import { ReferralPrizesManager } from './admin/ReferralPrizesManager';
 import { PlanComparisonManager } from './admin/PlanComparisonManager';
 import { PedroAdminManager } from './admin/PedroAdminManager';
 import { AdminMathManager } from './AdminMathManager';
+import { AdminLucentMediaModal } from './AdminLucentMediaModal';
 // @ts-ignore
 import JSZip from 'jszip';
 import { Document, Page, pdfjs } from 'react-pdf';
@@ -965,15 +966,20 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
     { id: '11', label: '📚 Class 11' },
     { id: '12', label: '📚 Class 12' },
   ];
-  const [newLucent, setNewLucent] = useState<{ subject: string; bookName: string; classLevel: 'COMPETITION' | '6' | '7' | '8' | '9' | '10' | '11' | '12'; board: '' | 'NCERT_EN' | 'NCERT_HI' | 'BSEB'; lessonTitle: string; pages: LucentPageNote[]; mcqOnly: boolean }>({
+  const [newLucent, setNewLucent] = useState<{ subject: string; bookName: string; classLevel: 'COMPETITION' | '6' | '7' | '8' | '9' | '10' | '11' | '12'; board: '' | 'NCERT_EN' | 'NCERT_HI' | 'BSEB'; lessonTitle: string; pages: LucentPageNote[]; mcqOnly: boolean; videoUrl?: string; pdfUrl?: string; audioUrl?: string }>({
     subject: 'biology',
     bookName: '',
     classLevel: 'COMPETITION',
     board: '',
     lessonTitle: '',
     mcqOnly: false,
+    videoUrl: '',
+    pdfUrl: '',
+    audioUrl: '',
     pages: [{ id: Date.now().toString(), pageNo: '1', content: '', chunkNotes: '', htmlNotes: '' }],
   });
+  const [adminLucentMediaModalEntry, setAdminLucentMediaModalEntry] = useState<LucentNoteEntry | null>(null);
+  const [adminLucentMediaModalPageIndex, setAdminLucentMediaModalPageIndex] = useState<number>(-1);
   // Per-page bulk MCQ paste: keyed by page id -> textarea content. When non-undefined the paste UI is open.
   const [cn612EditingId, setCn612EditingId] = useState<string | null>(null);
   const [cn612FilterClass, setCn612FilterClass] = useState<string>('ALL');
@@ -1328,6 +1334,9 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                   classLevel: entry.classLevel,
                   board: (entry as any).board || '',
                   lessonTitle: entry.lessonTitle,
+                  videoUrl: entry.videoUrl || '',
+                  pdfUrl: entry.pdfUrl || '',
+                  audioUrl: entry.audioUrl || '',
                   pages: (entry.pages || []).map((p: any) => ({ ...p })),
                   mcqOnly: entry.mcqOnly || false,
               });
@@ -15634,6 +15643,97 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Lesson Name / Title</label>
                                           <input type="text" value={newLucent.lessonTitle} onChange={e => setNewLucent({...newLucent, lessonTitle: e.target.value})} className="w-full p-2 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500" placeholder="e.g. Chapter 1: मौलिक अधिकार" />
                                       </div>
+
+                                      {/* ── Lesson-Wide Media (Video / PDF / Audio) ── */}
+                                      <div className="bg-gradient-to-r from-rose-50 via-indigo-50 to-purple-50 border border-indigo-200 rounded-xl p-3.5 space-y-3">
+                                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                                              <p className="text-[11px] font-black uppercase text-indigo-900 flex items-center gap-1.5">
+                                                  <span>🎬 📄 🎵</span> Lesson-Wide Media (Pura Lesson Video / PDF / Audio)
+                                              </p>
+                                              <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                      const dummyEntry: LucentNoteEntry = {
+                                                          id: cn612EditingId || 'temp_lucent_media',
+                                                          subject: newLucent.subject,
+                                                          lessonTitle: newLucent.lessonTitle.trim() || 'Lucent Lesson',
+                                                          classLevel: newLucent.classLevel,
+                                                          pages: newLucent.pages,
+                                                          videoUrl: newLucent.videoUrl,
+                                                          pdfUrl: newLucent.pdfUrl,
+                                                          audioUrl: newLucent.audioUrl,
+                                                      };
+                                                      setAdminLucentMediaModalEntry(dummyEntry);
+                                                      setAdminLucentMediaModalPageIndex(-1);
+                                                  }}
+                                                  className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black shadow active:scale-95 transition flex items-center gap-1"
+                                              >
+                                                  <Sparkles size={11} /> Open Media Vault Modal
+                                              </button>
+                                          </div>
+                                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                              {/* Video URL + Upload */}
+                                              <div className="space-y-1 bg-white p-2 rounded-lg border border-rose-200">
+                                                  <div className="flex items-center justify-between gap-1">
+                                                      <label className="text-[9px] font-black text-rose-700 uppercase">🎬 Video</label>
+                                                      <DirectUploadButton
+                                                          kind="video"
+                                                          compact
+                                                          currentUrl={newLucent.videoUrl}
+                                                          onUploaded={(url) => setNewLucent(prev => ({ ...prev, videoUrl: url }))}
+                                                      />
+                                                  </div>
+                                                  <input
+                                                      type="text"
+                                                      value={newLucent.videoUrl || ''}
+                                                      onChange={e => setNewLucent({ ...newLucent, videoUrl: e.target.value })}
+                                                      placeholder="YouTube / Drive / MP4 URL..."
+                                                      className="w-full p-1.5 border border-rose-200 rounded text-xs outline-none focus:border-rose-400 bg-white"
+                                                  />
+                                              </div>
+
+                                              {/* PDF URL + Upload */}
+                                              <div className="space-y-1 bg-white p-2 rounded-lg border border-blue-200">
+                                                  <div className="flex items-center justify-between gap-1">
+                                                      <label className="text-[9px] font-black text-blue-700 uppercase">📄 PDF</label>
+                                                      <DirectUploadButton
+                                                          kind="pdf"
+                                                          compact
+                                                          currentUrl={newLucent.pdfUrl}
+                                                          onUploaded={(url) => setNewLucent(prev => ({ ...prev, pdfUrl: url }))}
+                                                      />
+                                                  </div>
+                                                  <input
+                                                      type="text"
+                                                      value={newLucent.pdfUrl || ''}
+                                                      onChange={e => setNewLucent({ ...newLucent, pdfUrl: e.target.value })}
+                                                      placeholder="Google Drive PDF / direct link..."
+                                                      className="w-full p-1.5 border border-blue-200 rounded text-xs outline-none focus:border-blue-400 bg-white"
+                                                  />
+                                              </div>
+
+                                              {/* Audio URL + Upload */}
+                                              <div className="space-y-1 bg-white p-2 rounded-lg border border-purple-200">
+                                                  <div className="flex items-center justify-between gap-1">
+                                                      <label className="text-[9px] font-black text-purple-700 uppercase">🎵 Audio</label>
+                                                      <DirectUploadButton
+                                                          kind="audio"
+                                                          compact
+                                                          currentUrl={newLucent.audioUrl}
+                                                          onUploaded={(url) => setNewLucent(prev => ({ ...prev, audioUrl: url }))}
+                                                      />
+                                                  </div>
+                                                  <input
+                                                      type="text"
+                                                      value={newLucent.audioUrl || ''}
+                                                      onChange={e => setNewLucent({ ...newLucent, audioUrl: e.target.value })}
+                                                      placeholder="MP3 / Audio URL..."
+                                                      className="w-full p-1.5 border border-purple-200 rounded text-xs outline-none focus:border-purple-400 bg-white"
+                                                  />
+                                              </div>
+                                          </div>
+                                      </div>
+
                                       <div className="space-y-3">
                                           <div className="flex items-center justify-between">
                                               <label className="text-[10px] font-bold text-slate-500 uppercase">Pages ({newLucent.pages.length})</label>
@@ -15701,6 +15801,93 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                         </details>
                                                       </div>
                                                   </div>
+                                                  {/* ── Media URLs & Uploads (Video, PDF, Audio) for this Lucent page ── */}
+                                                  <div className="border border-indigo-100 rounded-lg p-2.5 bg-indigo-50/40 space-y-2">
+                                                    <p className="text-[9px] font-black uppercase text-indigo-800 flex items-center gap-1">
+                                                      <span>🎬 📄 🎵</span> Attach Media for Page {pg.pageNo || pgIdx + 1} (Video / PDF / Audio)
+                                                    </p>
+                                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                                      <div>
+                                                        <div className="flex items-center justify-between gap-1 mb-0.5">
+                                                          <label className="text-[8px] font-black text-rose-700 uppercase block">🎬 Video</label>
+                                                          <DirectUploadButton
+                                                            kind="video"
+                                                            compact
+                                                            currentUrl={(pg as any).videoUrl}
+                                                            onUploaded={(url) => {
+                                                              const u = [...newLucent.pages];
+                                                              u[pgIdx] = { ...u[pgIdx], videoUrl: url };
+                                                              setNewLucent({ ...newLucent, pages: u });
+                                                            }}
+                                                          />
+                                                        </div>
+                                                        <input
+                                                          type="text"
+                                                          value={(pg as any).videoUrl || ""}
+                                                          onChange={e => {
+                                                            const u = [...newLucent.pages];
+                                                            u[pgIdx] = { ...u[pgIdx], videoUrl: e.target.value };
+                                                            setNewLucent({ ...newLucent, pages: u });
+                                                          }}
+                                                          placeholder="YouTube / Drive / MP4..."
+                                                          className="w-full p-1.5 border border-rose-200 rounded text-xs outline-none focus:border-rose-400 bg-white"
+                                                        />
+                                                      </div>
+                                                      <div>
+                                                        <div className="flex items-center justify-between gap-1 mb-0.5">
+                                                          <label className="text-[8px] font-black text-blue-700 uppercase block">📄 PDF</label>
+                                                          <DirectUploadButton
+                                                            kind="pdf"
+                                                            compact
+                                                            currentUrl={(pg as any).pdfUrl}
+                                                            onUploaded={(url) => {
+                                                              const u = [...newLucent.pages];
+                                                              u[pgIdx] = { ...u[pgIdx], pdfUrl: url };
+                                                              setNewLucent({ ...newLucent, pages: u });
+                                                            }}
+                                                          />
+                                                        </div>
+                                                        <input
+                                                          type="text"
+                                                          value={(pg as any).pdfUrl || ""}
+                                                          onChange={e => {
+                                                            const u = [...newLucent.pages];
+                                                            u[pgIdx] = { ...u[pgIdx], pdfUrl: e.target.value };
+                                                            setNewLucent({ ...newLucent, pages: u });
+                                                          }}
+                                                          placeholder="Drive PDF / direct URL..."
+                                                          className="w-full p-1.5 border border-blue-200 rounded text-xs outline-none focus:border-blue-400 bg-white"
+                                                        />
+                                                      </div>
+                                                      <div>
+                                                        <div className="flex items-center justify-between gap-1 mb-0.5">
+                                                          <label className="text-[8px] font-black text-violet-700 uppercase block">🎵 Audio</label>
+                                                          <DirectUploadButton
+                                                            kind="audio"
+                                                            compact
+                                                            currentUrl={(pg as any).audioUrl}
+                                                            onUploaded={(url) => {
+                                                              const u = [...newLucent.pages];
+                                                              u[pgIdx] = { ...u[pgIdx], audioUrl: url };
+                                                              setNewLucent({ ...newLucent, pages: u });
+                                                            }}
+                                                          />
+                                                        </div>
+                                                        <input
+                                                          type="text"
+                                                          value={(pg as any).audioUrl || ""}
+                                                          onChange={e => {
+                                                            const u = [...newLucent.pages];
+                                                            u[pgIdx] = { ...u[pgIdx], audioUrl: e.target.value };
+                                                            setNewLucent({ ...newLucent, pages: u });
+                                                          }}
+                                                          placeholder="MP3 / Audio URL..."
+                                                          className="w-full p-1.5 border border-violet-200 rounded text-xs outline-none focus:border-violet-400 bg-white"
+                                                        />
+                                                      </div>
+                                                    </div>
+                                                  </div>
+
                                                   <div className="border-t border-slate-200 pt-2">
                                                       <CoachingMcqEditor
                                                           value={(pg.mcqs || []) as any}
@@ -15717,7 +15904,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                       </div>
                                       <button onClick={() => {
                                           if (!newLucent.lessonTitle.trim()) return alert('Lesson name nahi diya.');
-                                          const validPages = newLucent.pages.filter(p => p.pageNo.trim() && (p.chunkNotes?.trim() || p.htmlNotes?.trim() || p.content?.trim() || (p.mcqs && p.mcqs.length > 0)));
+                                          const validPages = newLucent.pages.filter(p => p.pageNo.trim() && (p.chunkNotes?.trim() || p.htmlNotes?.trim() || p.content?.trim() || (p.mcqs && p.mcqs.length > 0) || (p as any).videoUrl?.trim() || (p as any).pdfUrl?.trim() || (p as any).audioUrl?.trim()));
                                           if (validPages.length === 0) return alert('Kam se kam ek page ke notes ya MCQ add karein.');
                                           const target2 = LUCENT_CLASS_TARGETS.find(t => t.id === newLucent.classLevel)?.label || newLucent.classLevel;
                                           let bnLucentUpdated: LucentNoteEntry[];
@@ -16295,8 +16482,19 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                       <span className="shrink-0 text-[10px] text-indigo-600 font-bold">
                                                           {entry.pages.length} pg{entry.pages.reduce((s: number, p: any) => s + ((p.mcqs || []).length), 0) > 0 ? ` · ${entry.pages.reduce((s: number, p: any) => s + ((p.mcqs || []).length), 0)} MCQ` : ''}
                                                       </span>
+                                                      {((entry.videoUrl || entry.pages?.some((p: any) => p.videoUrl)) || (entry.pdfUrl || entry.pages?.some((p: any) => p.pdfUrl)) || (entry.audioUrl || entry.pages?.some((p: any) => p.audioUrl))) && (
+                                                          <span className="flex items-center gap-1 text-[10px] font-black text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full shrink-0">
+                                                              {(entry.videoUrl || entry.pages?.some((p: any) => p.videoUrl)) && <span title="Video available">🎬</span>}
+                                                              {(entry.pdfUrl || entry.pages?.some((p: any) => p.pdfUrl)) && <span title="PDF available">📄</span>}
+                                                              {(entry.audioUrl || entry.pages?.some((p: any) => p.audioUrl)) && <span title="Audio available">🎵</span>}
+                                                          </span>
+                                                      )}
                                                       <button onClick={() => {
-                                                          setNewLucent({ subject: entry.subject, bookName: entry.bookName || '', classLevel: entry.classLevel, board: (entry as any).board || '', lessonTitle: entry.lessonTitle, pages: entry.pages.map((p: any) => ({ ...p })), mcqOnly: entry.mcqOnly || false });
+                                                          setAdminLucentMediaModalEntry(entry);
+                                                          setAdminLucentMediaModalPageIndex(-1);
+                                                      }} className="p-1 text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded transition-colors flex items-center gap-0.5 text-xs font-black" title="Manage Video / PDF / Audio Media"><Video size={13}/><span className="hidden sm:inline text-[10px]">Media</span></button>
+                                                      <button onClick={() => {
+                                                          setNewLucent({ subject: entry.subject, bookName: entry.bookName || '', classLevel: entry.classLevel, board: (entry as any).board || '', lessonTitle: entry.lessonTitle, videoUrl: entry.videoUrl || '', pdfUrl: entry.pdfUrl || '', audioUrl: entry.audioUrl || '', pages: entry.pages.map((p: any) => ({ ...p })), mcqOnly: entry.mcqOnly || false });
                                                           setNewBookNote((prev: any) => ({ ...prev, targetSubject: 'lucent' }));
                                                           setCn612EditingId(entry.id);
                                                           setBookNotesTab('ADD');
@@ -16920,7 +17118,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                       <button
                           onClick={() => {
                               if (!newLucent.lessonTitle.trim()) return alert('Chapter / Lesson title daalein.');
-                              const validPages = newLucent.pages.filter(p => p.pageNo.trim() && (p.chunkNotes?.trim() || p.htmlNotes?.trim() || (p.mcqs && p.mcqs.length > 0)));
+                              const validPages = newLucent.pages.filter(p => p.pageNo.trim() && (p.chunkNotes?.trim() || p.htmlNotes?.trim() || (p.mcqs && p.mcqs.length > 0) || (p as any).videoUrl?.trim() || (p as any).pdfUrl?.trim() || (p as any).audioUrl?.trim()));
                               if (validPages.length === 0) return alert('Kam se kam ek page ke notes ya MCQ add karein.');
                               const effectiveClass = (newLucent.classLevel === 'COMPETITION' ? '6' : newLucent.classLevel) as any;
                               const classLabel = CLASS_ONLY_TARGETS.find(t => t.id === effectiveClass)?.label || `Class ${effectiveClass}`;
@@ -16941,6 +17139,9 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                       board: newLucent.board || undefined,
                                       lessonTitle: titleTrimmed,
                                       pages: validPages,
+                                      videoUrl: newLucent.videoUrl?.trim() || undefined,
+                                      pdfUrl: newLucent.pdfUrl?.trim() || undefined,
+                                      audioUrl: newLucent.audioUrl?.trim() || undefined,
                                       updatedAt: new Date().toISOString(),
                                   } as LucentNoteEntry;
                                   updated = (localSettings.lucentNotes || []).map((n: LucentNoteEntry) =>
@@ -16959,6 +17160,9 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                       board: newLucent.board || undefined,
                                       lessonTitle: titleTrimmed,
                                       pages: validPages,
+                                      videoUrl: newLucent.videoUrl?.trim() || undefined,
+                                      pdfUrl: newLucent.pdfUrl?.trim() || undefined,
+                                      audioUrl: newLucent.audioUrl?.trim() || undefined,
                                       createdAt: new Date().toISOString(),
                                   };
                                   updated = [...(localSettings.lucentNotes || []), entry];
@@ -17100,6 +17304,14 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                               <div className="flex gap-1 shrink-0">
                                                   <button
                                                       onClick={() => {
+                                                          setAdminLucentMediaModalEntry(entry);
+                                                          setAdminLucentMediaModalPageIndex(-1);
+                                                      }}
+                                                      className="p-1.5 text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded-lg"
+                                                      title="Media (Video/PDF/Audio)"
+                                                  ><Video size={14}/></button>
+                                                  <button
+                                                      onClick={() => {
                                                           // Load this entry into the form for editing
                                                           setCn612EditingId(entry.id);
                                                           setNewLucent({
@@ -17108,6 +17320,9 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                               classLevel: (entry.classLevel && entry.classLevel !== 'COMPETITION' ? entry.classLevel : '6') as any,
                                                               board: (entry as any).board || '',
                                                               lessonTitle: entry.lessonTitle,
+                                                              videoUrl: entry.videoUrl || '',
+                                                              pdfUrl: entry.pdfUrl || '',
+                                                              audioUrl: entry.audioUrl || '',
                                                               pages: entry.pages || [],
                                                           });
                                                           // Scroll to top of form
@@ -21809,6 +22024,23 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
               onCropComplete={handleCropComplete} 
               onCancel={() => setCropImageSrc(null)} 
           />
+      )}
+
+      {/* Admin Lucent Media (PDF / Video / Audio) Modal */}
+      {adminLucentMediaModalEntry && (
+        <AdminLucentMediaModal
+          entry={adminLucentMediaModalEntry}
+          initialPageIndex={adminLucentMediaModalPageIndex}
+          onClose={() => {
+            setAdminLucentMediaModalEntry(null);
+            setAdminLucentMediaModalPageIndex(-1);
+          }}
+          onSaved={(updated) => {
+            const updatedList = (localSettings.lucentNotes || []).map((n: LucentNoteEntry) => n.id === updated.id ? updated : n);
+            setLocalSettings((prev: any) => ({ ...prev, lucentNotes: updatedList }));
+            setAlertConfig({ isOpen: true, message: `✅ "${updated.lessonTitle}" media update ho gaya!` });
+          }}
+        />
       )}
 
       <CustomAlert 

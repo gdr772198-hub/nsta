@@ -5,9 +5,10 @@ import {
   Lightbulb, Edit2, X, MoreVertical, RefreshCw, BookOpen, Tv, CheckCircle,
   Maximize2, Minimize2, LayoutGrid, Users, Radio, Sun, Moon, Scroll,
   Timer, VolumeX, Eye, EyeOff, Slash, HelpCircle, Sparkles, Award, Bookmark, Scissors, PenTool,
-  Plus, Minus, Presentation
+  Plus, Minus, Presentation, Image as ImageIcon
 } from 'lucide-react';
 import { AdminSolveCanvas } from './AdminSolveCanvas';
+import { AdminMcqImageEditorModal } from './AdminMcqImageEditorModal';
 import type { MCQItem } from '../types';
 import type { User, SystemSettings } from '../types';
 import { speakText, stopSpeech } from '../utils/textToSpeech';
@@ -67,6 +68,8 @@ interface Props {
   rawIndices?: number[];
   /** Callback when stats are updated */
   onStatsUpdate?: (stats: { total: number; attempted: number; score: number; wrongIndices: number[] }) => void;
+  /** Callback when questions are updated by admin (e.g. picture added/modified) */
+  onUpdateQuestions?: (updatedQuestions: MCQItem[]) => void;
 }
 
 const CREDIT_COST = 5;
@@ -104,9 +107,14 @@ const addTodayCount = (userId: string, n: number) => {
 
 export const FlashcardMcqView: React.FC<Props> = ({
   questions, title, subtitle, subject, onBack, user, settings, onUpdateUser, sourceMeta, sourceKey, startInProjectorMode, onProjectorModeChange, tabBar, bottomNav, hideProjectorLabel, onOpenGroupStudy,
-  compLessonId, isMistakeMode, rawIndices, onStatsUpdate
+  compLessonId, isMistakeMode, rawIndices, onStatsUpdate, onUpdateQuestions
 }) => {
   const isMountedRef = useRef(true);
+  const [questionsList, setQuestionsList] = useState<MCQItem[]>(questions || []);
+  useEffect(() => {
+    setQuestionsList(questions || []);
+  }, [questions]);
+  const [adminEditingImageQIdx, setAdminEditingImageQIdx] = useState<number | null>(null);
   const [pickedIndices, setPickedIndices] = useState<number[]>([]);
   const [pos, setPos] = useState(0);
   const [flipped, setFlipped] = useState(false);
@@ -378,14 +386,14 @@ export const FlashcardMcqView: React.FC<Props> = ({
     onBack();
   };
 
-  const isAdmin = user?.role === 'ADMIN';
+  const isAdmin = user?.role === 'ADMIN' || user?.role === 'SUB_ADMIN';
   const userId = user?.id || 'guest';
   const userLevel = user ? getLevelFromScore(user.totalScore ?? 0) : 1;
   const userTier = user ? getUserTier(user) : 'FREE';
   const dailyLimit = isAdmin ? 9999 : getEffectiveDailyLimit('flashcard', userLevel, userTier, settings);
 
   const initSession = useCallback(() => {
-    if (questions.length === 0) return;
+    if (questionsList.length === 0) return;
     const viewedToday = getTodayCount(userId);
     const remaining = isAdmin ? 10 : Math.max(0, dailyLimit - viewedToday);
     if (remaining <= 0) {
@@ -393,15 +401,15 @@ export const FlashcardMcqView: React.FC<Props> = ({
       setPickedIndices([]);
       return;
     }
-    const size = Math.min(dailyLimit, remaining, questions.length);
-    const idx = questions.map((_, i) => i);
+    const size = Math.min(dailyLimit, remaining, questionsList.length);
+    const idx = questionsList.map((_, i) => i);
     setPickedIndices(sampleN(idx, size));
     setPos(0);
     setFlipped(false);
     setLimitReached(false);
     viewedIdxRef.current = new Set([0]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [questions, userId, dailyLimit, isAdmin]);
+  }, [questionsList, userId, dailyLimit, isAdmin]);
 
   useEffect(() => { return () => { isMountedRef.current = false; }; }, []);
 
@@ -409,7 +417,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
     initSession();
     sessionStartRef.current = Date.now();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [questions]);
+  }, [questionsList]);
 
   // When parent switches startInProjectorMode (e.g. via overlay tab bar), sync projector mode
   useEffect(() => {
@@ -461,10 +469,10 @@ export const FlashcardMcqView: React.FC<Props> = ({
   }, []);
 
   const total = pickedIndices.length;
-  const currentQ = total > 0 ? (questions[pickedIndices[pos]] ?? null) : null;
+  const currentQ = total > 0 ? (questionsList[pickedIndices[pos]] ?? null) : null;
   // In hard-review mode, use the hard queue to pick the active question
   const activeQ = hardReviewMode
-    ? (questions[pickedIndices[hardQueue[hardReviewPos]]] ?? null)
+    ? (questionsList[pickedIndices[hardQueue[hardReviewPos]]] ?? null)
     : currentQ;
   const activePos   = hardReviewMode ? hardReviewPos : pos;
   const activeTotal = hardReviewMode ? hardQueue.length : total;
@@ -631,7 +639,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
 
   const handleProjectorOptionSelect = useCallback((oi: number) => {
     if (projectorShowReview) return;
-    const pq = questions[projectorQIndex];
+    const pq = questionsList[projectorQIndex];
     if (!pq) return;
     const previousSelection = projectorSelections[projectorQIndex];
     if (previousSelection === oi) return;
@@ -1160,18 +1168,31 @@ export const FlashcardMcqView: React.FC<Props> = ({
                 <span className={`text-[10px] font-black px-2.5 py-1 rounded-lg uppercase tracking-wider ${hardReviewMode ? 'bg-red-100 text-red-700' : 'bg-indigo-100 text-indigo-700'}`}>
                   {hardReviewMode ? '🔴 Hard' : `Q ${activePos + 1}`}
                 </span>
-                <button
-                  type="button"
-                  onClick={speakQuestion}
-                  className={`p-2 rounded-full transition shrink-0 ${
-                    speaking
-                      ? 'bg-red-100 text-red-600 animate-pulse'
-                      : 'bg-slate-100 text-slate-600 hover:bg-indigo-100 hover:text-indigo-700'
-                  }`}
-                  title="Question suno"
-                >
-                  {speaking ? <Square size={13} /> : <Volume2 size={13} />}
-                </button>
+                <div className="flex items-center gap-1.5">
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => setAdminEditingImageQIdx(activePos)}
+                      className="px-2.5 py-1 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[11px] font-black flex items-center gap-1 active:scale-95 transition"
+                      title={activeQ?.imageUrl ? "Photo Badlein / Resize Karein (Admin)" : "Photo Jodein (Admin - Direct Telegram Cloud)"}
+                    >
+                      <ImageIcon size={13} />
+                      <span>{activeQ?.imageUrl ? '📷 Edit Pic' : '📷 Add Pic'}</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={speakQuestion}
+                    className={`p-2 rounded-full transition shrink-0 ${
+                      speaking
+                        ? 'bg-red-100 text-red-600 animate-pulse'
+                        : 'bg-slate-100 text-slate-600 hover:bg-indigo-100 hover:text-indigo-700'
+                    }`}
+                    title="Question suno"
+                  >
+                    {speaking ? <Square size={13} /> : <Volume2 size={13} />}
+                  </button>
+                </div>
               </div>
 
               <div className="flex-1 mb-3">
@@ -2168,37 +2189,58 @@ export const FlashcardMcqView: React.FC<Props> = ({
                     showEliminateTool={showEliminateTool}
                     onSelect={handleProjectorOptionSelect}
                     actions={
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (speaking) {
-                            stopSpeech();
-                            setSpeaking(false);
-                          } else {
-                            const _stmts = (pq.statements || []).join(' ');
-                            const _opts = (pq.options || []).map((o, i) => `Option ${String.fromCharCode(65 + i)}: ${o}`).join('. ');
-                            const text = [pq.question, _stmts, _opts].filter(Boolean).join(' ');
-                            speakText(text, null, 1.0, 'hi-IN', () => setSpeaking(true), () => setSpeaking(false));
-                          }
-                        }}
-                        title={speaking ? 'Stop Speaking' : 'Read Question Aloud (Hindi/English)'}
-                        aria-label="Read Question Aloud"
-                        style={{
-                          width: 32,
-                          height: 32,
-                          borderRadius: 10,
-                          border: `1px solid ${pillBorder}`,
-                          background: speaking ? '#fee2e2' : pillBg,
-                          color: speaking ? '#ef4444' : pillText,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {speaking ? <Square size={13} style={{ fill: 'currentColor' } as React.CSSProperties} /> : <Volume2 size={15} />}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAdminEditingImageQIdx(projectorQIndex);
+                            }}
+                            title={pq?.imageUrl ? "Photo Badlein / Resize Karein (Admin)" : "Photo Jodein (Admin - Direct Telegram Cloud)"}
+                            className="px-2.5 py-1.5 rounded-xl font-black flex items-center gap-1.5 active:scale-95 transition-all text-xs cursor-pointer shadow-xs"
+                            style={{
+                              border: `1.5px solid ${pq?.imageUrl ? '#10b981' : pillBorder}`,
+                              background: pq?.imageUrl ? 'rgba(16,185,129,0.18)' : pillBg,
+                              color: pq?.imageUrl ? '#10b981' : pillText,
+                            }}
+                          >
+                            <ImageIcon size={14} />
+                            <span>{pq?.imageUrl ? '📷 Edit Pic' : '📷 Add Pic'}</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (speaking) {
+                              stopSpeech();
+                              setSpeaking(false);
+                            } else {
+                              const _stmts = (pq.statements || []).join(' ');
+                              const _opts = (pq.options || []).map((o, i) => `Option ${String.fromCharCode(65 + i)}: ${o}`).join('. ');
+                              const text = [pq.question, _stmts, _opts].filter(Boolean).join(' ');
+                              speakText(text, null, 1.0, 'hi-IN', () => setSpeaking(true), () => setSpeaking(false));
+                            }
+                          }}
+                          title={speaking ? 'Stop Speaking' : 'Read Question Aloud (Hindi/English)'}
+                          aria-label="Read Question Aloud"
+                          style={{
+                            width: 32,
+                            height: 32,
+                            borderRadius: 10,
+                            border: `1px solid ${pillBorder}`,
+                            background: speaking ? '#fee2e2' : pillBg,
+                            color: speaking ? '#ef4444' : pillText,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {speaking ? <Square size={13} style={{ fill: 'currentColor' } as React.CSSProperties} /> : <Volume2 size={15} />}
+                        </button>
+                      </div>
                     }
                   />
 
@@ -2846,6 +2888,42 @@ export const FlashcardMcqView: React.FC<Props> = ({
           );
         })(),
         document.body
+      )}
+
+      {/* ── Admin MCQ Picture Manager Modal ── */}
+      {adminEditingImageQIdx !== null && questionsList[adminEditingImageQIdx] && (
+        <AdminMcqImageEditorModal
+          question={questionsList[adminEditingImageQIdx]}
+          questionIndex={adminEditingImageQIdx}
+          isOpen={true}
+          onClose={() => setAdminEditingImageQIdx(null)}
+          onSave={async (data) => {
+            const updated = [...questionsList];
+            updated[adminEditingImageQIdx] = {
+              ...updated[adminEditingImageQIdx],
+              imageUrl: data.imageUrl,
+              imageWidth: data.imageWidth,
+              imageAlign: data.imageAlign,
+            };
+            setQuestionsList(updated);
+            if (onUpdateQuestions) {
+              onUpdateQuestions(updated);
+            }
+          }}
+          onRemove={async () => {
+            const updated = [...questionsList];
+            updated[adminEditingImageQIdx] = {
+              ...updated[adminEditingImageQIdx],
+              imageUrl: undefined,
+              imageWidth: undefined,
+              imageAlign: undefined,
+            };
+            setQuestionsList(updated);
+            if (onUpdateQuestions) {
+              onUpdateQuestions(updated);
+            }
+          }}
+        />
       )}
     </>
   );

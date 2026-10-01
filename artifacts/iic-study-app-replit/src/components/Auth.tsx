@@ -207,6 +207,7 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
       progress: {},
       subscriptionTier: 'FREE',
       isPremium: false,
+      studyMode: 'CREDIT',
     };
 
     // Auth should succeed even when a Firestore/RTDB mirror is temporarily unavailable.
@@ -303,7 +304,7 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
         createdAt: nowIso,
         lastLoginDate: nowIso,
         redeemedCodes: [],
-        studyMode: 'WITHOUT_CREDIT',
+        studyMode: 'CREDIT',
         profileCompleted: true,
       };
 
@@ -526,6 +527,7 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
         profileCompleted: true,
         progress: {},
         redeemedCodes: [],
+        studyMode: 'CREDIT',
         subscriptionTier: 'FREE',
         isPremium: false,
         inbox: [

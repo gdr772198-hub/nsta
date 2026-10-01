@@ -767,6 +767,12 @@ export interface LucentNoteEntry {
   mathSolutionPages?: MathImagePage[];
   chapterId?: string;
   updatedAt?: string;
+  /** Lesson-wide Video URL (YouTube, Drive, or Telegram MP4) */
+  videoUrl?: string;
+  /** Lesson-wide PDF URL (Drive, Telegram PDF, or direct URL) */
+  pdfUrl?: string;
+  /** Lesson-wide Audio URL (Telegram Audio, MP3, or direct URL) */
+  audioUrl?: string;
 }
 
 export interface AppNotification {
@@ -1732,6 +1738,12 @@ export interface MCQItem {
   difficulty?: 'EASY' | 'MEDIUM' | 'HARD'; // Difficulty Level
   difficultyLevel?: string;
   pyqInspired?: string;
+  /** Attached picture URL (stored directly in Telegram Cloud Vault) */
+  imageUrl?: string;
+  /** Custom picture size/width (e.g. 30%, 50%, 75%, 100%) set by admin */
+  imageWidth?: number | string;
+  /** Custom alignment of picture set by admin ('left' | 'center' | 'right') */
+  imageAlign?: 'left' | 'center' | 'right';
 }
 
 // NEW: Performance Analytics

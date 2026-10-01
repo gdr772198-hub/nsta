@@ -279,6 +279,9 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
       return `\x00M${saved.length - 1}\x00`;
     });
     r = r
+      .replace(/!\[(.*?)\]\((.*?)\)/g, (_, alt, url) => {
+        return `<div class="my-2.5 text-center select-none"><img src="${url.trim()}" alt="${alt || 'Notes Picture'}" class="max-w-full h-auto rounded-xl mx-auto border border-slate-200/80 shadow-xs max-h-[360px] object-contain" loading="lazy" /></div>`;
+      })
       .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/(?<![*])\*(?![*\s])([^*\n]+?)(?<!\s)\*(?![*])/g, '<em>$1</em>')
@@ -998,8 +1001,15 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
     setTimeout(() => {
       itemRefs.current[idx]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 60);
+    const cleanTextToSpeak = (activeTopicList[idx]?.text || '')
+      .replace(/!\[.*?\]\(.*?\)/g, '')
+      .trim();
+    if (!cleanTextToSpeak) {
+      if (isReadingRef.current) playFrom(idx + 1);
+      return;
+    }
     speakText(
-      activeTopicList[idx].text,
+      cleanTextToSpeak,
       undefined,
       VOICE_SPEEDS[speedIdxRef.current] ?? 1.0,
       language,

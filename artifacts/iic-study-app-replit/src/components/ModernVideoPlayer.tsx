@@ -72,6 +72,8 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isTopBarHidden, setIsTopBarHidden] = useState(false);
+  const [isRotated, setIsRotated] = useState(false);
   const [currentPlayUrl, setCurrentPlayUrl] = useState('');
   const [selectedQuality, setSelectedQuality] = useState<VideoQualityLevel>('Auto');
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
@@ -217,6 +219,84 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
     };
   }, [onFullscreenChange]);
 
+  // Screen orientation auto-detection (landscape vs portrait)
+  useEffect(() => {
+    const handleOrientation = () => {
+      const isLandscape =
+        window.matchMedia('(orientation: landscape)').matches ||
+        (typeof screen !== 'undefined' &&
+          ((screen as any).orientation?.type?.includes('landscape') ||
+            (screen as any).orientation?.angle === 90 ||
+            (screen as any).orientation?.angle === 270));
+      setIsRotated(!!isLandscape);
+    };
+    handleOrientation();
+    window.addEventListener('resize', handleOrientation);
+    window.addEventListener('orientationchange', handleOrientation);
+    return () => {
+      window.removeEventListener('resize', handleOrientation);
+      window.removeEventListener('orientationchange', handleOrientation);
+    };
+  }, []);
+
+  // Screen rotate toggle (landscape / portrait)
+  const toggleRotate = useCallback(async () => {
+    const nextRot = !isRotated;
+    setIsRotated(nextRot);
+    // When rotating to landscape, hide top bar for an immersive rotated experience
+    if (nextRot) {
+      setIsTopBarHidden(true);
+      try {
+        window.dispatchEvent(
+          new CustomEvent('nsta-video-topbar-change', { detail: { isTopBarHidden: true } })
+        );
+      } catch {}
+    }
+    try {
+      const so: any = (screen as any).orientation;
+      if (so && typeof so.lock === 'function') {
+        if (nextRot) {
+          await so.lock('landscape').catch(() => {});
+        } else {
+          await so.unlock?.().catch(() => {});
+        }
+      }
+    } catch {}
+  }, [isRotated]);
+
+  // NSTA logo tap: toggles top bar visibility (hide / show)
+  const handleNstaLogoClick = useCallback(() => {
+    setIsTopBarHidden((prev) => {
+      const next = !prev;
+      try {
+        window.dispatchEvent(
+          new CustomEvent('nsta-video-topbar-change', { detail: { isTopBarHidden: next } })
+        );
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  // Fullscreen button tap: toggles fullscreen AND hides top bar for immersive view
+  const handleFullscreenClick = useCallback(() => {
+    if (!isFullscreen) {
+      setIsTopBarHidden(true);
+      try {
+        window.dispatchEvent(
+          new CustomEvent('nsta-video-topbar-change', { detail: { isTopBarHidden: true } })
+        );
+      } catch {}
+    } else {
+      setIsTopBarHidden(false);
+      try {
+        window.dispatchEvent(
+          new CustomEvent('nsta-video-topbar-change', { detail: { isTopBarHidden: false } })
+        );
+      } catch {}
+    }
+    toggleFullscreen();
+  }, [isFullscreen, toggleFullscreen]);
+
   const handleSpeedChange = (speed: number) => {
     setPlaybackRate(speed);
     if (videoRef.current) {
@@ -346,19 +426,52 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
       <div
         ref={containerRef}
         className={`relative w-full aspect-video min-h-[300px] bg-black rounded-2xl overflow-hidden shadow-2xl flex flex-col ${
-          isFullscreen ? 'fixed inset-0 z-[99999] rounded-none h-screen' : ''
+          isFullscreen || isRotated ? 'fixed inset-0 z-[99999] rounded-none h-screen w-screen' : ''
         }`}
       >
         <PlayerWatermark
           appLogo={appLogo}
           appName={appName}
           position={isFullscreen ? 'top-right' : 'bottom-right'}
-          onClick={toggleFullscreen}
+          onClick={handleNstaLogoClick}
           isFullscreen={isFullscreen}
+          isTopBarHidden={isTopBarHidden}
         />
 
+        {/* ── Persistent Floating NSTA Logo Button (Always accessible when top bar is hidden) ── */}
+        {isTopBarHidden && (
+          <button
+            type="button"
+            onClick={handleNstaLogoClick}
+            className="absolute top-2.5 left-2.5 z-[60] flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-950/85 hover:bg-slate-900 border border-indigo-400/60 shadow-xl shadow-indigo-950/50 text-white cursor-pointer active:scale-95 transition-all duration-200 backdrop-blur-md animate-in fade-in"
+            title="NSTA Logo • Tap to restore top bar"
+            aria-label="Restore top bar"
+          >
+            <img
+              src={appLogo || '/branding/nsta-logo.png'}
+              alt="NSTA"
+              className="w-4 h-4 rounded-full object-contain shrink-0 ring-1 ring-amber-400/80"
+              onError={(e) => {
+                (e.currentTarget as HTMLElement).style.display = 'none';
+              }}
+            />
+            <span className="text-[10px] font-black uppercase tracking-wider text-amber-300">
+              {appName || 'NSTA'}
+            </span>
+            <span className="text-[9px] text-slate-200 font-bold bg-white/15 px-1.5 py-0.5 rounded-full">
+              Top Bar 👁️
+            </span>
+          </button>
+        )}
+
         {/* Top Bar Header Overlay */}
-        <div className="absolute top-0 left-0 right-0 p-3 flex items-center justify-between bg-gradient-to-b from-black/85 via-black/50 to-transparent z-20 pointer-events-auto">
+        <div
+          className={`absolute top-0 left-0 right-0 p-3 flex items-center justify-between bg-gradient-to-b from-black/90 via-black/50 to-transparent z-20 transition-all duration-300 ${
+            isTopBarHidden
+              ? '-translate-y-full opacity-0 pointer-events-none'
+              : 'translate-y-0 opacity-100 pointer-events-auto'
+          }`}
+        >
           <div className="flex items-center gap-2 min-w-0 pr-4">
             {onBack && (
               <button
@@ -370,26 +483,26 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
               </button>
             )}
 
-            {/* IIC Button Upar Hi Rahega */}
+            {/* NSTA Button in Top Bar - Tap to hide top bar */}
             <button
               type="button"
-              onClick={toggleFullscreen}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/50 hover:bg-black/70 active:scale-95 transition border border-white/20 text-white cursor-pointer shrink-0 shadow-md backdrop-blur-md"
-              title={isFullscreen ? 'Exit Fullscreen' : 'IIC Fullscreen'}
+              onClick={handleNstaLogoClick}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 hover:bg-black/80 active:scale-95 transition border border-white/20 text-white cursor-pointer shrink-0 shadow-md backdrop-blur-md"
+              title="NSTA Logo • Tap to hide top bar"
             >
               <img
                 src={appLogo || '/branding/nsta-logo.png'}
-                alt="IIC"
+                alt="NSTA"
                 className="w-4 h-4 rounded-full object-contain shrink-0"
                 onError={(e) => {
                   (e.currentTarget as HTMLElement).style.display = 'none';
                 }}
               />
               <span className="text-[10px] font-black uppercase tracking-wider text-white">
-                {appName || 'IIC'}
+                {appName || 'NSTA'}
               </span>
-              <span className="text-[10px] text-indigo-300 font-bold ml-0.5">
-                {isFullscreen ? '⤓' : '⛶'}
+              <span className="text-[9px] text-amber-300 font-bold ml-0.5">
+                Hide ✕
               </span>
             </button>
 
@@ -399,11 +512,25 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            {/* Screen Rotate Button */}
             <button
-              onClick={toggleFullscreen}
+              type="button"
+              onClick={toggleRotate}
+              className={`p-1.5 rounded-lg border transition active:scale-90 ${
+                isRotated
+                  ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-300'
+                  : 'bg-white/10 hover:bg-white/20 border-white/15 text-white'
+              }`}
+              title={isRotated ? 'Rotate Portrait' : 'Rotate Landscape'}
+            >
+              <RotateCw size={14} className={isRotated ? 'rotate-90' : ''} />
+            </button>
+
+            <button
+              onClick={handleFullscreenClick}
               className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
-              title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+              title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen (Top bar hide hoga)'}
             >
               {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
             </button>
@@ -429,19 +556,52 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
       <div
         ref={containerRef}
         className={`relative w-full aspect-video min-h-[300px] bg-black rounded-2xl overflow-hidden shadow-2xl flex flex-col ${
-          isFullscreen ? 'fixed inset-0 z-[99999] rounded-none h-screen' : ''
+          isFullscreen || isRotated ? 'fixed inset-0 z-[99999] rounded-none h-screen w-screen' : ''
         }`}
       >
         <PlayerWatermark
           appLogo={appLogo}
           appName={appName}
           position={isFullscreen ? 'top-right' : 'bottom-right'}
-          onClick={toggleFullscreen}
+          onClick={handleNstaLogoClick}
           isFullscreen={isFullscreen}
+          isTopBarHidden={isTopBarHidden}
         />
 
+        {/* ── Persistent Floating NSTA Logo Button (Always accessible when top bar is hidden) ── */}
+        {isTopBarHidden && (
+          <button
+            type="button"
+            onClick={handleNstaLogoClick}
+            className="absolute top-2.5 left-2.5 z-[60] flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-950/85 hover:bg-slate-900 border border-indigo-400/60 shadow-xl shadow-indigo-950/50 text-white cursor-pointer active:scale-95 transition-all duration-200 backdrop-blur-md animate-in fade-in"
+            title="NSTA Logo • Tap to restore top bar"
+            aria-label="Restore top bar"
+          >
+            <img
+              src={appLogo || '/branding/nsta-logo.png'}
+              alt="NSTA"
+              className="w-4 h-4 rounded-full object-contain shrink-0 ring-1 ring-amber-400/80"
+              onError={(e) => {
+                (e.currentTarget as HTMLElement).style.display = 'none';
+              }}
+            />
+            <span className="text-[10px] font-black uppercase tracking-wider text-amber-300">
+              {appName || 'NSTA'}
+            </span>
+            <span className="text-[9px] text-slate-200 font-bold bg-white/15 px-1.5 py-0.5 rounded-full">
+              Top Bar 👁️
+            </span>
+          </button>
+        )}
+
         {/* Top Bar Header Overlay */}
-        <div className="absolute top-0 left-0 right-0 p-3 flex items-center justify-between bg-gradient-to-b from-black/85 via-black/50 to-transparent z-20 pointer-events-auto">
+        <div
+          className={`absolute top-0 left-0 right-0 p-3 flex items-center justify-between bg-gradient-to-b from-black/90 via-black/50 to-transparent z-20 transition-all duration-300 ${
+            isTopBarHidden
+              ? '-translate-y-full opacity-0 pointer-events-none'
+              : 'translate-y-0 opacity-100 pointer-events-auto'
+          }`}
+        >
           <div className="flex items-center gap-2 min-w-0 pr-4">
             {onBack && (
               <button
@@ -453,26 +613,26 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
               </button>
             )}
 
-            {/* IIC Button Upar Hi Rahega */}
+            {/* NSTA Button in Top Bar - Tap to hide top bar */}
             <button
               type="button"
-              onClick={toggleFullscreen}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/50 hover:bg-black/70 active:scale-95 transition border border-white/20 text-white cursor-pointer shrink-0 shadow-md backdrop-blur-md"
-              title={isFullscreen ? 'Exit Fullscreen' : 'IIC Fullscreen'}
+              onClick={handleNstaLogoClick}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 hover:bg-black/80 active:scale-95 transition border border-white/20 text-white cursor-pointer shrink-0 shadow-md backdrop-blur-md"
+              title="NSTA Logo • Tap to hide top bar"
             >
               <img
                 src={appLogo || '/branding/nsta-logo.png'}
-                alt="IIC"
+                alt="NSTA"
                 className="w-4 h-4 rounded-full object-contain shrink-0"
                 onError={(e) => {
                   (e.currentTarget as HTMLElement).style.display = 'none';
                 }}
               />
               <span className="text-[10px] font-black uppercase tracking-wider text-white">
-                {appName || 'IIC'}
+                {appName || 'NSTA'}
               </span>
-              <span className="text-[10px] text-indigo-300 font-bold ml-0.5">
-                {isFullscreen ? '⤓' : '⛶'}
+              <span className="text-[9px] text-amber-300 font-bold ml-0.5">
+                Hide ✕
               </span>
             </button>
 
@@ -482,13 +642,29 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
             </div>
           </div>
 
-          <button
-            onClick={toggleFullscreen}
-            className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
-            title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-          >
-            {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
-          </button>
+          <div className="flex items-center gap-1.5">
+            {/* Screen Rotate Button */}
+            <button
+              type="button"
+              onClick={toggleRotate}
+              className={`p-1.5 rounded-lg border transition active:scale-90 ${
+                isRotated
+                  ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-300'
+                  : 'bg-white/10 hover:bg-white/20 border-white/15 text-white'
+              }`}
+              title={isRotated ? 'Rotate Portrait' : 'Rotate Landscape'}
+            >
+              <RotateCw size={14} className={isRotated ? 'rotate-90' : ''} />
+            </button>
+
+            <button
+              onClick={handleFullscreenClick}
+              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
+              title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen (Top bar hide hoga)'}
+            >
+              {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
+            </button>
+          </div>
         </div>
 
         <iframe
@@ -517,7 +693,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
     <div
       ref={containerRef}
       className={`group/player relative w-full aspect-video min-h-[300px] bg-black rounded-2xl overflow-hidden select-none shadow-2xl flex flex-col justify-between ${
-        isFullscreen ? 'fixed inset-0 z-[99999] rounded-none h-screen' : ''
+        isFullscreen || isRotated ? 'fixed inset-0 z-[99999] rounded-none h-screen w-screen' : ''
       }`}
       onClick={() => {
         if (showSettingsMenu) setShowSettingsMenu(false);
@@ -528,12 +704,45 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
         appLogo={appLogo}
         appName={appName}
         position={isFullscreen ? 'top-right' : 'bottom-right'}
-        onClick={toggleFullscreen}
+        onClick={handleNstaLogoClick}
         isFullscreen={isFullscreen}
+        isTopBarHidden={isTopBarHidden}
       />
 
-      {/* ── Top Bar Header Overlay: IIC BUTTON UPAR HI RAHEGA ── */}
-      <div className="absolute top-0 left-0 right-0 p-3 flex items-center justify-between bg-gradient-to-b from-black/90 via-black/50 to-transparent z-20 pointer-events-auto">
+      {/* ── Persistent Floating NSTA Logo Button (Always accessible when top bar is hidden) ── */}
+      {isTopBarHidden && (
+        <button
+          type="button"
+          onClick={handleNstaLogoClick}
+          className="absolute top-2.5 left-2.5 z-[60] flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-950/85 hover:bg-slate-900 border border-indigo-400/60 shadow-xl shadow-indigo-950/50 text-white cursor-pointer active:scale-95 transition-all duration-200 backdrop-blur-md animate-in fade-in"
+          title="NSTA Logo • Tap to restore top bar"
+          aria-label="Restore top bar"
+        >
+          <img
+            src={appLogo || '/branding/nsta-logo.png'}
+            alt="NSTA"
+            className="w-4 h-4 rounded-full object-contain shrink-0 ring-1 ring-amber-400/80"
+            onError={(e) => {
+              (e.currentTarget as HTMLElement).style.display = 'none';
+            }}
+          />
+          <span className="text-[10px] font-black uppercase tracking-wider text-amber-300">
+            {appName || 'NSTA'}
+          </span>
+          <span className="text-[9px] text-slate-200 font-bold bg-white/15 px-1.5 py-0.5 rounded-full">
+            Top Bar 👁️
+          </span>
+        </button>
+      )}
+
+      {/* ── Top Bar Header Overlay: NSTA BUTTON UPAR HI RAHEGA ── */}
+      <div
+        className={`absolute top-0 left-0 right-0 p-3 flex items-center justify-between bg-gradient-to-b from-black/90 via-black/50 to-transparent z-20 transition-all duration-300 ${
+          isTopBarHidden
+            ? '-translate-y-full opacity-0 pointer-events-none'
+            : 'translate-y-0 opacity-100 pointer-events-auto'
+        }`}
+      >
         <div className="flex items-center gap-2 min-w-0 pr-4">
           {onBack && (
             <button
@@ -545,26 +754,26 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
             </button>
           )}
 
-          {/* IIC Button Upar Hi Rahega (User requirement: Iic buttoj uoar hi rahega) */}
+          {/* NSTA Button in Top Bar - Tap to hide top bar */}
           <button
             type="button"
-            onClick={toggleFullscreen}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/50 hover:bg-black/70 active:scale-95 transition border border-white/20 text-white cursor-pointer shrink-0 shadow-md backdrop-blur-md"
-            title={isFullscreen ? 'Exit Fullscreen' : 'IIC Fullscreen'}
+            onClick={handleNstaLogoClick}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 hover:bg-black/80 active:scale-95 transition border border-white/20 text-white cursor-pointer shrink-0 shadow-md backdrop-blur-md"
+            title="NSTA Logo • Tap to hide top bar"
           >
             <img
               src={appLogo || '/branding/nsta-logo.png'}
-              alt="IIC"
+              alt="NSTA"
               className="w-4 h-4 rounded-full object-contain shrink-0"
               onError={(e) => {
                 (e.currentTarget as HTMLElement).style.display = 'none';
               }}
             />
             <span className="text-[10px] font-black uppercase tracking-wider text-white">
-              {appName || 'IIC'}
+              {appName || 'NSTA'}
             </span>
-            <span className="text-[10px] text-indigo-300 font-bold ml-0.5">
-              {isFullscreen ? '⤓' : '⛶'}
+            <span className="text-[9px] text-amber-300 font-bold ml-0.5">
+              Hide ✕
             </span>
           </button>
 
@@ -574,12 +783,26 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           </div>
         </div>
 
-        {/* Top Right: Fullscreen Quick Button */}
+        {/* Top Right: Screen Rotate & Fullscreen Quick Buttons */}
         <div className="flex items-center gap-1.5">
+          {/* Screen Rotate Button */}
           <button
-            onClick={toggleFullscreen}
+            type="button"
+            onClick={toggleRotate}
+            className={`p-1.5 rounded-lg border transition active:scale-90 ${
+              isRotated
+                ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-300'
+                : 'bg-white/10 hover:bg-white/20 border-white/15 text-white'
+            }`}
+            title={isRotated ? 'Rotate Portrait' : 'Rotate Landscape'}
+          >
+            <RotateCw size={14} className={isRotated ? 'rotate-90' : ''} />
+          </button>
+
+          <button
+            onClick={handleFullscreenClick}
             className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
-            title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+            title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen (Top bar hide hoga)'}
           >
             {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
           </button>
@@ -853,11 +1076,25 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
               )}
             </div>
 
+            {/* Bottom Screen Rotate Button */}
+            <button
+              type="button"
+              onClick={toggleRotate}
+              className={`p-1.5 rounded-lg border transition active:scale-90 ${
+                isRotated
+                  ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-300'
+                  : 'bg-white/10 hover:bg-white/20 border-white/15 text-white'
+              }`}
+              title={isRotated ? 'Rotate Portrait' : 'Rotate Landscape'}
+            >
+              <RotateCw size={14} className={isRotated ? 'rotate-90' : ''} />
+            </button>
+
             {/* Bottom Fullscreen Button */}
             <button
-              onClick={toggleFullscreen}
+              onClick={handleFullscreenClick}
               className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
-              title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+              title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen (Top bar hide hoga)'}
             >
               {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
             </button>
