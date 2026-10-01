@@ -24,6 +24,7 @@ import { useAppTheme } from '../utils/themeContext';
 import { tryEarnScore } from '../utils/scoreSystem';
 import { rotateScreen } from '../utils/displayPrefs';
 import { fireSessionComplete } from '../utils/sessionNotify';
+import { addMistakes } from '../utils/mistakeBank';
 import { renderMathInHtml, formatExplanationHtml } from '../utils/mathUtils';
 import { inlineMd, parseMcqQuestion } from '../utils/mcqRender';
 import McqQuestionDisplay from './McqQuestionDisplay';
@@ -695,12 +696,28 @@ export const FlashcardMcqView: React.FC<Props> = ({
       }
     } else if (previousSelection === undefined) {
       setProjectorWrong(w => w + 1);
+      try {
+        addMistakes([{
+          question: q.question,
+          options: q.options || [],
+          correctAnswer: q.correctAnswer,
+          explanation: q.explanation || '',
+          topic: q.topic || title || '',
+          chapterTitle: title || '',
+          subjectName: subject || '',
+          classLevel: user?.classLevel || '',
+          board: user?.board || '',
+          source: 'Projector',
+        }]);
+        window.dispatchEvent(new Event('storage'));
+      } catch {}
     }
 
     // Synchronize stats for competition MCQ lesson if applicable
-    if (compLessonId && user?.id) {
+    if (compLessonId) {
       try {
-        const statsKey = `comp_mcq_stats_${user.id}_${compLessonId}`;
+        const effectiveUid = user?.id || 'guest';
+        const statsKey = `comp_mcq_stats_${effectiveUid}_${compLessonId}`;
         const raw = localStorage.getItem(statsKey);
         const currentSaved = raw ? JSON.parse(raw) : null;
 
@@ -715,6 +732,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
             };
             localStorage.setItem(statsKey, JSON.stringify(newStats));
             onStatsUpdate?.(newStats);
+            try { window.dispatchEvent(new CustomEvent('comp-mcq-stats-updated', { detail: { lessonId: compLessonId, stats: newStats } })); } catch {}
           }
         } else {
           const updatedSelections = { ...projectorSelections, [projectorQIndex]: oi };
@@ -738,6 +756,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
           };
           localStorage.setItem(statsKey, JSON.stringify(newStats));
           onStatsUpdate?.(newStats);
+          try { window.dispatchEvent(new CustomEvent('comp-mcq-stats-updated', { detail: { lessonId: compLessonId, stats: newStats } })); } catch {}
         }
       } catch (err) {
         console.error('Failed to sync comp mcq stats:', err);
@@ -1447,9 +1466,9 @@ export const FlashcardMcqView: React.FC<Props> = ({
 
       {/* ── Projector Mode Overlay (Mature Classroom / TV Presentation Engine) ── */}
       {isProjectorMode && questions.length > 0 && (() => {
-        const pq = questions[projectorQIndex] ?? null;
+        const pq = ((questionsList && questionsList[projectorQIndex]) || questions[projectorQIndex]) ?? null;
         if (!pq) return null;
-        const total = questions.length;
+        const total = (questionsList && questionsList.length) || questions.length;
         const projectorCurrentSelection = projectorSelections[projectorQIndex] ?? null;
 
         const isThemeDark = projectorTheme === 'dark';

@@ -513,20 +513,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5">
-            {/* Screen Rotate Button */}
-            <button
-              type="button"
-              onClick={toggleRotate}
-              className={`p-1.5 rounded-lg border transition active:scale-90 ${
-                isRotated
-                  ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-300'
-                  : 'bg-white/10 hover:bg-white/20 border-white/15 text-white'
-              }`}
-              title={isRotated ? 'Rotate Portrait' : 'Rotate Landscape'}
-            >
-              <RotateCw size={14} className={isRotated ? 'rotate-90' : ''} />
-            </button>
-
             <button
               onClick={handleFullscreenClick}
               className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
@@ -643,20 +629,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5">
-            {/* Screen Rotate Button */}
-            <button
-              type="button"
-              onClick={toggleRotate}
-              className={`p-1.5 rounded-lg border transition active:scale-90 ${
-                isRotated
-                  ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-300'
-                  : 'bg-white/10 hover:bg-white/20 border-white/15 text-white'
-              }`}
-              title={isRotated ? 'Rotate Portrait' : 'Rotate Landscape'}
-            >
-              <RotateCw size={14} className={isRotated ? 'rotate-90' : ''} />
-            </button>
-
             <button
               onClick={handleFullscreenClick}
               className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
@@ -783,22 +755,8 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           </div>
         </div>
 
-        {/* Top Right: Screen Rotate & Fullscreen Quick Buttons */}
+        {/* Top Right: Fullscreen Quick Button */}
         <div className="flex items-center gap-1.5">
-          {/* Screen Rotate Button */}
-          <button
-            type="button"
-            onClick={toggleRotate}
-            className={`p-1.5 rounded-lg border transition active:scale-90 ${
-              isRotated
-                ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-300'
-                : 'bg-white/10 hover:bg-white/20 border-white/15 text-white'
-            }`}
-            title={isRotated ? 'Rotate Portrait' : 'Rotate Landscape'}
-          >
-            <RotateCw size={14} className={isRotated ? 'rotate-90' : ''} />
-          </button>
-
           <button
             onClick={handleFullscreenClick}
             className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
@@ -1075,20 +1033,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
                 </div>
               )}
             </div>
-
-            {/* Bottom Screen Rotate Button */}
-            <button
-              type="button"
-              onClick={toggleRotate}
-              className={`p-1.5 rounded-lg border transition active:scale-90 ${
-                isRotated
-                  ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-300'
-                  : 'bg-white/10 hover:bg-white/20 border-white/15 text-white'
-              }`}
-              title={isRotated ? 'Rotate Portrait' : 'Rotate Landscape'}
-            >
-              <RotateCw size={14} className={isRotated ? 'rotate-90' : ''} />
-            </button>
 
             {/* Bottom Fullscreen Button */}
             <button

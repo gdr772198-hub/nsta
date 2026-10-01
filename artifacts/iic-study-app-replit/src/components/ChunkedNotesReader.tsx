@@ -280,7 +280,11 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
     });
     r = r
       .replace(/!\[(.*?)\]\((.*?)\)/g, (_, alt, url) => {
-        return `<div class="my-2.5 text-center select-none"><img src="${url.trim()}" alt="${alt || 'Notes Picture'}" class="max-w-full h-auto rounded-xl mx-auto border border-slate-200/80 shadow-xs max-h-[360px] object-contain" loading="lazy" /></div>`;
+        const titleText = (alt || '').trim();
+        const captionHtml = titleText
+          ? `<figcaption class="text-[12px] font-bold text-slate-500 dark:text-slate-400 mt-1.5 text-center select-none">${titleText}</figcaption>`
+          : '';
+        return `<figure class="my-3 text-center select-none inline-block max-w-full"><img src="${url.trim()}" alt="${titleText || 'Notes Picture'}" class="max-w-full h-auto rounded-xl mx-auto border border-slate-200/80 dark:border-slate-700 shadow-xs max-h-[420px] object-contain" loading="lazy" />${captionHtml}</figure>`;
       })
       .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
@@ -883,12 +887,13 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
   }, []);
 
   const handleRotate = async () => {
-    const newVal = !isDesktopMode;
-    setDesktopMode(newVal);
-    setIsDesktopModeLocal(newVal);
-    onDesktopModeChange?.(newVal);
-    setRotateToast(newVal ? '💻 Desktop Mode: ON (Compact Layout)' : '📱 Mobile Mode: ON');
-    setTimeout(() => setRotateToast(null), 2200);
+    const newOri = await rotateScreen();
+    if (newOri) {
+      setRotateToast(newOri === 'landscape' ? '🔄 Landscape Mode' : '📱 Portrait Mode');
+    } else {
+      setRotateToast('🔄 Screen Rotate');
+    }
+    setTimeout(() => setRotateToast(null), 2000);
   };
 
   const toggleDesktopMode = () => {
@@ -1394,16 +1399,35 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                 <span style={{ fontSize: 14, lineHeight: 1 }}>🛡️</span>
               </button>
             )}
-            {/* Admin Edit button — only for admin/subadmin when onAdminEdit provided */}
+            {/* Screen Rotate button directly in slim bar */}
+            <button
+              type="button"
+              onClick={handleRotate}
+              className="w-7 h-7 flex items-center justify-center rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-indigo-600 active:scale-90 transition shrink-0"
+              title="Screen Rotate"
+            >
+              <RotateCcw size={12} />
+            </button>
+            {/* Admin Edit & Add Pic buttons — only for admin/subadmin when onAdminEdit provided */}
             {isAdmin && onAdminEdit && (
-              <button
-                type="button"
-                onClick={onAdminEdit}
-                className="w-7 h-7 flex items-center justify-center rounded-lg bg-orange-50 border border-orange-300 text-orange-600 active:scale-90 transition shrink-0"
-                title="Edit / Delete Notes (Admin)"
-              >
-                <Pencil size={13} />
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={onAdminEdit}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg bg-orange-50 border border-orange-300 text-orange-600 hover:bg-orange-100 active:scale-90 transition shrink-0"
+                  title="Edit Notes (Admin)"
+                >
+                  <Pencil size={13} />
+                </button>
+                <button
+                  type="button"
+                  onClick={onAdminEdit}
+                  className="px-2 py-1 flex items-center gap-1 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-700 hover:bg-emerald-100 active:scale-90 transition shrink-0 text-[10px] font-bold"
+                  title="Notes ke bich Photo / Pic Jodein (Admin)"
+                >
+                  <span>📷 Pic</span>
+                </button>
+              </>
             )}
             {/* 📋 Copy All Notes — Admin only */}
             {isAdmin && activeTopicList.length > 0 && (
@@ -1624,7 +1648,7 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
               <button type="button" onClick={handleRotate}
                 style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '6px 4px', background: 'transparent', cursor: 'pointer', border: 'none', borderRight: '1px solid #e2e8f0' }}>
                 <RotateCcw size={12} style={{ color: '#64748b' }} />
-                <span style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Reset</span>
+                <span style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Rotate</span>
               </button>
               {/* Offline Save */}
               {onSaveOffline && (
@@ -1838,11 +1862,11 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                 <span style={{ fontSize: 14, fontWeight: 900, color: '#334155', lineHeight: 1 }}>A+</span>
                 <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Size</span>
               </button>
-              {/* Reset */}
+              {/* Rotate */}
               <button type="button" onClick={handleRotate}
                 style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: 'transparent', cursor: 'pointer', border: 'none', borderRight: '1px solid #e2e8f0' }}>
                 <RotateCcw size={14} style={{ color: '#64748b' }} />
-                <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Reset</span>
+                <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Rotate</span>
               </button>
               {onSaveOffline && (
                 <button type="button" onClick={() => {
@@ -2377,7 +2401,9 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                     fontFamily: activeFont?.family,
                   }}
                 >
-                  <span className={`font-bold mr-1.5 ${starred ? 'text-amber-400' : 'text-indigo-400'}`}>•</span>
+                  {!/^\s*!\[.*?\]\(.*?\)\s*$/.test(topic.text) && !/^\s*<(?:img|figure)\b/i.test(topic.text) && (
+                    <span className={`font-bold mr-1.5 ${starred ? 'text-amber-400' : 'text-indigo-400'}`}>•</span>
+                  )}
                   <span dangerouslySetInnerHTML={{ __html: renderMathInHtml(inlineMd(topic.text)) }} />
                 </p>
                 {/* Save count badge intentionally hidden here — yeh ab sirf

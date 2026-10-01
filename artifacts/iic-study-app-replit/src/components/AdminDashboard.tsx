@@ -54,6 +54,7 @@ import { PlanComparisonManager } from './admin/PlanComparisonManager';
 import { PedroAdminManager } from './admin/PedroAdminManager';
 import { AdminMathManager } from './AdminMathManager';
 import { AdminLucentMediaModal } from './AdminLucentMediaModal';
+import { getLocalErrors } from '../utils/errorLogger';
 // @ts-ignore
 import JSZip from 'jszip';
 import { Document, Page, pdfjs } from 'react-pdf';
@@ -623,11 +624,18 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
   // CONTENT HISTORY LOADER
   // Subscribe to error_logs for admin home notification + critical modal
   useEffect(() => {
-    const logsRef = rtdbQueryAdmin(ref(rtdb, 'error_logs'), obcAdmin('timestamp'), ltlAdmin(500));
-    const unsub = onValue(logsRef, snap => {
-      if (!snap.exists()) { setActiveErrorCount(0); setNewErrorCount(0); setCriticalErrorSummary(null); return; }
-      const items: any[] = [];
-      snap.forEach((child: any) => { items.push({ ...child.val(), id: child.key }); });
+    let rtdbItemsCache: any[] = [];
+
+    const recalculateCounts = () => {
+      const local = getLocalErrors();
+      const map = new Map<string, any>();
+      rtdbItemsCache.forEach(child => { if (child && child.id) map.set(child.id, child); });
+      local.forEach(child => {
+        if (!child || !child.id) return;
+        if (!map.has(child.id)) map.set(child.id, child);
+        else if (child.dismissed) map.get(child.id).dismissed = true;
+      });
+      const items = Array.from(map.values());
       const active = items.filter((e: any) => !e.dismissed);
       setActiveErrorCount(active.length);
       const stored = parseInt(localStorage.getItem('admin_last_seen_error_ts') || '0', 10);
@@ -643,8 +651,30 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
       } else {
         setCriticalErrorSummary(null);
       }
-    }, () => {});
-    return unsub;
+    };
+
+    // Calculate initial metrics from local cache immediately
+    recalculateCounts();
+
+    const logsRef = rtdbQueryAdmin(ref(rtdb, 'error_logs'), obcAdmin('timestamp'), ltlAdmin(500));
+    const unsub = onValue(logsRef, snap => {
+      rtdbItemsCache = [];
+      if (snap.exists()) {
+        snap.forEach((child: any) => { rtdbItemsCache.push({ ...child.val(), id: child.key }); });
+      }
+      recalculateCounts();
+    }, () => {
+      recalculateCounts();
+    });
+
+    window.addEventListener('nsta-new-error', recalculateCounts);
+    window.addEventListener('storage', recalculateCounts);
+
+    return () => {
+      unsub();
+      window.removeEventListener('nsta-new-error', recalculateCounts);
+      window.removeEventListener('storage', recalculateCounts);
+    };
   }, []);
 
   useEffect(() => {

@@ -54,6 +54,7 @@ import {
   auth,
   saveLucentEntryDirect,
   saveHomeworkEntryDirect,
+  saveMcqLesson,
   subscribeMcqLessons,
   subscribeToUser,
 } from "../firebase";
@@ -259,6 +260,7 @@ import {
   Building2,
   Link2,
   Edit3,
+  Image as ImageIcon,
 } from "lucide-react";
 
 const FaWhatsapp = ({ size = 18 }: { size?: number }) => (
@@ -4396,7 +4398,7 @@ export const StudentDashboard: React.FC<Props> = ({
   useEffect(() => {
     const unsub = subscribeMcqLessons((lessons) => {
       setCompMcqPracticeLessons(
-        lessons.filter((l: any) => l.classLevel === 'COMPETITION' && l.subject === 'MCQ_PRACTICE' && Array.isArray(l.mcqs) && l.mcqs.length > 0)
+        lessons.filter((l: any) => (l.classLevel === 'COMPETITION' || !l.classLevel || l.classLevel === 'ALL') && (l.subject === 'MCQ_PRACTICE' || !l.subject || l.practiceSubject || l.subject === 'COMPETITION') && Array.isArray(l.mcqs) && l.mcqs.length > 0)
       );
     });
     return unsub;
@@ -4675,6 +4677,12 @@ export const StudentDashboard: React.FC<Props> = ({
   // it in its dep array) to avoid production TDZ crash — same reason as hwActiveHwId above.
   const [flashcardMcqs, setFlashcardMcqs] = useState<{ items: any[]; title: string; subtitle: string; subject?: string; sourceKey?: string; startInProjectorMode?: boolean; hideProjectorLabel?: boolean; compLessonId?: string; isMistakeMode?: boolean; rawIndices?: number[]; fromLesson?: { hasMcq: boolean; isAdmin: boolean; activeMode: 'flashcard' | 'projector'; hasPdf?: boolean; hasVideo?: boolean; hasAudio?: boolean; isCompetition?: boolean; returnMode?: string; unlockId?: string; unlockPageIndex?: number } } | null>(null);
   const [compStatsVersion, setCompStatsVersion] = useState(0);
+
+  useEffect(() => {
+    const handler = () => setCompStatsVersion(v => v + 1);
+    window.addEventListener('comp-mcq-stats-updated', handler);
+    return () => window.removeEventListener('comp-mcq-stats-updated', handler);
+  }, []);
 
   // ── HomeStatsToast — Standalone FlashcardMcqView tracking ─────────────────
   // Only when opened outside an active hw/lucent session (those already track overall pts).
@@ -5426,12 +5434,15 @@ export const StudentDashboard: React.FC<Props> = ({
 
   const handleInsertInlinePhoto = async (file: File) => {
     if (!file) return;
+    const userCaption = window.prompt('Photo ka Title / Caption likhein (Optional):', '') || '';
+    const cleanCaption = userCaption.trim();
+
     setInlineEditUploading(true);
     setInlineEditUploadProgress(15);
     try {
       const res = await uploadToTelegramStorage(file, {
         fileName: `notes_pic_${Date.now()}.jpg`,
-        caption: 'Notes Diagram',
+        caption: cleanCaption || 'Notes Diagram',
         onProgress: (pct) => setInlineEditUploadProgress(pct),
       });
       if (res?.url) {
@@ -5441,12 +5452,13 @@ export const StudentDashboard: React.FC<Props> = ({
         const after = inlineEditPointDraft.slice(cursor);
         const isHtml = inlineEditModal?.type.endsWith('_html');
         if (isHtml) {
-          const imgHtml = `\n<div style="text-align:center; margin:16px 0;"><img src="${res.url}" alt="Diagram" style="max-width:100%; border-radius:12px; margin:0 auto; box-shadow:0 2px 8px rgba(0,0,0,0.08);" /></div>\n`;
+          const figCaption = cleanCaption ? `<figcaption style="font-size:12px; font-weight:700; color:#64748b; margin-top:6px; text-align:center;">${cleanCaption}</figcaption>` : '';
+          const imgHtml = `\n<figure style="text-align:center; margin:16px auto; display:block;"><img src="${res.url}" alt="${cleanCaption || 'Notes Photo'}" style="max-width:100%; border-radius:12px; margin:0 auto; box-shadow:0 2px 8px rgba(0,0,0,0.08);" />${figCaption}</figure>\n`;
           setInlineEditPointDraft(`${before}${imgHtml}${after}`);
         } else {
           // Chunk mode: insert photo markdown
           // The words before cursor stay on top, the photo is added, and whatever follows is placed below!
-          const imgMd = `\n\n![Notes Photo](${res.url})\n\n`;
+          const imgMd = `\n\n![${cleanCaption}](${res.url})\n\n`;
           setInlineEditPointDraft(`${before.trimEnd()}${imgMd}${after.trimStart()}`);
         }
         showAlert('✅ Photo Telegram Cloud par upload ho gayi!', 'SUCCESS');
@@ -5537,6 +5549,13 @@ export const StudentDashboard: React.FC<Props> = ({
       const updatedEntry = { ...entry, pages: updatedPages };
       await saveLucentEntryDirect(updatedEntry);
       if (lucentPageListViewer?.id === entry.id) setLucentPageListViewer(updatedEntry as any);
+      if (lucentNoteViewer?.id === entry.id) setLucentNoteViewer(updatedEntry as any);
+      setSettings((prev: any) => {
+        if (!prev) return prev;
+        const currentList = prev.lucentNotes || [];
+        const updatedList = currentList.map((item: any) => item.id === entry.id ? updatedEntry : item);
+        return { ...prev, lucentNotes: updatedList };
+      });
       showAlert('✅ Page saved!', 'SUCCESS');
       setAdminPageEdit(null);
     } catch { showAlert('Save failed. Try again.', 'ERROR'); }
@@ -5614,6 +5633,12 @@ export const StudentDashboard: React.FC<Props> = ({
         topicName: apeTopic || undefined,
       };
       await saveHomeworkEntryDirect(updatedHw);
+      setSettings((prev: any) => {
+        if (!prev) return prev;
+        const currentList = prev.homework || [];
+        const updatedList = currentList.map((item: any) => item.id === updatedHw.id ? updatedHw : item);
+        return { ...prev, homework: updatedList };
+      });
       showAlert('✅ Entry saved!', 'SUCCESS');
       setHwEntryEdit(null);
     } catch { showAlert('Save failed. Try again.', 'ERROR'); }
@@ -5635,14 +5660,24 @@ export const StudentDashboard: React.FC<Props> = ({
             ...(type === 'lucent_html' ? { htmlNotes: joinedText } : { chunkNotes: joinedText }),
           };
         }
-        await saveLucentEntryDirect({ ...originalEntry, pages: updatedPages });
+        const updatedEntry = { ...originalEntry, pages: updatedPages };
+        await saveLucentEntryDirect(updatedEntry);
+        setLucentNoteViewer(updatedEntry);
       } else {
-        await saveHomeworkEntryDirect({
+        const updatedHw = {
           ...originalEntry,
           ...(type === 'hw_html' ? { htmlNotes: joinedText } : { chunkNotes: joinedText }),
+        };
+        await saveHomeworkEntryDirect(updatedHw);
+        setActiveHw(updatedHw);
+        setSettings((prev: any) => {
+          if (!prev) return prev;
+          const currentList = prev.homework || [];
+          const updatedList = currentList.map((item: any) => item.id === updatedHw.id ? updatedHw : item);
+          return { ...prev, homework: updatedList };
         });
       }
-      showAlert('✅ Notes saved! Pull to refresh to see changes.', 'SUCCESS');
+      showAlert('✅ Notes saved live!', 'SUCCESS');
       setInlineEditModal(null);
     } catch {
       showAlert('Save failed. Please try again.', 'ERROR');
@@ -10034,7 +10069,7 @@ export const StudentDashboard: React.FC<Props> = ({
               </div>
               {lucentSectionEl}
               {/* Competition MCQ Practice admin lessons */}
-              {homeworkSubjectView === 'mcq' && compMcqPracticeLessons.length > 0 && (
+              {(homeworkSubjectView === 'mcq' || selectedSubject?.id === 'mcq') && compMcqPracticeLessons.length > 0 && (
                 <div className="mb-5">
                   <div className="flex items-center justify-between mb-2">
                     <p className={`text-[10px] font-black ${theme.text} uppercase tracking-widest`}>📝 MCQ Practice Sets</p>
@@ -10122,7 +10157,7 @@ export const StudentDashboard: React.FC<Props> = ({
                   </div>
                 </div>
               )}
-              {!showLucentSection && !(homeworkSubjectView === 'mcq' && compMcqPracticeLessons.length > 0) && (
+              {!showLucentSection && !((homeworkSubjectView === 'mcq' || selectedSubject?.id === 'mcq') && compMcqPracticeLessons.length > 0) && (
                 <div className="text-center py-16 text-slate-400">
                   <BookOpen size={48} className="mx-auto mb-3 opacity-30" />
                   <p className="font-bold text-slate-500">No content found</p>
@@ -10694,6 +10729,9 @@ export const StudentDashboard: React.FC<Props> = ({
                       )}
                       {_isAdminUser && (
                         <button onClick={() => { const src = (activeHw as any)?.htmlNotes || ''; setInlineEditContent(src); setInlineEditPoints(splitHtmlIntoBlocks(src)); setInlineEditPointIdx(null); setInlineEditPointDraft(''); setInlineEditModal({ type: 'hw_html', entryId: activeHw.id || '', title: activeHw.title || 'Competition Note', originalEntry: activeHw }); setHwWriteMenuOpen(false); }} className="w-8 h-8 flex items-center justify-center rounded-xl bg-orange-50 border border-orange-200 text-orange-600 hover:bg-orange-100 active:scale-95 shadow-sm transition-all shrink-0" title="Edit HTML"><Pencil size={12} /></button>
+                      )}
+                      {_isAdminUser && (
+                        <button onClick={() => { const src = (activeHw as any)?.htmlNotes || ''; setInlineEditContent(src); setInlineEditPoints(splitHtmlIntoBlocks(src)); setInlineEditPointIdx(null); setInlineEditPointDraft(''); setInlineEditModal({ type: 'hw_html', entryId: activeHw.id || '', title: activeHw.title || 'Competition Note', originalEntry: activeHw }); setHwWriteMenuOpen(false); setTimeout(() => inlineEditFileInputRef.current?.click(), 100); }} className="px-2 py-1 flex items-center gap-1 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-700 hover:bg-emerald-100 active:scale-95 shadow-sm transition-all shrink-0 text-[10px] font-bold" title="Notes ke bich Photo / Pic Jodein (Admin)"><ImageIcon size={12} /><span>📷 Pic</span></button>
                       )}
                       <div className="flex items-center rounded-xl overflow-hidden border border-slate-200 bg-white shadow-sm shrink-0">
                         <button onClick={zoomOut} className="w-8 h-8 flex items-center justify-center text-slate-600 text-[11px] font-black active:scale-95 transition-all hover:bg-slate-50 hover:text-indigo-600">A−</button>
@@ -11593,8 +11631,8 @@ export const StudentDashboard: React.FC<Props> = ({
             </div>
             )}
 
-            {/* Floating FAB — tap directly to toggle Focus Mode (hidden in video and all MCQ/QA/flashcard modes) */}
-            {effectiveMode !== 'video' && effectiveMode !== 'mcq' && effectiveMode !== 'qa' && effectiveMode !== 'flashcard' && (
+            {/* Floating FAB — tap directly to toggle Focus Mode (hidden in video and all MCQ/QA/flashcard modes, and hidden on notification page) */}
+            {effectiveMode !== 'video' && effectiveMode !== 'mcq' && effectiveMode !== 'qa' && effectiveMode !== 'flashcard' && !showNotifPage && (
               <DraggableNstaLogoFab
                 isActive={hwImmersive}
                 onToggle={() => setHwImmersive(v => !v)}
@@ -24164,7 +24202,7 @@ export const StudentDashboard: React.FC<Props> = ({
               onUpdateUser={handleUserUpdate}
             />
           </div>
-          {mathViewerMode !== 'MCQ' && (
+          {mathViewerMode !== 'MCQ' && !showNotifPage && (
             <DraggableNstaLogoFab
               isActive={mathImmersive}
               onToggle={() => setMathImmersive(v => !v)}
@@ -25337,6 +25375,9 @@ export const StudentDashboard: React.FC<Props> = ({
                       <span className="text-[9px] font-black text-teal-600 bg-teal-50 border border-teal-200 px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0">✏️ WRITE</span>
                       {_isAdminUser && (
                         <button onClick={() => { const src = (currentPage as any)?.htmlNotes || (currentPage as any)?.content || ''; setInlineEditContent(src); setInlineEditPoints(splitHtmlIntoBlocks(src)); setInlineEditPointIdx(null); setInlineEditPointDraft(''); setInlineEditModal({ type: 'lucent_html', entryId: entry.id, pageIndex: safeIndex, title: `${entry.lessonTitle} · Page ${currentPage?.pageNo ?? safeIndex + 1}`, originalEntry: entry }); setLucentWriteMenuOpen(false); }} className="w-8 h-8 flex items-center justify-center rounded-xl bg-orange-50 border border-orange-200 text-orange-600 hover:bg-orange-100 active:scale-95 shadow-sm transition-all shrink-0" title="Edit HTML"><Pencil size={12} /></button>
+                      )}
+                      {_isAdminUser && (
+                        <button onClick={() => { const src = (currentPage as any)?.htmlNotes || (currentPage as any)?.content || ''; setInlineEditContent(src); setInlineEditPoints(splitHtmlIntoBlocks(src)); setInlineEditPointIdx(null); setInlineEditPointDraft(''); setInlineEditModal({ type: 'lucent_html', entryId: entry.id, pageIndex: safeIndex, title: `${entry.lessonTitle} · Page ${currentPage?.pageNo ?? safeIndex + 1}`, originalEntry: entry }); setLucentWriteMenuOpen(false); setTimeout(() => inlineEditFileInputRef.current?.click(), 100); }} className="px-2 py-1 flex items-center gap-1 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-700 hover:bg-emerald-100 active:scale-95 shadow-sm transition-all shrink-0 text-[10px] font-bold" title="Notes ke bich Photo / Pic Jodein (Admin)"><ImageIcon size={12} /><span>📷 Pic</span></button>
                       )}
                       {_isAdminUser && (
                         <button onClick={() => setShowAdminBoard(true)} className="w-8 h-8 flex items-center justify-center rounded-xl bg-orange-50 border border-orange-200 text-orange-600 hover:bg-orange-100 active:scale-95 shadow-sm transition-all shrink-0" title="Whiteboard"><Presentation size={12} /></button>
@@ -26571,7 +26612,7 @@ RULES:
 
           </div>
           {/* Lucent FAB — hidden in video tab and all MCQ/QA/flashcard tabs */}
-          {lucentActiveTab !== 'VIDEO' && lucentActiveTab !== 'MCQ' && lucentActiveTab !== 'MCQS' && lucentActiveTab !== 'QA' && lucentActiveTab !== 'FLASHCARD' && (
+          {lucentActiveTab !== 'VIDEO' && lucentActiveTab !== 'MCQ' && lucentActiveTab !== 'MCQS' && lucentActiveTab !== 'QA' && lucentActiveTab !== 'FLASHCARD' && !showNotifPage && (
             <DraggableNstaLogoFab
               isActive={lucentImmersive}
               onToggle={() => setLucentImmersive(v => !v)}
@@ -27771,7 +27812,7 @@ RULES:
 
       {/* ===================== NOTIFICATION PAGE ===================== */}
       {showNotifPage && (
-        <div className="fixed inset-0 z-[9000] flex flex-col animate-in slide-in-from-right-full duration-300" style={{ background: tierTheme.profileBg }}>
+        <div className="fixed inset-0 z-[100000] flex flex-col animate-in slide-in-from-right-full duration-300" style={{ background: tierTheme.profileBg }}>
           <div className="flex items-center gap-3 px-4 py-3 sticky top-0 z-10" style={{ background: tierTheme.topBarGrad }}>
             <button onClick={() => setShowNotifPage(false)} className="p-2 rounded-full bg-white/20 text-white">
               <ArrowLeft size={20} />
@@ -28117,11 +28158,25 @@ RULES:
               compLessonId={flashcardMcqs.compLessonId}
               isMistakeMode={flashcardMcqs.isMistakeMode}
               rawIndices={flashcardMcqs.rawIndices}
-              onStatsUpdate={() => {
+              onStatsUpdate={(newStats) => {
+                if (flashcardMcqs.compLessonId && newStats) {
+                  saveCompLessonStats(flashcardMcqs.compLessonId, newStats);
+                }
                 setCompStatsVersion(v => v + 1);
               }}
               onUpdateQuestions={(newQuestions) => {
                 setFlashcardMcqs(prev => prev ? { ...prev, items: newQuestions } : null);
+                if (flashcardMcqs.compLessonId) {
+                  setCompMcqPracticeLessons(prev =>
+                    prev.map(l => l.id === flashcardMcqs.compLessonId ? { ...l, mcqs: newQuestions, mcqCount: newQuestions.length } : l)
+                  );
+                  const targetLesson = compMcqPracticeLessons.find(l => l.id === flashcardMcqs.compLessonId);
+                  if (targetLesson) {
+                    saveMcqLesson({ ...targetLesson, mcqs: newQuestions, mcqCount: newQuestions.length }).then(() => {
+                      showAlert('✅ MCQ Picture save ho gayi!', 'SUCCESS');
+                    }).catch(() => {});
+                  }
+                }
                 if (lucentNoteViewer) {
                   const updatedPages = [...(lucentNoteViewer.pages || [])];
                   const pageIdx = lucentPageIndex;
@@ -28170,8 +28225,25 @@ RULES:
           compLessonId={compMcqSession.lessonId}
           isMistakeMode={compMcqSession.isMistakeMode}
           rawIndices={compMcqSession.rawIndices}
-          onStatsUpdate={() => {
+          onStatsUpdate={(newStats) => {
+            if (compMcqSession.lessonId && newStats) {
+              saveCompLessonStats(compMcqSession.lessonId, newStats);
+            }
             setCompStatsVersion(v => v + 1);
+          }}
+          onUpdateQuestions={(newQuestions) => {
+            setCompMcqSession(prev => prev ? { ...prev, items: newQuestions } : null);
+            if (compMcqSession.lessonId) {
+              setCompMcqPracticeLessons(prev =>
+                prev.map(l => l.id === compMcqSession.lessonId ? { ...l, mcqs: newQuestions, mcqCount: newQuestions.length } : l)
+              );
+              const targetLesson = compMcqPracticeLessons.find(l => l.id === compMcqSession.lessonId);
+              if (targetLesson) {
+                saveMcqLesson({ ...targetLesson, mcqs: newQuestions, mcqCount: newQuestions.length }).then(() => {
+                  showAlert('✅ MCQ Picture save ho gayi!', 'SUCCESS');
+                }).catch(() => {});
+              }
+            }
           }}
           bottomNav={renderBottomNav(true)}
         />
@@ -29345,6 +29417,7 @@ RULES:
         activeTab !== 'MCQ_REVIEW' &&
         !compMcqSession &&
         !flashcardMcqs &&
+        !showNotifPage &&
         selectedSubject?.id !== 'mcq' && (
         <DraggableNstaLogoFab
           isActive={isLandscapeUiHidden}

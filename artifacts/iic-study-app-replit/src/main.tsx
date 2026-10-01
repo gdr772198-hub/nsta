@@ -7,6 +7,7 @@ import 'katex/dist/katex.min.css';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { registerSW } from 'virtual:pwa-register';
 import { installStorageQuotaProtection } from './utils/safeUtils';
+import { logErrorToFirebase } from './utils/errorLogger';
 
 // Intercept and protect localStorage against QuotaExceededError crashes
 installStorageQuotaProtection();
@@ -78,11 +79,40 @@ const isBenignError = (reason: any): boolean => {
   );
 };
 
+// Auto-capture console.error calls containing Error objects or error strings
+const _originalConsoleError = console.error;
+let _isLoggingConsoleError = false;
+console.error = function (...args: any[]) {
+  try {
+    _originalConsoleError.apply(console, args);
+  } catch {}
+  if (_isLoggingConsoleError) return;
+  try {
+    _isLoggingConsoleError = true;
+    for (const arg of args) {
+      if (arg instanceof Error) {
+        logErrorToFirebase(arg, { type: 'runtime' }).catch(() => {});
+        break;
+      } else if (typeof arg === 'string' && (arg.toLowerCase().includes('error') || arg.toLowerCase().includes('failed') || arg.toLowerCase().includes('uncaught'))) {
+        if (!isBenignError(arg)) {
+          logErrorToFirebase(new Error(arg), { type: 'runtime' }).catch(() => {});
+          break;
+        }
+      }
+    }
+  } catch {} finally {
+    _isLoggingConsoleError = false;
+  }
+};
+
 window.addEventListener('unhandledrejection', (event) => {
   if (isBenignError(event.reason)) {
     console.warn('[suppressed rejection]:', event.reason);
     event.preventDefault();
+    return;
   }
+  const err = event.reason instanceof Error ? event.reason : new Error(String(event.reason ?? 'Unhandled Promise Rejection'));
+  logErrorToFirebase(err, { type: 'promise' }).catch(() => {});
 });
 
 window.addEventListener('error', (event) => {
@@ -95,7 +125,11 @@ window.addEventListener('error', (event) => {
     console.warn('[suppressed error]:', event.error || event.message);
     event.preventDefault();
     if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+    return;
   }
+  logErrorToFirebase(event.error || new Error(event.message || 'Unknown runtime error'), {
+    type: 'runtime',
+  }).catch(() => {});
 }, true);
 
 const rootElement = document.getElementById('root');

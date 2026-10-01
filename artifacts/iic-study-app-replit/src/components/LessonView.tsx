@@ -606,11 +606,13 @@ export const LessonView: React.FC<Props> = ({
   }, []);
 
   const handleRotate = async () => {
-    const newVal = !isDesktopMode;
-    setDesktopMode(newVal);
-    setIsDesktopMode(newVal);
-    setRotateToast(newVal ? '💻 Desktop Mode: ON (Compact Layout)' : '📱 Mobile Mode: ON');
-    setTimeout(() => setRotateToast(null), 2200);
+    const r = await rotateScreen();
+    if (r !== null) {
+      setRotateToast(r === 'landscape' ? '🔄 Landscape Mode' : '📱 Portrait Mode');
+    } else {
+      setRotateToast('🔄 Screen Rotate');
+    }
+    setTimeout(() => setRotateToast(null), 2000);
   };
 
   const toggleDesktopMode = () => {

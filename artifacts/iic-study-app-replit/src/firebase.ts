@@ -2814,6 +2814,7 @@ export const saveUserHistory = async (userId: string, historyItem: any) => {
 };
 
 export const getUserSavedNotes = async (userId: string) => {
+    if (!userId || userId === 'guest' || !auth?.currentUser) return [];
     try {
         const q = query(collection(db, "users", userId, "history"));
         const snapshot = await getDocs(q);
@@ -2821,8 +2822,12 @@ export const getUserSavedNotes = async (userId: string) => {
             return snapshot.docs.map(doc => doc.data());
         }
         return [];
-    } catch(e) {
-        console.error("Error fetching user saved notes history:", e);
+    } catch(e: any) {
+        if (e?.code === 'permission-denied' || e?.message?.includes('Missing or insufficient permissions')) {
+            console.warn("[IIC] User saved notes history skipped (insufficient permissions).");
+        } else {
+            console.warn("Notice fetching user saved notes history:", e?.message || e);
+        }
         return [];
     }
 };

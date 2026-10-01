@@ -25,6 +25,8 @@ export interface DraggableNstaLogoFabProps {
   children?: React.ReactNode;
   /** Extra class names */
   className?: string;
+  /** Whether the fab should be completely hidden */
+  hidden?: boolean;
 }
 
 const DEFAULT_STORAGE_KEY = 'nsta_floating_logo_pos';
@@ -53,7 +55,9 @@ export const DraggableNstaLogoFab: React.FC<DraggableNstaLogoFabProps> = ({
   size = 54,
   children,
   className = '',
+  hidden = false,
 }) => {
+  if (hidden) return null;
   const [pos, setPos] = useState<{ x: number; y: number } | null>(() => {
     try {
       const saved = localStorage.getItem(storageKey);
