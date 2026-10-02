@@ -691,36 +691,24 @@ export const deleteLucentEntry = async (id: string): Promise<void> => {
 };
 
 export const saveLucentEntryDirect = async (entry: any): Promise<void> => {
-  if (!entry) return;
-  const rawId = entry.id || `lucent_${Date.now()}`;
-  const id = String(rawId).replace(/[.#$\[\]\/]/g, '_');
-  const payload = sanitizeForFirestore({ ...entry, id });
-  try {
-    await Promise.allSettled([
-      setDoc(doc(db, 'lucent_entries', id), payload),
-      set(ref(rtdb, `lucent_entries/${id}`), payload),
-      set(ref(rtdb, `__backup__/lucent_entries/${id}`), payload),
-    ]);
-  } catch (err) {
-    console.warn(`[IIC] saveLucentEntryDirect warning for ${id}:`, err);
-  }
+  const id = entry.id as string;
+  const payload = sanitizeForFirestore(entry);
+  await Promise.allSettled([
+    setDoc(doc(db, 'lucent_entries', id), payload),
+    set(ref(rtdb, `lucent_entries/${id}`), payload),
+    set(ref(rtdb, `__backup__/lucent_entries/${id}`), payload),
+  ]);
   console.log(`[IIC] saveLucentEntryDirect: ${id} saved`);
 };
 
 export const saveHomeworkEntryDirect = async (entry: any): Promise<void> => {
-  if (!entry) return;
-  const rawId = entry.id || `hw_${Date.now()}`;
-  const id = String(rawId).replace(/[.#$\[\]\/]/g, '_');
-  const payload = sanitizeForFirestore({ ...entry, id });
-  try {
-    await Promise.allSettled([
-      setDoc(doc(db, 'homework_entries', id), payload),
-      set(ref(rtdb, `homework_entries/${id}`), payload),
-      set(ref(rtdb, `__backup__/homework_entries/${id}`), payload),
-    ]);
-  } catch (err) {
-    console.warn(`[IIC] saveHomeworkEntryDirect warning for ${id}:`, err);
-  }
+  const id = entry.id as string;
+  const payload = sanitizeForFirestore(entry);
+  await Promise.allSettled([
+    setDoc(doc(db, 'homework_entries', id), payload),
+    set(ref(rtdb, `homework_entries/${id}`), payload),
+    set(ref(rtdb, `__backup__/homework_entries/${id}`), payload),
+  ]);
   console.log(`[IIC] saveHomeworkEntryDirect: ${id} saved`);
 };
 

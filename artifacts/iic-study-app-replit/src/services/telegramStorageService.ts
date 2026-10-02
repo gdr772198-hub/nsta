@@ -76,67 +76,6 @@ function dataUrlToBlob(dataUrl: string, defaultMime = 'image/jpeg'): Blob {
 }
 
 /**
- * Compresses an image blob to a clean, lightweight Base64 Data URL (<= 150KB)
- * to guarantee that offline notes, MCQs and inline diagrams never fail to save.
- */
-export async function blobToOptimizedDataUrl(blob: Blob, maxDim = 1200, quality = 0.82): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (typeof document === 'undefined' || typeof window === 'undefined') {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-      return;
-    }
-    const img = new Image();
-    const objUrl = URL.createObjectURL(blob);
-    img.onload = () => {
-      URL.revokeObjectURL(objUrl);
-      let width = img.naturalWidth || img.width;
-      let height = img.naturalHeight || img.height;
-      if (width > maxDim || height > maxDim) {
-        if (width > height) {
-          height = Math.round((height * maxDim) / width);
-          width = maxDim;
-        } else {
-          width = Math.round((width * maxDim) / height);
-          height = maxDim;
-        }
-      }
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, width);
-      canvas.height = Math.max(1, height);
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-        return;
-      }
-      ctx.drawImage(img, 0, 0, width, height);
-      try {
-        const dataUrl = canvas.toDataURL('image/jpeg', quality);
-        resolve(dataUrl);
-      } catch {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      }
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(objUrl);
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    };
-    img.src = objUrl;
-  });
-}
-
-/**
  * Checks if a URL is a direct Telegram CDN link or proxy link.
  * Both direct Telegram CDN links (which support CORS and Range streaming)
  * and /api/telegram/file proxy links work seamlessly.
@@ -398,25 +337,7 @@ export async function uploadToTelegramStorage(
         console.warn(`[Telegram Storage] Proxy attempt status ${xhr.status}, switching to direct Telegram cloud upload...`);
         uploadDirectToTelegram(blob, fileName, targetChatId, opts)
           .then(resolve)
-          .catch(async (directErr) => {
-            console.warn('[Telegram Storage] Direct upload failed, checking local image data URL fallback:', directErr?.message);
-            if (blob.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|svg)$/i.test(fileName)) {
-              try {
-                const dataUrl = await blobToOptimizedDataUrl(blob);
-                if (opts.onProgress) opts.onProgress(100);
-                resolve({
-                  url: dataUrl,
-                  directUrl: dataUrl,
-                  fileId: `local_${Date.now()}`,
-                  fileName,
-                  fileSize: blob.size,
-                  mimeType: blob.type || 'image/jpeg',
-                });
-                return;
-              } catch (fallbackErr) {
-                console.error('[Telegram Storage] Data URL fallback failed:', fallbackErr);
-              }
-            }
+          .catch((directErr) => {
             const finalMsg = directErr?.message || `Upload fail ho gaya (Status: ${xhr.status || 'unknown'})`;
             reject(new Error(finalMsg));
           });
@@ -518,20 +439,6 @@ export async function uploadToTelegramStorage(
     try {
       return await uploadDirectToTelegram(blob, fileName, targetChatId, opts);
     } catch (directErr: any) {
-      if (blob.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|svg)$/i.test(fileName)) {
-        try {
-          const dataUrl = await blobToOptimizedDataUrl(blob);
-          if (opts.onProgress) opts.onProgress(100);
-          return {
-            url: dataUrl,
-            directUrl: dataUrl,
-            fileId: `local_${Date.now()}`,
-            fileName,
-            fileSize: blob.size,
-            mimeType: blob.type || 'image/jpeg',
-          };
-        } catch {}
-      }
       throw new Error(directErr?.message || 'Telegram upload fail ho gaya. Kripya network check karke dobara koshish karein.');
     }
   }

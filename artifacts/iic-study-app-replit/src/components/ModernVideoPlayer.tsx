@@ -7,8 +7,6 @@ import {
   RotateCw,
   Volume2,
   VolumeX,
-  Maximize,
-  Minimize,
   Download,
   CheckCircle,
   Crown,
@@ -21,7 +19,6 @@ import {
   RefreshCw,
   AlertTriangle,
 } from 'lucide-react';
-import { PlayerWatermark } from './PlayerWatermark';
 import {
   downloadAndSaveOfflineMedia,
   isMediaOffline,
@@ -85,6 +82,19 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
+
+  // ── Double-Tap & Multi-Tap Gesture States ──
+  const [gestureFeedback, setGestureFeedback] = useState<{
+    zone: 'left' | 'right' | 'center' | null;
+    seconds: number;
+    action?: 'play' | 'pause';
+  }>({ zone: null, seconds: 0 });
+
+  const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tapCountRef = useRef(0);
+  const lastTapZoneRef = useRef<'left' | 'right' | 'center' | null>(null);
+  const accumulatedSeekRef = useRef(0);
 
   // Download state
   const [isDownloaded, setIsDownloaded] = useState(false);
@@ -244,6 +254,15 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
   const toggleRotate = useCallback(async () => {
     const nextRot = !isRotated;
     setIsRotated(nextRot);
+    // When rotating to landscape, hide top bar for an immersive rotated experience
+    if (nextRot) {
+      setIsTopBarHidden(true);
+      try {
+        window.dispatchEvent(
+          new CustomEvent('nsta-video-topbar-change', { detail: { isTopBarHidden: true } })
+        );
+      } catch {}
+    }
     try {
       const so: any = (screen as any).orientation;
       if (so && typeof so.lock === 'function') {
@@ -254,24 +273,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
         }
       }
     } catch {}
-    if (nextRot && !document.fullscreenElement && containerRef.current?.requestFullscreen) {
-      containerRef.current.requestFullscreen().catch(() => {});
-    }
   }, [isRotated]);
-
-  // Ensure true pitch-black background for document body when fullscreen or rotated
-  useEffect(() => {
-    if (isFullscreen || isRotated) {
-      const origBg = document.body.style.backgroundColor;
-      const origHtmlBg = document.documentElement.style.backgroundColor;
-      document.body.style.backgroundColor = '#000000';
-      document.documentElement.style.backgroundColor = '#000000';
-      return () => {
-        document.body.style.backgroundColor = origBg;
-        document.documentElement.style.backgroundColor = origHtmlBg;
-      };
-    }
-  }, [isFullscreen, isRotated]);
 
   // NSTA logo tap: toggles top bar visibility (hide / show)
   const handleNstaLogoClick = useCallback(() => {
@@ -286,25 +288,157 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
     });
   }, []);
 
-  // Fullscreen button tap: toggles fullscreen AND hides top bar for immersive view
-  const handleFullscreenClick = useCallback(() => {
-    if (!isFullscreen) {
-      setIsTopBarHidden(true);
-      try {
-        window.dispatchEvent(
-          new CustomEvent('nsta-video-topbar-change', { detail: { isTopBarHidden: true } })
-        );
-      } catch {}
-    } else {
-      setIsTopBarHidden(false);
-      try {
-        window.dispatchEvent(
-          new CustomEvent('nsta-video-topbar-change', { detail: { isTopBarHidden: false } })
-        );
-      } catch {}
+  // Cleanup gesture timers on unmount
+  useEffect(() => {
+    return () => {
+      if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    };
+  }, []);
+
+  const showGesture = useCallback((
+    zone: 'left' | 'right' | 'center',
+    seconds: number,
+    action?: 'play' | 'pause'
+  ) => {
+    if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    setGestureFeedback({ zone, seconds, action });
+    feedbackTimerRef.current = setTimeout(() => {
+      setGestureFeedback({ zone: null, seconds: 0 });
+    }, 750);
+  }, []);
+
+  // ── Touch & Multi-Tap Gesture Handler:
+  // Center 2-tap: Pause / Play toggle
+  // Left 2-tap: -10s rewind (consecutive taps accumulate: -20s, -30s...)
+  // Right 2-tap: +10s forward (consecutive taps accumulate: +20s, +30s...)
+  // Single tap: toggle top bar
+  const handleVideoGestureClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (showSettingsMenu) {
+      setShowSettingsMenu(false);
+      return;
     }
-    toggleFullscreen();
-  }, [isFullscreen, toggleFullscreen]);
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const ratio = x / rect.width;
+
+    let zone: 'left' | 'right' | 'center';
+    if (ratio < 0.35) {
+      zone = 'left';
+    } else if (ratio > 0.65) {
+      zone = 'right';
+    } else {
+      zone = 'center';
+    }
+
+    // Reset accumulated taps if tapped in a different zone
+    if (lastTapZoneRef.current && lastTapZoneRef.current !== zone) {
+      tapCountRef.current = 0;
+      accumulatedSeekRef.current = 0;
+      if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+    }
+    lastTapZoneRef.current = zone;
+    tapCountRef.current += 1;
+
+    // CENTER ZONE: 2 taps to Pause / Play
+    if (zone === 'center') {
+      if (tapCountRef.current === 1) {
+        if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+        tapTimerRef.current = setTimeout(() => {
+          // Single tap in center toggles top bar visibility
+          setIsTopBarHidden((prev) => {
+            const next = !prev;
+            try {
+              window.dispatchEvent(
+                new CustomEvent('nsta-video-topbar-change', { detail: { isTopBarHidden: next } })
+              );
+            } catch {}
+            return next;
+          });
+          tapCountRef.current = 0;
+          lastTapZoneRef.current = null;
+        }, 280);
+      } else if (tapCountRef.current >= 2) {
+        if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+        tapCountRef.current = 0;
+        lastTapZoneRef.current = null;
+
+        if (videoRef.current) {
+          if (videoRef.current.paused) {
+            videoRef.current.play().catch(() => {});
+            setIsPlaying(true);
+            showGesture('center', 0, 'play');
+          } else {
+            videoRef.current.pause();
+            setIsPlaying(false);
+            showGesture('center', 0, 'pause');
+          }
+        }
+      }
+      return;
+    }
+
+    // LEFT ZONE: Double tap rewinds 10s, subsequent taps add -10s each (-20s, -30s...)
+    if (zone === 'left') {
+      if (tapCountRef.current === 1) {
+        if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+        tapTimerRef.current = setTimeout(() => {
+          setIsTopBarHidden((prev) => !prev);
+          tapCountRef.current = 0;
+          accumulatedSeekRef.current = 0;
+          lastTapZoneRef.current = null;
+        }, 280);
+      } else {
+        if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+        accumulatedSeekRef.current += 10;
+        const total = accumulatedSeekRef.current;
+
+        if (videoRef.current) {
+          videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 10);
+          setCurrentTime(videoRef.current.currentTime);
+        }
+        showGesture('left', total);
+
+        tapTimerRef.current = setTimeout(() => {
+          tapCountRef.current = 0;
+          accumulatedSeekRef.current = 0;
+          lastTapZoneRef.current = null;
+        }, 700);
+      }
+      return;
+    }
+
+    // RIGHT ZONE: Double tap forwards 10s, subsequent taps add +10s each (+20s, +30s...)
+    if (zone === 'right') {
+      if (tapCountRef.current === 1) {
+        if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+        tapTimerRef.current = setTimeout(() => {
+          setIsTopBarHidden((prev) => !prev);
+          tapCountRef.current = 0;
+          accumulatedSeekRef.current = 0;
+          lastTapZoneRef.current = null;
+        }, 280);
+      } else {
+        if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+        accumulatedSeekRef.current += 10;
+        const total = accumulatedSeekRef.current;
+
+        if (videoRef.current) {
+          const maxD = videoRef.current.duration || 999999;
+          videoRef.current.currentTime = Math.min(maxD, videoRef.current.currentTime + 10);
+          setCurrentTime(videoRef.current.currentTime);
+        }
+        showGesture('right', total);
+
+        tapTimerRef.current = setTimeout(() => {
+          tapCountRef.current = 0;
+          accumulatedSeekRef.current = 0;
+          lastTapZoneRef.current = null;
+        }, 700);
+      }
+    }
+  }, [showGesture, showSettingsMenu]);
 
   const handleSpeedChange = (speed: number) => {
     setPlaybackRate(speed);
@@ -361,11 +495,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
       return;
     }
 
-    if (isYouTube) {
-      alert('YouTube videos direct online stream hote hain aur offline download me support nahi karte.');
-      return;
-    }
-
     if (isDownloaded) return;
 
     try {
@@ -391,7 +520,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
     } catch (err: any) {
       console.error('Download error:', err);
       setIsDownloading(false);
-      alert(`Video download nahi ho paya (${err?.message || 'Network error'}). Kripya dobara koshish karein.`);
+      alert('Video download nahi ho paya. Kripya dobara koshish karein.');
     }
   };
 
@@ -435,15 +564,13 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
 
   // ── YOUTUBE PLAYER EMBED ──
   if (isYouTube && ytId) {
-    const isImmersive = isFullscreen || isRotated;
     const ytEmbedUrl = `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&controls=1&modestbranding=1&rel=0&playsinline=1&enablejsapi=1`;
-    const ytJsx = (
+    const ytNode = (
       <div
         ref={containerRef}
-        className={`relative w-full aspect-video min-h-[300px] bg-black overflow-hidden shadow-2xl flex flex-col ${
-          isImmersive ? 'fixed inset-0 z-[999999] rounded-none w-screen h-screen min-h-[100dvh] max-w-none max-h-none m-0 p-0' : 'rounded-2xl'
+        className={`relative w-full aspect-video min-h-[300px] bg-black rounded-2xl overflow-hidden shadow-2xl flex flex-col ${
+          isFullscreen || isRotated ? 'fixed inset-0 z-[99999] rounded-none h-screen w-screen' : ''
         }`}
-        style={isImmersive ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, width: '100vw', height: '100vh', minHeight: '100dvh', background: '#000000', margin: 0, padding: 0, zIndex: 999999 } : undefined}
       >
         <PlayerWatermark
           appLogo={appLogo}
@@ -453,21 +580,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           isFullscreen={isFullscreen}
           isTopBarHidden={isTopBarHidden}
         />
-
-        {/* ── Persistent Floating Restore Button (when top bar is hidden) ── */}
-        {isTopBarHidden && (
-          <button
-            type="button"
-            onClick={handleNstaLogoClick}
-            className="absolute top-2.5 left-2.5 z-[60] flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-950/85 hover:bg-slate-900 border border-white/20 shadow-xl text-white cursor-pointer active:scale-95 transition-all duration-200 backdrop-blur-md animate-in fade-in"
-            title="Tap to restore top bar"
-            aria-label="Restore top bar"
-          >
-            <span className="text-[10px] font-bold text-slate-200">
-              Top Bar 👁️
-            </span>
-          </button>
-        )}
 
         {/* Top Bar Header Overlay */}
         <div
@@ -480,6 +592,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           <div className="flex items-center gap-2 min-w-0 pr-4">
             {onBack && (
               <button
+                type="button"
                 onClick={onBack}
                 className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
                 title="Go Back"
@@ -487,21 +600,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
                 <ArrowLeft size={16} />
               </button>
             )}
-
-            {/* Screen Rotate Button on Left */}
-            <button
-              type="button"
-              onClick={toggleRotate}
-              className={`p-1.5 rounded-full border transition active:scale-90 flex items-center justify-center shrink-0 ${
-                isRotated
-                  ? 'bg-amber-500/40 border-amber-400 text-amber-300 shadow-md'
-                  : 'bg-white/10 hover:bg-white/20 border-white/20 text-white'
-              }`}
-              title={isRotated ? "Portrait Mode" : "Rotate Screen (Landscape)"}
-              aria-label="Rotate Screen"
-            >
-              <RotateCw size={15} />
-            </button>
 
             <div className="min-w-0">
               <h4 className="text-xs font-bold text-white truncate drop-shadow">{title}</h4>
@@ -511,11 +609,14 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
 
           <div className="flex items-center gap-1.5">
             <button
-              onClick={handleFullscreenClick}
-              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
-              title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+              type="button"
+              onClick={toggleRotate}
+              className={`p-1.5 rounded-lg transition active:scale-90 ${
+                isRotated ? 'bg-amber-500 text-slate-950 font-bold' : 'bg-white/10 hover:bg-white/20 text-white'
+              }`}
+              title={isRotated ? 'Rotate Portrait' : 'Rotate Landscape (Screen Ghumayein)'}
             >
-              {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
+              <RotateCw size={14} className={isRotated ? 'rotate-90 transition-transform' : ''} />
             </button>
           </div>
         </div>
@@ -531,23 +632,21 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
       </div>
     );
 
-    if (isImmersive && typeof document !== 'undefined') {
-      return createPortal(ytJsx, document.body);
+    if ((isFullscreen || isRotated) && typeof document !== 'undefined') {
+      return createPortal(ytNode, document.body);
     }
-    return ytJsx;
+    return ytNode;
   }
 
   // ── GOOGLE DRIVE VIDEO PLAYER EMBED ──
   if (isDrive && driveId) {
-    const isImmersive = isFullscreen || isRotated;
     const drivePreviewUrl = `https://drive.google.com/file/d/${driveId}/preview`;
-    const driveJsx = (
+    const driveNode = (
       <div
         ref={containerRef}
-        className={`relative w-full aspect-video min-h-[300px] bg-black overflow-hidden shadow-2xl flex flex-col ${
-          isImmersive ? 'fixed inset-0 z-[999999] rounded-none w-screen h-screen min-h-[100dvh] max-w-none max-h-none m-0 p-0' : 'rounded-2xl'
+        className={`relative w-full aspect-video min-h-[300px] bg-black rounded-2xl overflow-hidden shadow-2xl flex flex-col ${
+          isFullscreen || isRotated ? 'fixed inset-0 z-[99999] rounded-none h-screen w-screen' : ''
         }`}
-        style={isImmersive ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, width: '100vw', height: '100vh', minHeight: '100dvh', background: '#000000', margin: 0, padding: 0, zIndex: 999999 } : undefined}
       >
         <PlayerWatermark
           appLogo={appLogo}
@@ -557,21 +656,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           isFullscreen={isFullscreen}
           isTopBarHidden={isTopBarHidden}
         />
-
-        {/* ── Persistent Floating Restore Button (when top bar is hidden) ── */}
-        {isTopBarHidden && (
-          <button
-            type="button"
-            onClick={handleNstaLogoClick}
-            className="absolute top-2.5 left-2.5 z-[60] flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-950/85 hover:bg-slate-900 border border-white/20 shadow-xl text-white cursor-pointer active:scale-95 transition-all duration-200 backdrop-blur-md animate-in fade-in"
-            title="Tap to restore top bar"
-            aria-label="Restore top bar"
-          >
-            <span className="text-[10px] font-bold text-slate-200">
-              Top Bar 👁️
-            </span>
-          </button>
-        )}
 
         {/* Top Bar Header Overlay */}
         <div
@@ -584,6 +668,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           <div className="flex items-center gap-2 min-w-0 pr-4">
             {onBack && (
               <button
+                type="button"
                 onClick={onBack}
                 className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
                 title="Go Back"
@@ -591,21 +676,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
                 <ArrowLeft size={16} />
               </button>
             )}
-
-            {/* Screen Rotate Button on Left */}
-            <button
-              type="button"
-              onClick={toggleRotate}
-              className={`p-1.5 rounded-full border transition active:scale-90 flex items-center justify-center shrink-0 ${
-                isRotated
-                  ? 'bg-amber-500/40 border-amber-400 text-amber-300 shadow-md'
-                  : 'bg-white/10 hover:bg-white/20 border-white/20 text-white'
-              }`}
-              title={isRotated ? "Portrait Mode" : "Rotate Screen (Landscape)"}
-              aria-label="Rotate Screen"
-            >
-              <RotateCw size={15} />
-            </button>
 
             <div className="min-w-0">
               <h4 className="text-xs font-bold text-white truncate drop-shadow">{title}</h4>
@@ -615,11 +685,14 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
 
           <div className="flex items-center gap-1.5">
             <button
-              onClick={handleFullscreenClick}
-              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
-              title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+              type="button"
+              onClick={toggleRotate}
+              className={`p-1.5 rounded-lg transition active:scale-90 ${
+                isRotated ? 'bg-amber-500 text-slate-950 font-bold' : 'bg-white/10 hover:bg-white/20 text-white'
+              }`}
+              title={isRotated ? 'Rotate Portrait' : 'Rotate Landscape (Screen Ghumayein)'}
             >
-              {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
+              <RotateCw size={14} className={isRotated ? 'rotate-90 transition-transform' : ''} />
             </button>
           </div>
         </div>
@@ -633,10 +706,10 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
       </div>
     );
 
-    if (isImmersive && typeof document !== 'undefined') {
-      return createPortal(driveJsx, document.body);
+    if ((isFullscreen || isRotated) && typeof document !== 'undefined') {
+      return createPortal(driveNode, document.body);
     }
-    return driveJsx;
+    return driveNode;
   }
 
   // ── DIRECT VIDEO STREAM (HTML5 / CLOUDINARY / MP4) ──
@@ -651,46 +724,16 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
     setVideoError('Video stream load nahi ho payi. Internet connection ya video format check karein.');
   };
 
-  const isImmersive = isFullscreen || isRotated;
-
-  const playerJsx = (
+  const playerNode = (
     <div
       ref={containerRef}
-      className={`group/player relative w-full aspect-video min-h-[300px] bg-black overflow-hidden select-none shadow-2xl flex flex-col justify-between ${
-        isImmersive
-          ? 'fixed inset-0 z-[999999] rounded-none w-screen h-screen min-h-[100dvh] max-w-none max-h-none m-0 p-0'
-          : 'rounded-2xl'
+      className={`group/player relative w-full aspect-video min-h-[300px] bg-black rounded-2xl overflow-hidden select-none shadow-2xl flex flex-col justify-between ${
+        isFullscreen || isRotated ? 'fixed inset-0 z-[99999] rounded-none h-screen w-screen' : ''
       }`}
-      style={isImmersive ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, width: '100vw', height: '100vh', minHeight: '100dvh', background: '#000000', margin: 0, padding: 0, zIndex: 999999 } : undefined}
       onClick={() => {
         if (showSettingsMenu) setShowSettingsMenu(false);
       }}
     >
-      {/* ── Official Semi-Transparent Logo Watermark ── */}
-      <PlayerWatermark
-        appLogo={appLogo}
-        appName={appName}
-        position={isFullscreen ? 'top-right' : 'bottom-right'}
-        onClick={handleNstaLogoClick}
-        isFullscreen={isFullscreen}
-        isTopBarHidden={isTopBarHidden}
-      />
-
-      {/* ── Persistent Floating Restore Button (when top bar is hidden) ── */}
-      {isTopBarHidden && (
-        <button
-          type="button"
-          onClick={handleNstaLogoClick}
-          className="absolute top-2.5 left-2.5 z-[60] flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-950/85 hover:bg-slate-900 border border-white/20 shadow-xl text-white cursor-pointer active:scale-95 transition-all duration-200 backdrop-blur-md animate-in fade-in"
-          title="Tap to restore top bar"
-          aria-label="Restore top bar"
-        >
-          <span className="text-[10px] font-bold text-slate-200">
-            Top Bar 👁️
-          </span>
-        </button>
-      )}
-
       {/* ── Top Bar Header Overlay ── */}
       <div
         className={`absolute top-0 left-0 right-0 p-3 flex items-center justify-between bg-gradient-to-b from-black/90 via-black/50 to-transparent z-20 transition-all duration-300 ${
@@ -702,6 +745,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
         <div className="flex items-center gap-2 min-w-0 pr-4">
           {onBack && (
             <button
+              type="button"
               onClick={onBack}
               className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
               title="Go Back"
@@ -710,41 +754,174 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
             </button>
           )}
 
-          {/* Screen Rotate Button on Left */}
-          <button
-            type="button"
-            onClick={toggleRotate}
-            className={`p-1.5 rounded-full border transition active:scale-90 flex items-center justify-center shrink-0 ${
-              isRotated
-                ? 'bg-amber-500/40 border-amber-400 text-amber-300 shadow-md'
-                : 'bg-white/10 hover:bg-white/20 border-white/20 text-white'
-            }`}
-            title={isRotated ? "Portrait Mode" : "Rotate Screen (Landscape)"}
-            aria-label="Rotate Screen"
-          >
-            <RotateCw size={15} />
-          </button>
-
           <div className="min-w-0">
             <h4 className="text-xs font-bold text-white truncate drop-shadow">{title}</h4>
             {subject && <p className="text-[10px] text-slate-300 font-semibold uppercase">{subject}</p>}
           </div>
         </div>
 
-        {/* Top Right: Fullscreen Quick Button */}
-        <div className="flex items-center gap-1.5">
+        {/* Top Right: Rotate Control & 3-Dot Options Menu (Moved to Top as requested) */}
+        <div className="flex items-center gap-1.5 relative">
           <button
-            onClick={handleFullscreenClick}
-            className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
-            title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+            type="button"
+            onClick={toggleRotate}
+            className={`p-1.5 rounded-lg transition active:scale-90 ${
+              isRotated ? 'bg-amber-500 text-slate-950 font-bold' : 'bg-white/10 hover:bg-white/20 text-white'
+            }`}
+            title={isRotated ? 'Rotate Portrait' : 'Rotate Landscape (Screen Ghumayein)'}
           >
-            {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
+            <RotateCw size={14} className={isRotated ? 'rotate-90 transition-transform' : ''} />
           </button>
+
+          {/* 3-Dot Options Button: Moved to Top Bar */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowSettingsMenu((v) => !v);
+              }}
+              className={`p-1.5 rounded-lg transition active:scale-90 flex items-center justify-center cursor-pointer ${
+                showSettingsMenu
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-white/10 hover:bg-white/20 text-white'
+              }`}
+              title="Options (Quality Change, Speed, Loop, Save)"
+              aria-label="Video Options"
+            >
+              <MoreVertical size={16} />
+            </button>
+
+            {/* 3-Dot Settings & Quality Dropdown Popup (Opens Downward from Top Bar) */}
+            {showSettingsMenu && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="absolute right-0 top-full mt-2 w-60 max-h-[75vh] overflow-y-auto bg-slate-900/98 backdrop-blur-xl border border-slate-700/80 rounded-2xl p-3 shadow-2xl text-white z-50 animate-in fade-in zoom-in-95 space-y-3"
+              >
+                {/* Quality Change Section */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                      Quality / Resolution
+                    </p>
+                    <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
+                      {selectedQuality}
+                    </span>
+                  </div>
+                  <div className="space-y-1">
+                    {availableQualities.map((q) => (
+                      <button
+                        key={q.quality}
+                        onClick={() => handleQualitySelect(q.quality, q.isLocked)}
+                        className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-left text-xs transition active:scale-95 ${
+                          selectedQuality === q.quality
+                            ? 'bg-indigo-600 text-white font-bold shadow'
+                            : 'hover:bg-slate-800 text-slate-200'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          {selectedQuality === q.quality && (
+                            <Check size={12} className="text-white shrink-0" />
+                          )}
+                          <span>{q.label}</span>
+                        </div>
+                        {q.isLocked && <Lock size={12} className="text-amber-400 shrink-0" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Playback Speed Section */}
+                <div className="pt-2 border-t border-slate-800">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">
+                    Playback Speed
+                  </p>
+                  <div className="grid grid-cols-4 gap-1">
+                    {[0.75, 1, 1.25, 1.5].map((speed) => (
+                      <button
+                        key={speed}
+                        onClick={() => handleSpeedChange(speed)}
+                        className={`py-1 rounded-lg text-center text-xs font-bold transition active:scale-90 ${
+                          playbackRate === speed
+                            ? 'bg-indigo-600 text-white shadow'
+                            : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300'
+                        }`}
+                      >
+                        {speed}x
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Loop Video Option */}
+                <div className="pt-2 border-t border-slate-800">
+                  <button
+                    onClick={handleLoopToggle}
+                    className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition active:scale-95 ${
+                      isLooping
+                        ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40'
+                        : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Repeat size={13} className={isLooping ? 'text-indigo-400' : 'text-slate-400'} />
+                      <span>Loop Video</span>
+                    </div>
+                    <span className="text-[10px] uppercase font-black">{isLooping ? 'ON' : 'OFF'}</span>
+                  </button>
+                </div>
+
+                {/* Offline Save inside App Option */}
+                <div className="pt-2 border-t border-slate-800">
+                  {isDownloaded ? (
+                    <div className="flex items-center justify-between px-2.5 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold">
+                      <span className="flex items-center gap-1.5">
+                        <CheckCircle size={13} /> App Me Saved Hai
+                      </span>
+                      <span className="text-[9px] uppercase font-black bg-emerald-500/20 px-1.5 py-0.5 rounded">
+                        Offline
+                      </span>
+                    </div>
+                  ) : isDownloading ? (
+                    <div className="flex items-center justify-between px-2.5 py-2 rounded-xl bg-indigo-500/20 border border-indigo-500/40 text-indigo-200 text-xs font-bold animate-pulse">
+                      <span className="flex items-center gap-1.5">
+                        <Download size={13} className="animate-bounce" /> Downloading...
+                      </span>
+                      <span className="text-[10px] font-black">{downloadProgress}%</span>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setShowSettingsMenu(false);
+                        handleDownload();
+                      }}
+                      className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition active:scale-95 shadow ${
+                        isUltraUser
+                          ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:brightness-110'
+                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        {isUltraUser ? <Download size={13} /> : <Crown size={13} />}
+                        <span>Save Inside App</span>
+                      </span>
+                      <span className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-black/30">
+                        {isUltraUser ? 'Offline' : 'Ultra'}
+                      </span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* ── Video Element ── */}
-      <div className="w-full h-full flex-1 relative flex items-center justify-center bg-black pt-8 pb-12">
+      {/* ── Video Element with Touch & Multi-Tap Gesture Zones ── */}
+      <div
+        className="w-full h-full flex-1 relative flex items-center justify-center bg-black pt-8 pb-12 cursor-pointer select-none overflow-hidden"
+        onClick={handleVideoGestureClick}
+      >
         {videoUrl ? (
           <video
             ref={videoRef}
@@ -752,8 +929,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
             playsInline
             preload="metadata"
             autoPlay={autoPlay}
-            onClick={togglePlayPause}
-            className="w-full h-full max-h-full object-contain bg-black cursor-pointer"
+            className="w-full h-full max-h-full object-contain bg-black pointer-events-none"
             onError={handleVideoError}
             onTimeUpdate={() => {
               if (videoRef.current) {
@@ -785,6 +961,50 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
             <p className="text-xs text-slate-500 mt-1">Admin ne is lesson ke liye video link add nahi kiya hai.</p>
           </div>
         )}
+
+        {/* ── Gesture Feedback Overlays ── */}
+        {/* Left Double-Tap / Multi-Tap (-10s, -20s, -30s...) */}
+        {gestureFeedback.zone === 'left' && (
+          <div className="absolute left-0 top-0 bottom-0 w-[42%] bg-gradient-to-r from-indigo-900/60 via-indigo-600/25 to-transparent flex items-center justify-center pointer-events-none z-15 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex flex-col items-center justify-center px-4 py-3 rounded-2xl bg-slate-950/85 border border-indigo-500/50 backdrop-blur-md shadow-2xl">
+              <RotateCcw size={30} className="text-indigo-300 mb-1" />
+              <span className="text-base font-black text-white tracking-wide">
+                -{gestureFeedback.seconds}s
+              </span>
+              <span className="text-[9px] font-bold text-indigo-300 uppercase tracking-wider mt-0.5">
+                Peeche
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Right Double-Tap / Multi-Tap (+10s, +20s, +30s...) */}
+        {gestureFeedback.zone === 'right' && (
+          <div className="absolute right-0 top-0 bottom-0 w-[42%] bg-gradient-to-l from-indigo-900/60 via-indigo-600/25 to-transparent flex items-center justify-center pointer-events-none z-15 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex flex-col items-center justify-center px-4 py-3 rounded-2xl bg-slate-950/85 border border-indigo-500/50 backdrop-blur-md shadow-2xl">
+              <RotateCw size={30} className="text-indigo-300 mb-1" />
+              <span className="text-base font-black text-white tracking-wide">
+                +{gestureFeedback.seconds}s
+              </span>
+              <span className="text-[9px] font-bold text-indigo-300 uppercase tracking-wider mt-0.5">
+                Aage
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Center Double-Tap (Play / Pause) */}
+        {gestureFeedback.zone === 'center' && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-15 animate-in fade-in zoom-in-90 duration-150">
+            <div className="flex flex-col items-center justify-center w-18 h-18 rounded-full bg-slate-950/85 border border-white/30 backdrop-blur-md shadow-2xl">
+              {gestureFeedback.action === 'play' ? (
+                <Play size={32} className="text-white fill-white ml-0.5" />
+              ) : (
+                <Pause size={32} className="text-white fill-white" />
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── BOTTOM CONTROLS BAR: 3 DOT BUTTON NICHE JO THA USHI ME ADD KIYA QUALITY CHANGE OPTION ── */}
@@ -808,42 +1028,10 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           </div>
         </div>
 
-        {/* Bottom Controls Row */}
+        {/* Bottom Controls Row: Left = Volume & Time, Right = Quality & 3-Dot Options */}
         <div className="flex items-center justify-between text-white text-xs">
-          {/* Left Controls: Play/Pause, Skip -10s, Time */}
-          <div className="flex items-center gap-2.5">
-            <button
-              onClick={togglePlayPause}
-              className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
-              title={isPlaying ? 'Pause' : 'Play'}
-            >
-              {isPlaying ? <Pause size={17} /> : <Play size={17} className="ml-0.5" />}
-            </button>
-
-            <button
-              onClick={() => {
-                if (videoRef.current) {
-                  videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 10);
-                }
-              }}
-              className="p-1 rounded-md text-slate-300 hover:text-white transition active:scale-90"
-              title="-10 seconds"
-            >
-              <RotateCcw size={14} />
-            </button>
-
-            <button
-              onClick={() => {
-                if (videoRef.current) {
-                  videoRef.current.currentTime = Math.min(duration, videoRef.current.currentTime + 10);
-                }
-              }}
-              className="p-1 rounded-md text-slate-300 hover:text-white transition active:scale-90"
-              title="+10 seconds"
-            >
-              <RotateCw size={14} />
-            </button>
-
+          {/* Left Controls: Volume / Mute, Time Counter */}
+          <div className="flex items-center gap-2">
             <button
               onClick={() => {
                 if (videoRef.current) {
@@ -851,7 +1039,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
                   setIsMuted(!isMuted);
                 }
               }}
-              className="p-1 rounded-md text-slate-300 hover:text-white transition active:scale-90"
+              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 hover:text-white transition active:scale-90 flex items-center justify-center"
               title={isMuted ? 'Unmute' : 'Mute'}
             >
               {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
@@ -862,161 +1050,35 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
             </span>
           </div>
 
-          {/* Right Controls: Quality Badge, 3-Dot Options Button (With Quality Menu), Fullscreen */}
-          <div className="flex items-center gap-1.5 relative">
+          {/* Right Controls: Quality Badge & NSTA Logo Button (replaces 3-dot in bottom bar) */}
+          <div className="flex items-center gap-2 relative">
             {/* Active Quality Badge */}
             <span className="text-[10px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-500/30 text-indigo-300 border border-indigo-500/40">
               {selectedQuality}
             </span>
 
-            {/* 3-Dot Options Button: User requirement: "3 dot button niche jo tha ushi me add karna tha quality change karne wala option" */}
-            <div className="relative">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowSettingsMenu((v) => !v);
-                }}
-                className={`p-1.5 rounded-lg transition active:scale-90 flex items-center justify-center cursor-pointer ${
-                  showSettingsMenu
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-white/10 hover:bg-white/20 text-white'
-                }`}
-                title="Options (Quality Change, Speed, Loop, Save)"
-                aria-label="Video Options"
-              >
-                <MoreVertical size={16} />
-              </button>
-
-              {/* 3-Dot Settings & Quality Dropdown Popup (Opens Upward From Bottom) */}
-              {showSettingsMenu && (
-                <div
-                  onClick={(e) => e.stopPropagation()}
-                  className="absolute right-0 bottom-full mb-2.5 w-60 max-h-[75vh] overflow-y-auto bg-slate-900/98 backdrop-blur-xl border border-slate-700/80 rounded-2xl p-3 shadow-2xl text-white z-50 animate-in fade-in zoom-in-95 space-y-3"
-                >
-                  {/* Quality Change Section (Inside 3-Dot Menu at Bottom) */}
-                  <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-                        Quality / Resolution
-                      </p>
-                      <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
-                        {selectedQuality}
-                      </span>
-                    </div>
-                    <div className="space-y-1">
-                      {availableQualities.map((q) => (
-                        <button
-                          key={q.quality}
-                          onClick={() => handleQualitySelect(q.quality, q.isLocked)}
-                          className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-left text-xs transition active:scale-95 ${
-                            selectedQuality === q.quality
-                              ? 'bg-indigo-600 text-white font-bold shadow'
-                              : 'hover:bg-slate-800 text-slate-200'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2">
-                            {selectedQuality === q.quality && (
-                              <Check size={12} className="text-white shrink-0" />
-                            )}
-                            <span>{q.label}</span>
-                          </div>
-                          {q.isLocked && <Lock size={12} className="text-amber-400 shrink-0" />}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Playback Speed Section */}
-                  <div className="pt-2 border-t border-slate-800">
-                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">
-                      Playback Speed
-                    </p>
-                    <div className="grid grid-cols-4 gap-1">
-                      {[0.75, 1, 1.25, 1.5].map((speed) => (
-                        <button
-                          key={speed}
-                          onClick={() => handleSpeedChange(speed)}
-                          className={`py-1 rounded-lg text-center text-xs font-bold transition active:scale-90 ${
-                            playbackRate === speed
-                              ? 'bg-indigo-600 text-white shadow'
-                              : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300'
-                          }`}
-                        >
-                          {speed}x
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Loop Video Option */}
-                  <div className="pt-2 border-t border-slate-800">
-                    <button
-                      onClick={handleLoopToggle}
-                      className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition active:scale-95 ${
-                        isLooping
-                          ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40'
-                          : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Repeat size={13} className={isLooping ? 'text-indigo-400' : 'text-slate-400'} />
-                        <span>Loop Video</span>
-                      </div>
-                      <span className="text-[10px] uppercase font-black">{isLooping ? 'ON' : 'OFF'}</span>
-                    </button>
-                  </div>
-
-                  {/* Offline Save inside App Option */}
-                  <div className="pt-2 border-t border-slate-800">
-                    {isDownloaded ? (
-                      <div className="flex items-center justify-between px-2.5 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold">
-                        <span className="flex items-center gap-1.5">
-                          <CheckCircle size={13} /> App Me Saved Hai
-                        </span>
-                        <span className="text-[9px] uppercase font-black bg-emerald-500/20 px-1.5 py-0.5 rounded">
-                          Offline
-                        </span>
-                      </div>
-                    ) : isDownloading ? (
-                      <div className="flex items-center justify-between px-2.5 py-2 rounded-xl bg-indigo-500/20 border border-indigo-500/40 text-indigo-200 text-xs font-bold animate-pulse">
-                        <span className="flex items-center gap-1.5">
-                          <Download size={13} className="animate-bounce" /> Downloading...
-                        </span>
-                        <span className="text-[10px] font-black">{downloadProgress}%</span>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          setShowSettingsMenu(false);
-                          handleDownload();
-                        }}
-                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition active:scale-95 shadow ${
-                          isUltraUser
-                            ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:brightness-110'
-                            : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
-                        }`}
-                      >
-                        <span className="flex items-center gap-1.5">
-                          {isUltraUser ? <Download size={13} /> : <Crown size={13} />}
-                          <span>Save Inside App</span>
-                        </span>
-                        <span className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-black/30">
-                          {isUltraUser ? 'Offline' : 'Ultra'}
-                        </span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Bottom Fullscreen Button */}
+            {/* NSTA Logo Button: Wahi pe rahega, rotate hone par bhi bottom bar me rahega (upar na jayega) */}
             <button
-              onClick={handleFullscreenClick}
-              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
-              title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen (Top bar hide hoga)'}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleNstaLogoClick();
+              }}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-900/90 hover:bg-slate-800 border border-white/25 hover:border-indigo-400 text-white text-[11px] font-bold shadow-md transition active:scale-90 cursor-pointer"
+              title={isTopBarHidden ? 'Top Bar Dikhayein' : 'Top Bar Chhupayein'}
             >
-              {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
+              <img
+                src={appLogo || '/branding/nsta-logo.png'}
+                alt={appName || 'NSTA'}
+                className="w-4 h-4 object-contain rounded-full shadow-sm shrink-0"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).src =
+                    'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="%236366f1"><circle cx="12" cy="12" r="10"/></svg>';
+                }}
+              />
+              <span className="text-[10px] font-black tracking-wider text-slate-100 uppercase">
+                {appName || 'NSTA'}
+              </span>
             </button>
           </div>
         </div>
@@ -1048,8 +1110,8 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
     </div>
   );
 
-  if (isImmersive && typeof document !== 'undefined') {
-    return createPortal(playerJsx, document.body);
+  if ((isFullscreen || isRotated) && typeof document !== 'undefined') {
+    return createPortal(playerNode, document.body);
   }
-  return playerJsx;
+  return playerNode;
 };

@@ -40,11 +40,13 @@ const McqQuestionDisplay: React.FC<Props> = ({
   const statementClassName = stmtClassName ||
     `${questionClassName} bg-sky-50 border-l-4 border-sky-300 rounded-xl px-3 py-2 mb-1`;
 
-  const position = q.imagePosition || 'below_question';
+  const isAbove = q.imagePosition === 'above_question';
+  const isAfterOptions = q.imagePosition === 'after_options';
+  const isBelow = !isAbove && !isAfterOptions; // default: below question
 
   const imageElement = q.imageUrl ? (
     <div
-      className={`my-2 flex ${
+      className={`my-2.5 flex ${
         q.imageAlign === 'left' ? 'justify-start' : q.imageAlign === 'right' ? 'justify-end' : 'justify-center'
       }`}
     >
@@ -73,8 +75,8 @@ const McqQuestionDisplay: React.FC<Props> = ({
         </div>
       )}
 
-      {/* Picture placed above question */}
-      {position === 'above_question' && imageElement}
+      {/* Attached Question Diagram: Above Question Stem */}
+      {isAbove && imageElement}
 
       {/* Question stem */}
       {questionHtml && (
@@ -84,8 +86,8 @@ const McqQuestionDisplay: React.FC<Props> = ({
         />
       )}
 
-      {/* Attached Question Diagram / Picture (Default: below question stem) */}
-      {position === 'below_question' && imageElement}
+      {/* Attached Question Diagram: Below Question Stem (Default) */}
+      {isBelow && imageElement}
 
       {/* Numbered statements — subtle highlight separates them from the stem */}
       {statements.map((s, i) => (
@@ -104,9 +106,6 @@ const McqQuestionDisplay: React.FC<Props> = ({
         />
       )}
 
-      {/* Picture placed below statements / suffix */}
-      {position === 'below_statements' && imageElement}
-
       {showOptions && shouldShowMcqOptions(q) && q.options?.length > 0 && (
         <div className="mt-3 flex flex-col gap-2">
           {getMcqOptions(q).map((option, index) => (
@@ -120,9 +119,6 @@ const McqQuestionDisplay: React.FC<Props> = ({
           ))}
         </div>
       )}
-
-      {/* Picture placed below options (if options shown inline) */}
-      {position === 'after_options' && showOptions && imageElement}
     </>
   );
 };

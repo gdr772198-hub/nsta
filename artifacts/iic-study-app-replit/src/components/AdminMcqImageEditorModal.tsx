@@ -25,7 +25,7 @@ interface AdminMcqImageEditorModalProps {
     imageUrl: string;
     imageWidth: string | number;
     imageAlign: 'left' | 'center' | 'right';
-    imagePosition?: 'above_question' | 'below_question' | 'below_statements';
+    imagePosition: 'above_question' | 'below_question' | 'after_options';
   }) => Promise<void> | void;
   onRemove: () => Promise<void> | void;
 }
@@ -49,7 +49,7 @@ export const AdminMcqImageEditorModal: React.FC<AdminMcqImageEditorModalProps> =
   const [imageAlign, setImageAlign] = useState<'left' | 'center' | 'right'>(
     question.imageAlign || 'center'
   );
-  const [imagePosition, setImagePosition] = useState<'above_question' | 'below_question' | 'below_statements' | 'after_options'>(
+  const [imagePosition, setImagePosition] = useState<'above_question' | 'below_question' | 'after_options'>(
     question.imagePosition || 'below_question'
   );
   const [uploading, setUploading] = useState(false);
@@ -239,27 +239,29 @@ export const AdminMcqImageEditorModal: React.FC<AdminMcqImageEditorModalProps> =
                 </div>
               </div>
 
-              {/* Placement / Position in Question */}
+              {/* Placement / Position Selector */}
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
-                <span className="text-xs font-bold text-slate-700 block">📌 Photo Kahan Dikhayein:</span>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-700">📌 Photo Placement:</span>
+                  <span className="text-[10px] text-slate-500 font-semibold">Kahan dikhana hai?</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
                   {[
-                    { pos: 'above_question' as const, label: 'Question ke Upar' },
-                    { pos: 'below_question' as const, label: 'Question ke Neeche' },
-                    { pos: 'below_statements' as const, label: 'Options ke Upar' },
-                    { pos: 'after_options' as const, label: 'Options ke Baad' },
+                    { pos: 'above_question' as const, label: 'Question se Upar' },
+                    { pos: 'below_question' as const, label: 'Question ke Neeche (Default)' },
+                    { pos: 'after_options' as const, label: 'Options ke Neeche (Sabse Aakhiri)' },
                   ].map(({ pos, label }) => (
                     <button
                       key={pos}
                       type="button"
                       onClick={() => setImagePosition(pos)}
-                      className={`p-2 rounded-lg border text-center text-[10.5px] font-bold leading-tight transition-all cursor-pointer ${
+                      className={`px-2.5 py-1.5 rounded-lg border text-left text-[11px] font-bold transition-all ${
                         imagePosition === pos
                           ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
                           : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
                       }`}
                     >
-                      {label}
+                      {imagePosition === pos ? '✓ ' : ''}{label}
                     </button>
                   ))}
                 </div>

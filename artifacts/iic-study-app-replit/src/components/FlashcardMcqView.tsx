@@ -5,7 +5,7 @@ import {
   Lightbulb, Edit2, X, MoreVertical, RefreshCw, BookOpen, Tv, CheckCircle,
   Maximize2, Minimize2, LayoutGrid, Users, Radio, Sun, Moon, Scroll,
   Timer, VolumeX, Eye, EyeOff, Slash, HelpCircle, Sparkles, Award, Bookmark, Scissors, PenTool,
-  Plus, Minus, Presentation, Image as ImageIcon, Camera
+  Plus, Minus, Presentation, Image as ImageIcon
 } from 'lucide-react';
 import { AdminSolveCanvas } from './AdminSolveCanvas';
 import { AdminMcqImageEditorModal } from './AdminMcqImageEditorModal';
@@ -1192,11 +1192,11 @@ export const FlashcardMcqView: React.FC<Props> = ({
                     <button
                       type="button"
                       onClick={() => setAdminEditingImageQIdx(activePos)}
-                      className="p-2 rounded-full bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 active:scale-95 transition shrink-0"
-                      title={activeQ?.imageUrl ? "Photo Badlein / Position / Resize Karein (Admin)" : "Photo Jodein (Admin - Direct Telegram Cloud)"}
-                      aria-label="Add or Edit Photo"
+                      className="px-2.5 py-1 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[11px] font-black flex items-center gap-1 active:scale-95 transition"
+                      title={activeQ?.imageUrl ? "Photo Badlein / Resize Karein (Admin)" : "Photo Jodein (Admin - Direct Telegram Cloud)"}
                     >
-                      <Camera size={14} />
+                      <ImageIcon size={13} />
+                      <span>{activeQ?.imageUrl ? '📷 Edit Pic' : '📷 Add Pic'}</span>
                     </button>
                   )}
                   <button
@@ -2207,8 +2207,8 @@ export const FlashcardMcqView: React.FC<Props> = ({
                     onToggleEliminate={(oi) => toggleEliminateOption(projectorQIndex, oi)}
                     showEliminateTool={showEliminateTool}
                     onSelect={handleProjectorOptionSelect}
-                    actions={
-                      <div className="flex items-center gap-2">
+                    actionsBelow={
+                      <div className="flex flex-wrap items-center gap-2">
                         {isAdmin && (
                           <button
                             type="button"
@@ -2216,16 +2216,16 @@ export const FlashcardMcqView: React.FC<Props> = ({
                               e.stopPropagation();
                               setAdminEditingImageQIdx(projectorQIndex);
                             }}
-                            title={pq?.imageUrl ? "Photo Badlein / Position / Resize Karein (Admin)" : "Photo Jodein (Admin - Direct Telegram Cloud)"}
-                            aria-label="Add or Edit Photo"
-                            className="w-8 h-8 rounded-xl font-black flex items-center justify-center active:scale-95 transition-all text-xs cursor-pointer shadow-xs shrink-0"
+                            title={pq?.imageUrl ? "Photo Badlein / Resize Karein (Admin)" : "Photo Jodein (Admin - Direct Telegram Cloud)"}
+                            className="px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 active:scale-95 transition-all text-xs cursor-pointer shadow-xs"
                             style={{
                               border: `1.5px solid ${pq?.imageUrl ? '#10b981' : pillBorder}`,
                               background: pq?.imageUrl ? 'rgba(16,185,129,0.18)' : pillBg,
                               color: pq?.imageUrl ? '#10b981' : pillText,
                             }}
                           >
-                            <Camera size={15} />
+                            <ImageIcon size={14} />
+                            <span>{pq?.imageUrl ? '📷 Edit Pic' : '📷 Add Pic'}</span>
                           </button>
                         )}
                         <button
@@ -2244,20 +2244,24 @@ export const FlashcardMcqView: React.FC<Props> = ({
                           }}
                           title={speaking ? 'Stop Speaking' : 'Read Question Aloud (Hindi/English)'}
                           aria-label="Read Question Aloud"
+                          className="px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 active:scale-95 transition-all text-xs cursor-pointer shadow-xs"
                           style={{
-                            width: 32,
-                            height: 32,
-                            borderRadius: 10,
                             border: `1px solid ${pillBorder}`,
                             background: speaking ? '#fee2e2' : pillBg,
                             color: speaking ? '#ef4444' : pillText,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            cursor: 'pointer',
                           }}
                         >
-                          {speaking ? <Square size={13} style={{ fill: 'currentColor' } as React.CSSProperties} /> : <Volume2 size={15} />}
+                          {speaking ? (
+                            <>
+                              <Square size={13} style={{ fill: 'currentColor' } as React.CSSProperties} />
+                              <span>Stop Speech</span>
+                            </>
+                          ) : (
+                            <>
+                              <Volume2 size={14} />
+                              <span>Speaker 🔊</span>
+                            </>
+                          )}
                         </button>
                       </div>
                     }
@@ -2937,7 +2941,6 @@ export const FlashcardMcqView: React.FC<Props> = ({
               imageUrl: undefined,
               imageWidth: undefined,
               imageAlign: undefined,
-              imagePosition: undefined,
             };
             setQuestionsList(updated);
             if (onUpdateQuestions) {

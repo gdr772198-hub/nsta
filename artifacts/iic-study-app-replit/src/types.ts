@@ -1744,8 +1744,8 @@ export interface MCQItem {
   imageWidth?: number | string;
   /** Custom alignment of picture set by admin ('left' | 'center' | 'right') */
   imageAlign?: 'left' | 'center' | 'right';
-  /** Position of picture relative to question content ('above_question' | 'below_question' | 'below_statements' | 'after_options') */
-  imagePosition?: 'above_question' | 'below_question' | 'below_statements' | 'after_options';
+  /** Custom placement of picture: above question, below question (default), or after options */
+  imagePosition?: 'above_question' | 'below_question' | 'after_options';
 }
 
 // NEW: Performance Analytics

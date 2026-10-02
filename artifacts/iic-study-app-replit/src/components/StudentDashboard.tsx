@@ -5434,7 +5434,15 @@ export const StudentDashboard: React.FC<Props> = ({
 
   const handleInsertInlinePhoto = async (file: File) => {
     if (!file) return;
-    const cleanCaption = file.name ? file.name.replace(/\.[^.]+$/, '').replace(/[_\-+]/g, ' ').trim() : 'Notes Diagram';
+    let cleanCaption = '';
+    try {
+      if (typeof window !== 'undefined' && typeof window.prompt === 'function') {
+        const userCaption = window.prompt('Photo ka Title / Caption likhein (Optional):', '');
+        cleanCaption = (userCaption || '').trim();
+      }
+    } catch (_) {
+      cleanCaption = '';
+    }
 
     setInlineEditUploading(true);
     setInlineEditUploadProgress(15);
@@ -5450,34 +5458,23 @@ export const StudentDashboard: React.FC<Props> = ({
         const before = inlineEditPointDraft.slice(0, cursor);
         const after = inlineEditPointDraft.slice(cursor);
         const isHtml = inlineEditModal?.type.endsWith('_html');
-        let newDraft = '';
         if (isHtml) {
           const figCaption = cleanCaption ? `<figcaption style="font-size:12px; font-weight:700; color:#64748b; margin-top:6px; text-align:center;">${cleanCaption}</figcaption>` : '';
           const imgHtml = `\n<figure style="text-align:center; margin:16px auto; display:block;"><img src="${res.url}" alt="${cleanCaption || 'Notes Photo'}" style="max-width:100%; border-radius:12px; margin:0 auto; box-shadow:0 2px 8px rgba(0,0,0,0.08);" />${figCaption}</figure>\n`;
-          newDraft = `${before}${imgHtml}${after}`;
+          setInlineEditPointDraft(`${before}${imgHtml}${after}`);
         } else {
           // Chunk mode: insert photo markdown
           // The words before cursor stay on top, the photo is added, and whatever follows is placed below!
           const imgMd = `\n\n![${cleanCaption}](${res.url})\n\n`;
-          newDraft = `${before.trimEnd()}${imgMd}${after.trimStart()}`;
+          setInlineEditPointDraft(`${before.trimEnd()}${imgMd}${after.trimStart()}`);
         }
-        setInlineEditPointDraft(newDraft);
-        setInlineEditPoints(prev => {
-          const next = [...prev];
-          const targetIdx = inlineEditPointIdx !== null ? inlineEditPointIdx : next.length - 1;
-          if (targetIdx >= 0 && targetIdx < next.length) {
-            next[targetIdx] = newDraft;
-          } else {
-            next.push(newDraft);
-          }
-          return next;
-        });
-        showAlert('✅ Photo add ho gayi!', 'SUCCESS');
+        showAlert('✅ Photo Telegram Cloud par upload ho gayi!', 'SUCCESS');
       } else {
         throw new Error('Upload fail');
       }
-    } catch {
-      showAlert('Photo upload fail ho gayi. Dobara koshish karein.', 'ERROR');
+    } catch (err: any) {
+      console.error('[StudentDashboard] handleInsertInlinePhoto error:', err);
+      showAlert(`Photo upload fail ho gayi: ${err?.message || 'Dobara koshish karein'}`, 'ERROR');
     } finally {
       setInlineEditUploading(false);
     }
@@ -5662,50 +5659,27 @@ export const StudentDashboard: React.FC<Props> = ({
     setInlineEditSaving(true);
     try {
       const { type, pageIndex, originalEntry } = inlineEditModal;
-      let pointsToSave = [...inlineEditPoints];
-      if (inlineEditPointIdx !== null && inlineEditPointDraft !== undefined) {
-        pointsToSave[inlineEditPointIdx] = inlineEditPointDraft;
-      }
-      const joinedText = pointsToSave.filter(p => p !== undefined && p !== null).join('\n');
+      const joinedText = inlineEditPoints.join('\n');
       if (type === 'lucent_html' || type === 'lucent_chunk') {
-        const safeEntryId = originalEntry?.id || `lucent_${Date.now()}`;
-        let updatedPages = [...(originalEntry?.pages || [])];
-        if (pageIndex !== undefined) {
-          if (!updatedPages[pageIndex]) {
-            updatedPages[pageIndex] = {
-              pageNo: pageIndex + 1,
-              topicName: `Page ${pageIndex + 1}`,
-              ...(type === 'lucent_html' ? { htmlNotes: joinedText } : { chunkNotes: joinedText }),
-            };
-          } else {
-            updatedPages[pageIndex] = {
-              ...updatedPages[pageIndex],
-              ...(type === 'lucent_html' ? { htmlNotes: joinedText } : { chunkNotes: joinedText }),
-            };
-          }
+        const updatedPages = [...(originalEntry?.pages || [])];
+        const pIdx = pageIndex ?? 0;
+        if (!updatedPages[pIdx]) {
+          updatedPages[pIdx] = {
+            id: `p${pIdx + 1}`,
+            pageNumber: pIdx + 1,
+            title: originalEntry?.title || `Page ${pIdx + 1}`,
+          };
         }
-        const updatedEntry = {
-          ...originalEntry,
-          id: safeEntryId,
-          pages: updatedPages,
+        updatedPages[pIdx] = {
+          ...updatedPages[pIdx],
           ...(type === 'lucent_html' ? { htmlNotes: joinedText } : { chunkNotes: joinedText }),
         };
+        const updatedEntry = { ...originalEntry, pages: updatedPages };
         await saveLucentEntryDirect(updatedEntry);
         setLucentNoteViewer(updatedEntry);
-        if (lucentPageListViewer?.id === updatedEntry.id) {
-          setLucentPageListViewer(updatedEntry as any);
-        }
-        setSettings((prev: any) => {
-          if (!prev) return prev;
-          const currentList = prev.lucentNotes || [];
-          const updatedList = currentList.map((item: any) => item.id === safeEntryId ? updatedEntry : item);
-          return { ...prev, lucentNotes: updatedList };
-        });
       } else {
-        const safeHwId = originalEntry?.id || `hw_${Date.now()}`;
         const updatedHw = {
           ...originalEntry,
-          id: safeHwId,
           ...(type === 'hw_html' ? { htmlNotes: joinedText } : { chunkNotes: joinedText }),
         };
         await saveHomeworkEntryDirect(updatedHw);
@@ -5713,15 +5687,14 @@ export const StudentDashboard: React.FC<Props> = ({
         setSettings((prev: any) => {
           if (!prev) return prev;
           const currentList = prev.homework || [];
-          const updatedList = currentList.map((item: any) => item.id === safeHwId ? updatedHw : item);
+          const updatedList = currentList.map((item: any) => item.id === updatedHw.id ? updatedHw : item);
           return { ...prev, homework: updatedList };
         });
       }
       showAlert('✅ Notes saved live!', 'SUCCESS');
-      setInlineEditPointIdx(null);
       setInlineEditModal(null);
     } catch (err: any) {
-      console.error('[handleInlineEditSave] Save error:', err);
+      console.error('[StudentDashboard] handleInlineEditSave error:', err);
       showAlert(`Save failed: ${err?.message || 'Please try again.'}`, 'ERROR');
     } finally {
       setInlineEditSaving(false);
@@ -28209,23 +28182,19 @@ RULES:
               onUpdateQuestions={(newQuestions) => {
                 setFlashcardMcqs(prev => prev ? { ...prev, items: newQuestions } : null);
                 if (flashcardMcqs.compLessonId) {
-                  const lessonId = flashcardMcqs.compLessonId;
-                  const existingLesson = compMcqPracticeLessons.find(l => l.id === lessonId) || { id: lessonId, title: flashcardMcqs.title || 'MCQ Practice' };
-                  const updatedLesson = { ...existingLesson, id: lessonId, mcqs: newQuestions, mcqCount: newQuestions.length };
                   setCompMcqPracticeLessons(prev =>
-                    prev.map(l => l.id === lessonId ? updatedLesson : l)
+                    prev.map(l => l.id === flashcardMcqs.compLessonId ? { ...l, mcqs: newQuestions, mcqCount: newQuestions.length } : l)
                   );
-                  saveMcqLesson(updatedLesson).then(() => {
-                    showAlert('✅ MCQ Picture save ho gayi!', 'SUCCESS');
-                  }).catch(() => {});
+                  const targetLesson = compMcqPracticeLessons.find(l => l.id === flashcardMcqs.compLessonId);
+                  if (targetLesson) {
+                    saveMcqLesson({ ...targetLesson, mcqs: newQuestions, mcqCount: newQuestions.length }).then(() => {
+                      showAlert('✅ MCQ Picture save ho gayi!', 'SUCCESS');
+                    }).catch(() => {});
+                  }
                 }
-                const unlockId = flashcardMcqs.fromLesson?.unlockId || lucentNoteViewer?.id;
-                const pageIdx = flashcardMcqs.fromLesson?.unlockPageIndex ?? lucentPageIndex ?? 0;
-                const targetLucentEntry = lucentNoteViewer?.id === unlockId
-                  ? lucentNoteViewer
-                  : (allLucentEntries || settings?.lucentNotes || []).find((e: any) => e.id === unlockId) || lucentNoteViewer;
-                if (targetLucentEntry) {
-                  const updatedPages = [...(targetLucentEntry.pages || [])];
+                if (lucentNoteViewer) {
+                  const updatedPages = [...(lucentNoteViewer.pages || [])];
+                  const pageIdx = lucentPageIndex;
                   if (updatedPages[pageIdx]) {
                     updatedPages[pageIdx] = {
                       ...updatedPages[pageIdx],
@@ -28233,13 +28202,11 @@ RULES:
                     };
                   }
                   const updatedEntry = {
-                    ...targetLucentEntry,
+                    ...lucentNoteViewer,
                     pages: updatedPages,
                   };
-                  if (lucentNoteViewer?.id === updatedEntry.id) {
-                    setLucentNoteViewer(updatedEntry);
-                  }
-                  const tbKey = `${targetLucentEntry.id}_${pageIdx}`;
+                  setLucentNoteViewer(updatedEntry);
+                  const tbKey = `${lucentNoteViewer.id}_${pageIdx}`;
                   setLucentMcqsByPage(prev => ({ ...prev, [tbKey]: newQuestions }));
                   saveLucentEntryDirect(updatedEntry).then(() => {
                     showAlert('✅ MCQ Picture save ho gayi! Sabhi users ko live dikhegi.', 'SUCCESS');
@@ -28282,15 +28249,15 @@ RULES:
           onUpdateQuestions={(newQuestions) => {
             setCompMcqSession(prev => prev ? { ...prev, items: newQuestions } : null);
             if (compMcqSession.lessonId) {
-              const lessonId = compMcqSession.lessonId;
-              const existingLesson = compMcqPracticeLessons.find(l => l.id === lessonId) || { id: lessonId, title: compMcqSession.title || 'MCQ Practice' };
-              const updatedLesson = { ...existingLesson, id: lessonId, mcqs: newQuestions, mcqCount: newQuestions.length };
               setCompMcqPracticeLessons(prev =>
-                prev.map(l => l.id === lessonId ? updatedLesson : l)
+                prev.map(l => l.id === compMcqSession.lessonId ? { ...l, mcqs: newQuestions, mcqCount: newQuestions.length } : l)
               );
-              saveMcqLesson(updatedLesson).then(() => {
-                showAlert('✅ MCQ Picture save ho gayi!', 'SUCCESS');
-              }).catch(() => {});
+              const targetLesson = compMcqPracticeLessons.find(l => l.id === compMcqSession.lessonId);
+              if (targetLesson) {
+                saveMcqLesson({ ...targetLesson, mcqs: newQuestions, mcqCount: newQuestions.length }).then(() => {
+                  showAlert('✅ MCQ Picture save ho gayi!', 'SUCCESS');
+                }).catch(() => {});
+              }
             }
           }}
           bottomNav={renderBottomNav(true)}

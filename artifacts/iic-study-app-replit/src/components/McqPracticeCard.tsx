@@ -2,8 +2,8 @@ import React from 'react';
 import { Bookmark, Slash } from 'lucide-react';
 import type { MCQItem } from '../types';
 import { renderMathInHtml } from '../utils/mathUtils';
-import McqQuestionDisplay from './McqQuestionDisplay';
 import { resolveTelegramUrl } from '../services/telegramStorageService';
+import McqQuestionDisplay from './McqQuestionDisplay';
 
 interface Props {
   q: MCQItem;
@@ -14,6 +14,7 @@ interface Props {
   disabled?: boolean;
   onSelect?: (optionIndex: number) => void;
   actions?: React.ReactNode;
+  actionsBelow?: React.ReactNode;
   variant?: 'default' | 'projector';
   twoColumnOptions?: boolean;
   fontSize?: number;
@@ -39,6 +40,7 @@ const McqPracticeCard: React.FC<Props> = ({
   disabled = false,
   onSelect,
   actions,
+  actionsBelow,
   variant = 'default',
   twoColumnOptions = false,
   fontSize,
@@ -70,18 +72,38 @@ const McqPracticeCard: React.FC<Props> = ({
   return (
     <div className="space-y-3.5 landscape:space-y-2">
       <div className={`${questionCardClass} rounded-[22px] transition-colors ${isProjector ? 'p-5 sm:p-7 landscape:p-3 sm:landscape:p-4' : 'p-4 landscape:p-2.5'}`}>
-        {/* Row 1: Question Number Header & Action Buttons (Bookmark, Camera, Speaker) */}
-        <div className="flex items-center justify-between gap-3 mb-2 landscape:mb-1.5 pb-0.5">
-          <div className="flex items-center gap-2">
-            {number !== undefined && number !== null && (
-              <span className={`${isProjector ? 'text-xl sm:text-2xl landscape:text-lg' : 'text-base'} font-black ${isDark ? 'text-amber-400' : isSepia ? 'text-amber-900' : 'text-slate-800'}`}>
-                Q{number}.
-              </span>
-            )}
-            {isBookmarked && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-300 border border-amber-500/30">
-                ★ Bookmarked
-              </span>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-2 landscape:mb-1">
+              {number !== undefined && number !== null && (
+                <span className={`${isProjector ? 'text-xl sm:text-2xl landscape:text-lg' : 'text-base'} font-black ${isDark ? 'text-amber-400' : isSepia ? 'text-amber-900' : 'text-slate-800'}`}>
+                  Q{number}.
+                </span>
+              )}
+              {isBookmarked && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-300 border border-amber-500/30">
+                  ★ Bookmarked
+                </span>
+              )}
+            </div>
+            <div style={fontSize ? { fontSize } : undefined}>
+              <McqQuestionDisplay
+                q={q}
+                questionClassName={
+                  isProjector
+                    ? isDark
+                      ? "font-bold text-slate-100 leading-relaxed tracking-wide landscape:text-sm sm:landscape:text-base"
+                      : isSepia
+                        ? "font-bold text-amber-950 leading-relaxed landscape:text-sm sm:landscape:text-base"
+                        : "font-bold text-slate-900 leading-relaxed landscape:text-sm sm:landscape:text-base"
+                    : "text-[15px] font-bold text-slate-800 leading-relaxed landscape:text-sm"
+                }
+              />
+            </div>
+            {actionsBelow && (
+              <div className="mt-3 pt-2.5 border-t border-slate-200/50 dark:border-slate-700/50 flex flex-wrap items-center gap-2">
+                {actionsBelow}
+              </div>
             )}
           </div>
 
@@ -108,22 +130,6 @@ const McqPracticeCard: React.FC<Props> = ({
             )}
             {actions}
           </div>
-        </div>
-
-        {/* Row 2: Full-width Question Display — rendered cleanly below the buttons row so it is never blocked */}
-        <div className="w-full" style={fontSize ? { fontSize } : undefined}>
-          <McqQuestionDisplay
-            q={q}
-            questionClassName={
-              isProjector
-                ? isDark
-                  ? "font-bold text-slate-100 leading-relaxed tracking-wide landscape:text-sm sm:landscape:text-base"
-                  : isSepia
-                    ? "font-bold text-amber-950 leading-relaxed landscape:text-sm sm:landscape:text-base"
-                    : "font-bold text-slate-900 leading-relaxed landscape:text-sm sm:landscape:text-base"
-                : "text-[15px] font-bold text-slate-800 leading-relaxed landscape:text-sm"
-            }
-          />
         </div>
       </div>
 
@@ -266,10 +272,10 @@ const McqPracticeCard: React.FC<Props> = ({
         })}
       </div>
 
-      {/* Picture placed below options if admin selected after_options */}
+      {/* Attached Question Diagram: After Options (Sabse Aakhiri) */}
       {q.imageUrl && q.imagePosition === 'after_options' && (
         <div
-          className={`my-2 flex ${
+          className={`my-3 flex ${
             q.imageAlign === 'left' ? 'justify-start' : q.imageAlign === 'right' ? 'justify-end' : 'justify-center'
           }`}
         >

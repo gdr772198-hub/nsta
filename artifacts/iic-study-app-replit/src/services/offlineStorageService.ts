@@ -57,140 +57,6 @@ function openVaultDB(): Promise<IDBDatabase> {
 }
 
 /**
- * Fetches media bytes using multiple fallback strategies to handle CORS restrictions
- */
-async function fetchMediaBlobWithFallbacks(
-  url: string,
-  onProgress?: (progressPercent: number) => void
-): Promise<Blob> {
-  // Google Drive link conversion: convert view/preview links to direct export download URL
-  let targetUrl = url;
-  const driveMatch = url.match(/\/d\/(.*?)\/|\/d\/(.*?)$|id=(.*?)(&|$)/);
-  if (url.includes('drive.google.com') && driveMatch) {
-    const driveId = driveMatch[1] || driveMatch[2] || driveMatch[3];
-    if (driveId) {
-      targetUrl = `https://drive.google.com/uc?export=download&confirm=t&id=${driveId}`;
-    }
-  }
-
-  const isMediaBlobValid = (blob: Blob, resType?: string | null): boolean => {
-    if (!blob || blob.size < 100) return false;
-    const type = resType || blob.type;
-    if (type && type.includes('text/html') && !targetUrl.endsWith('.html')) {
-      return false;
-    }
-    return true;
-  };
-
-  // Strategy 1: Direct fetch with progress stream
-  try {
-    const res = await fetch(targetUrl, { mode: 'cors', credentials: 'omit' });
-    if (res.ok) {
-      const contentType = res.headers.get('content-type');
-      const contentLength = res.headers.get('content-length');
-      const total = contentLength ? parseInt(contentLength, 10) : 0;
-      if (!res.body || !total) {
-        const blob = await res.blob();
-        if (isMediaBlobValid(blob, contentType)) {
-          if (onProgress) onProgress(100);
-          return blob;
-        }
-      } else {
-        const reader = res.body.getReader();
-        let loaded = 0;
-        const chunks: Uint8Array[] = [];
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value) {
-            chunks.push(value);
-            loaded += value.length;
-            if (total && onProgress) {
-              onProgress(Math.min(99, Math.round((loaded / total) * 100)));
-            }
-          }
-        }
-        const blob = new Blob(chunks as BlobPart[]);
-        if (isMediaBlobValid(blob, contentType)) {
-          if (onProgress) onProgress(100);
-          return blob;
-        }
-      }
-    }
-  } catch (directErr) {
-    console.warn('[OfflineStorage] Direct fetch failed, trying CORS proxies:', directErr);
-  }
-
-  // Strategy 2: corsproxy.io (?url= format)
-  try {
-    const proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`;
-    const res = await fetch(proxyUrl);
-    if (res.ok) {
-      const blob = await res.blob();
-      if (isMediaBlobValid(blob, res.headers.get('content-type'))) {
-        if (onProgress) onProgress(100);
-        return blob;
-      }
-    }
-  } catch (pErr) {
-    console.warn('[OfflineStorage] corsproxy.io url param failed:', pErr);
-  }
-
-  // Strategy 3: corsproxy.io (legacy direct format)
-  try {
-    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
-    const res = await fetch(proxyUrl);
-    if (res.ok) {
-      const blob = await res.blob();
-      if (isMediaBlobValid(blob, res.headers.get('content-type'))) {
-        if (onProgress) onProgress(100);
-        return blob;
-      }
-    }
-  } catch (pErr) {
-    console.warn('[OfflineStorage] corsproxy.io direct query failed:', pErr);
-  }
-
-  // Strategy 4: allorigins.win
-  try {
-    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
-    const res = await fetch(proxyUrl);
-    if (res.ok) {
-      const blob = await res.blob();
-      if (isMediaBlobValid(blob, res.headers.get('content-type'))) {
-        if (onProgress) onProgress(100);
-        return blob;
-      }
-    }
-  } catch (pErr2) {
-    console.warn('[OfflineStorage] allorigins failed:', pErr2);
-  }
-
-  // Strategy 4: XHR fallback
-  return new Promise<Blob>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('GET', targetUrl, true);
-    xhr.responseType = 'blob';
-    xhr.onprogress = (e) => {
-      if (e.lengthComputable && onProgress) {
-        onProgress(Math.min(99, Math.round((e.loaded / e.total) * 100)));
-      }
-    };
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        if (onProgress) onProgress(100);
-        resolve(xhr.response);
-      } else {
-        reject(new Error(`Download failed with status ${xhr.status}`));
-      }
-    };
-    xhr.onerror = () => reject(new Error('Network error or CORS restriction during media download'));
-    xhr.ontimeout = () => reject(new Error('Media download timed out'));
-    xhr.send();
-  });
-}
-
-/**
  * Downloads a remote URL file directly as a Blob and stores it in the in-app IndexedDB
  */
 export async function downloadAndSaveOfflineMedia(
@@ -201,28 +67,53 @@ export async function downloadAndSaveOfflineMedia(
   if (!rawUrl) throw new Error('Missing media URL');
   const originalUrl = resolveTelegramUrl(rawUrl);
 
-  const blob = await fetchMediaBlobWithFallbacks(originalUrl, onProgress);
-  const mimeType = blob.type || (meta.kind === 'video' ? 'video/mp4' : meta.kind === 'audio' ? 'audio/mpeg' : 'application/pdf');
-  const completeItem: OfflineVaultRecord = {
-    ...meta,
-    mimeType,
-    sizeBytes: blob.size,
-    downloadedAt: Date.now(),
-    blob,
-  };
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', originalUrl, true);
+    xhr.responseType = 'blob';
 
-  const db = await openVaultDB();
-  return new Promise<OfflineMediaMeta>((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
-    store.put(completeItem);
-
-    tx.oncomplete = () => {
-      if (onProgress) onProgress(100);
-      const { blob: _, ...savedMeta } = completeItem;
-      resolve(savedMeta);
+    xhr.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        const pct = Math.round((e.loaded / e.total) * 100);
+        onProgress(Math.min(99, pct));
+      }
     };
-    tx.onerror = () => reject(tx.error || new Error('Failed to save to Offline Vault'));
+
+    xhr.onload = async () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const blob: Blob = xhr.response;
+          const mimeType = blob.type || (meta.kind === 'video' ? 'video/mp4' : meta.kind === 'audio' ? 'audio/mpeg' : 'application/pdf');
+          const completeItem: OfflineVaultRecord = {
+            ...meta,
+            mimeType,
+            sizeBytes: blob.size,
+            downloadedAt: Date.now(),
+            blob,
+          };
+
+          const db = await openVaultDB();
+          const tx = db.transaction(STORE_NAME, 'readwrite');
+          const store = tx.objectStore(STORE_NAME);
+          store.put(completeItem);
+
+          tx.oncomplete = () => {
+            if (onProgress) onProgress(100);
+            const { blob: _, ...savedMeta } = completeItem;
+            resolve(savedMeta);
+          };
+          tx.onerror = () => reject(tx.error || new Error('Failed to save to Offline Vault'));
+        } catch (err) {
+          reject(err);
+        }
+      } else {
+        reject(new Error(`Download failed with status ${xhr.status}`));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error('Network error during media download'));
+    xhr.ontimeout = () => reject(new Error('Media download timed out'));
+    xhr.send();
   });
 }
 
