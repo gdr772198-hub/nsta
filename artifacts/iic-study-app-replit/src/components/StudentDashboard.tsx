@@ -5498,6 +5498,14 @@ export const StudentDashboard: React.FC<Props> = ({
   const [hwEntryEdit, setHwEntryEdit] = useState<any | null>(null);
   const [hwEntryEditSaving, setHwEntryEditSaving] = useState(false);
 
+  const formatMcqsToText = (mcqs: any[]): string => {
+    return (mcqs || []).map((q, i) => {
+      const opts = (q.options || []).map((o: string, oi: number) => `${String.fromCharCode(65 + oi)}) ${o}`).join('\n');
+      const ansLetter = String.fromCharCode(65 + (typeof q.correctAnswer === 'number' ? q.correctAnswer : 0));
+      return `Q${i + 1}. ${q.question}\n${opts}\nAnswer: ${ansLetter}${q.explanation ? `\nExplanation: ${q.explanation}` : ''}`;
+    }).join('\n\n');
+  };
+
   const openAdminPageEdit = (entry: LucentNoteEntry, pageIdx: number) => {
     const pg = entry.pages[pageIdx];
     if (!pg) return;
@@ -5506,7 +5514,7 @@ export const StudentDashboard: React.FC<Props> = ({
     setApeVideo((pg as any).videoUrl || '');
     setApeAudio((pg as any).audioUrl || '');
     setApePdf((pg as any).pdfUrl || '');
-    setApeMcq(pg.mcqs ? JSON.stringify(pg.mcqs, null, 2) : '');
+    setApeMcq(pg.mcqs && pg.mcqs.length > 0 ? formatMcqsToText(pg.mcqs) : '');
     setApePageNo(pg.pageNo || '');
     setApeTopic(pg.topicName || '');
     setAdminPageEditTab('chunk');
@@ -5520,25 +5528,35 @@ export const StudentDashboard: React.FC<Props> = ({
       const { entry, pageIdx } = adminPageEdit;
       let parsedMcqs: any[] | undefined;
       if (apeMcq.trim()) {
-        const _normalized = normalizeMcqPaste(apeMcq.trim());
-        const _result = parseMCQText(_normalized);
-        const _ts = Date.now();
-        const _parsed = (_result?.questions || []).map((q: any, i: number) => ({
-          id: `mcq_${_ts}_${i}_${Math.random().toString(36).slice(2)}`,
-          questionNumber: q.questionNumber,
-          question: (q.question || '').replace(/<br\/?>/g, '\n').replace(/^Q?\s*\d+[.)]\s*/i, '').trim(),
-          options: (q.options || ['', '', '', '']).slice(0, 4),
-          correctAnswer: q.correctAnswer ?? 0,
-          ...(q.statements?.length ? { statements: q.statements } : {}),
-          ...(q.topic?.trim() ? { topic: q.topic.trim() } : {}),
-          ...(q.explanation?.trim() ? { explanation: q.explanation.trim() } : {}),
-        }));
-        if (!_parsed.length) {
-          showAlert('❌ MCQ parse nahi hua. Format check karein: Q1. Sawaal?\nA) Opt A\nB) Opt B\nAnswer: A', 'ERROR');
-          setAdminPageEditSaving(false);
-          return;
+        let jsonParsed: any[] | null = null;
+        try {
+          const parsed = JSON.parse(apeMcq.trim());
+          if (Array.isArray(parsed) && parsed.length > 0) jsonParsed = parsed;
+        } catch {}
+
+        if (jsonParsed) {
+          parsedMcqs = jsonParsed;
+        } else {
+          const _normalized = normalizeMcqPaste(apeMcq.trim());
+          const _result = parseMCQText(_normalized);
+          const _ts = Date.now();
+          const _parsed = (_result?.questions || []).map((q: any, i: number) => ({
+            id: `mcq_${_ts}_${i}_${Math.random().toString(36).slice(2)}`,
+            questionNumber: q.questionNumber,
+            question: (q.question || '').replace(/<br\/?>/g, '\n').replace(/^Q?\s*\d+[.)]\s*/i, '').trim(),
+            options: (q.options || ['', '', '', '']).slice(0, 4),
+            correctAnswer: q.correctAnswer ?? 0,
+            ...(q.statements?.length ? { statements: q.statements } : {}),
+            ...(q.topic?.trim() ? { topic: q.topic.trim() } : {}),
+            ...(q.explanation?.trim() ? { explanation: q.explanation.trim() } : {}),
+          }));
+          if (!_parsed.length) {
+            showAlert('❌ MCQ parse nahi hua. Format check karein: Q1. Sawaal?\nA) Opt A\nB) Opt B\nAnswer: A', 'ERROR');
+            setAdminPageEditSaving(false);
+            return;
+          }
+          parsedMcqs = _parsed;
         }
-        parsedMcqs = _parsed;
       } else {
         parsedMcqs = entry.pages[pageIdx].mcqs; // keep existing if paste area is empty
       }
@@ -5564,6 +5582,9 @@ export const StudentDashboard: React.FC<Props> = ({
         const updatedList = currentList.map((item: any) => item.id === entry.id ? updatedEntry : item);
         return { ...prev, lucentNotes: updatedList };
       });
+      try {
+        window.dispatchEvent(new CustomEvent('study-activity-updated', { detail: { lessonId: entry.id, pageIndex } }));
+      } catch {}
       showAlert('✅ Page saved!', 'SUCCESS');
       setAdminPageEdit(null);
     } catch { showAlert('Save failed. Try again.', 'ERROR'); }
@@ -11517,7 +11538,20 @@ export const StudentDashboard: React.FC<Props> = ({
                         }
                         const _pct = _hwTotal > 0 ? Math.round((_hwRight / _hwTotal) * 100) : 0;
                         const _newHist = { score: _pct, timestamp: Date.now(), total: _hwTotal, correct: _hwRight };
-                        recordMcqScore((activeHw as any).id || hwKey, _newHist);
+                        const _hwUid = freshU?.id || user?.id || 'student';
+                        const _hwTargetId = (activeHw as any).id || hwKey;
+                        try {
+                          recordMcqScore(_hwUid, _hwTargetId, _hwRight, _hwTotal, 0, {
+                            chapter: activeHw.title,
+                            subject: activeHw.targetSubject || 'Homework',
+                          });
+                          recordMcqScore(_hwTargetId, _newHist);
+                        } catch {}
+                        try {
+                          window.dispatchEvent(new CustomEvent('study-activity-updated', {
+                            detail: { lessonId: _hwTargetId, score: _hwRight, total: _hwTotal }
+                          }));
+                        } catch {}
                         setHwManualSubmitted(prev => ({ ...prev, [hwKey]: true }));
                       };
 
@@ -24264,7 +24298,28 @@ export const StudentDashboard: React.FC<Props> = ({
                     _sumR += _isDone ? 100 : (_isPremUser ? 0 : Math.min(99, Math.round((_cb / Math.max(_rSec, 1)) * 100)));
                     if ((p.mcqs?.length || 0) > 0) {
                       _mcqCount++;
-                      const _sh = (_a?.MCQ?.scoreHistory || []) as import('../utils/activityTracker').McqScoreAttempt[];
+                      const _sh = [ ...((_a?.MCQ?.scoreHistory || []) as import('../utils/activityTracker').McqScoreAttempt[]) ];
+                      if (_sh.length === 0) {
+                        const rScore = getRoutinePageMcqScore(plEntry.id, i);
+                        if (rScore && rScore.total > 0) {
+                          _sh.push({ correct: rScore.correct, total: rScore.total, seconds: 0, attemptedAt: '' });
+                        }
+                      }
+                      if (_sh.length === 0 && Array.isArray(user?.mcqHistory)) {
+                        const m = user.mcqHistory.find((h: any) =>
+                          (h.chapterId === plEntry.id && (h.pageIndex === undefined || h.pageIndex === i)) ||
+                          h.topicId === `${plEntry.id}_${i}` ||
+                          h.id === `${plEntry.id}_${i}`
+                        );
+                        if (m) {
+                          const c = m.correctCount ?? m.correctAnswers ?? m.correct ?? 0;
+                          const t = m.totalQuestions ?? m.total ?? (p.mcqs?.length || 1);
+                          _sh.push({ correct: c, total: t, seconds: 0, attemptedAt: '' });
+                        }
+                      }
+                      if (_sh.length === 0 && isRoutinePageMcqDone(plEntry.id, i)) {
+                        _sh.push({ correct: p.mcqs?.length || 1, total: p.mcqs?.length || 1, seconds: 0, attemptedAt: '' });
+                      }
                       const _bst = _sh.length > 0 ? _sh.reduce((b, s) => s.total > 0 && s.correct / s.total > b.correct / Math.max(b.total, 1) ? s : b, _sh[0]) : undefined;
                       if (_bst && _bst.total > 0) {
                         _sumM += Math.round((_bst.correct / _bst.total) * 100);
@@ -26162,14 +26217,51 @@ RULES:
                         } catch {}
                         const pct = res.total > 0 ? Math.round((res.score / res.total) * 100) : 0;
                         const newHist = { score: pct, timestamp: Date.now(), total: res.total, correct: res.score };
-                        recordMcqScore(pageKey, newHist);
-                        // Save in user profile
-                        const _existing = (user.mcqHistory || []).filter((h: any) => h.topicId !== pageKey);
-                        const _updatedHist = [..._existing, { topicId: pageKey, score: pct, totalQuestions: res.total, correctAnswers: res.score, timestamp: Date.now() }];
+
+                        const contentKey = getStudyActivityKey(entry.id, safeIndex);
+                        const elapsed = res.timeElapsedSeconds || 0;
+                        const freshU = userRef.current || user;
+                        const curUserId = freshU?.id || user?.id || 'student';
+
+                        try {
+                          recordMcqScore(curUserId, contentKey, res.score, res.total, elapsed, {
+                            topic: (currentPage?.topicName || entry.lessonTitle || 'Lucent').trim(),
+                            chapter: entry.lessonTitle || 'Lucent Lesson',
+                            subject: (entry as any).subject || 'Lucent',
+                          });
+                          recordMcqScore(curUserId, entry.id, res.score, res.total, elapsed, {
+                            topic: (currentPage?.topicName || entry.lessonTitle || 'Lucent').trim(),
+                            chapter: entry.lessonTitle || 'Lucent Lesson',
+                            subject: (entry as any).subject || 'Lucent',
+                          });
+                          recordMcqScore(pageKey, newHist);
+                        } catch {}
+
+                        // Save in user profile with comprehensive ID tags
+                        const _existing = (freshU?.mcqHistory || user?.mcqHistory || []).filter((h: any) =>
+                          h.topicId !== pageKey &&
+                          h.id !== `${entry.id}_${safeIndex}` &&
+                          !(h.chapterId === entry.id && h.pageIndex === safeIndex)
+                        );
+                        const _histItem = {
+                          id: `${entry.id}_${safeIndex}`,
+                          chapterId: entry.id,
+                          pageIndex: safeIndex,
+                          topicId: pageKey,
+                          score: pct,
+                          totalQuestions: res.total,
+                          total: res.total,
+                          correctCount: res.score,
+                          correctAnswers: res.score,
+                          correct: res.score,
+                          timestamp: Date.now(),
+                          date: new Date().toISOString(),
+                        };
+                        const _updatedHist = [..._existing, _histItem];
+
                         // Earn points: +5 correct, -2 wrong
                         const lucentWrong = res.total - res.score;
                         const baseScore = (res.score * 5) - (lucentWrong * 2);
-                        const freshU = userRef.current;
                         if (freshU && baseScore > 0) {
                           const earned = tryEarnScore(freshU.id, baseScore, freshU.subscriptionLevel, freshU.isPremium, getCombinedBoost(freshU, settings), 'MCQ_CORRECT');
                           if (earned > 0) {
@@ -26187,6 +26279,13 @@ RULES:
                         } else {
                           handleUserUpdate({ ...(freshU || user), mcqHistory: _updatedHist });
                         }
+
+                        // Broadcast event so cards update immediately
+                        try {
+                          window.dispatchEvent(new CustomEvent('study-activity-updated', {
+                            detail: { lessonId: entry.id, pageIndex: safeIndex, score: res.score, total: res.total }
+                          }));
+                        } catch {}
                       };
 
                       return (
