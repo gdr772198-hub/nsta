@@ -487,6 +487,14 @@ body:has(.iic-modal-overlay) [data-nsta-fab] {
 }
 
 /* ── Video Player Fullscreen: Hides Top Bar AND Bottom Navigation Completely ── */
+body.nsta-video-fullscreen-active,
+html.nsta-video-fullscreen-active,
+:fullscreen,
+::backdrop,
+*:fullscreen {
+  background-color: #000000 !important;
+}
+
 body.nsta-video-fullscreen-active #top-banner-container,
 body.nsta-video-fullscreen-active [data-iic-topbar],
 body.nsta-video-fullscreen-active .iic-top-bar,

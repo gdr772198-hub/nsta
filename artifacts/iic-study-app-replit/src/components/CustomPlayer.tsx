@@ -206,8 +206,9 @@ export const CustomPlayer: React.FC<CustomPlayerProps> = ({
             transform: 'translate(-50%, -50%) rotate(90deg)',
             transformOrigin: 'center center',
             overflow: 'hidden',
+            background: '#000',
           }
-        : { position: 'absolute', inset: 0, overflow: 'hidden' };
+        : { position: 'absolute', inset: 0, overflow: 'hidden', background: '#000' };
 
     const blocker = (extra: React.CSSProperties): React.CSSProperties => ({
         position: 'absolute', zIndex: 20,

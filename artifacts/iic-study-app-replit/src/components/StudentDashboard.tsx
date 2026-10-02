@@ -10284,7 +10284,7 @@ export const StudentDashboard: React.FC<Props> = ({
         hwGoToRef.current = goToHw as any;
 
         return (
-          <div className="fixed inset-0 z-[150] bg-white flex flex-col animate-in fade-in">
+          <div className={`fixed inset-0 z-[150] flex flex-col animate-in fade-in ${effectiveMode === 'video' ? 'bg-black text-white' : 'bg-white'}`}>
             {/* Reading progress bar (notes mode only) */}
             {effectiveMode === 'notes' && (
               <div className="absolute top-0 left-0 right-0 h-1 bg-slate-200/60 z-[60] pointer-events-none">
@@ -10869,7 +10869,7 @@ export const StudentDashboard: React.FC<Props> = ({
 
             {/* VIDEO PAGE */}
             {effectiveMode === 'video' && hasVideo && (
-              <div className={`flex-1 flex flex-col p-2 sm:p-4 overflow-y-auto ${!isLandscape ? 'pb-[72px]' : ''}`}>
+              <div className={`flex-1 flex flex-col ${isLandscape ? 'p-0' : 'p-2 sm:p-4'} overflow-y-auto bg-black ${!isLandscape ? 'pb-[72px]' : ''}`}>
                 <ModernVideoPlayer
                   videoUrl={activeHw.videoUrl!}
                   title={activeHw.title || 'Homework Video'}
@@ -24817,7 +24817,7 @@ export const StudentDashboard: React.FC<Props> = ({
 
         return (
           <>
-          <div className={`fixed inset-0 z-[200] flex flex-col animate-in fade-in ${!lucentImmersive ? 'pb-[64px]' : ''}`} style={{ background: '#ffffff' }}>
+          <div className={`fixed inset-0 z-[200] flex flex-col animate-in fade-in ${!lucentImmersive ? 'pb-[64px]' : ''}`} style={{ background: lucentActiveTab === 'VIDEO' ? '#000000' : '#ffffff' }}>
             {/* Reading progress bar — same gradient style as Sar Sangrah / Speedy */}
             <div className="absolute top-0 left-0 right-0 h-1 bg-slate-200/60 z-[60] pointer-events-none">
               <div
@@ -26519,7 +26519,7 @@ RULES:
 
             {/* VIDEO TAB CONTENT */}
             {lucentActiveTab === 'VIDEO' && (
-              <div className="flex-1 flex flex-col p-2 sm:p-4 overflow-y-auto">
+              <div className={`flex-1 flex flex-col ${isLandscape ? 'p-0' : 'p-2 sm:p-4'} overflow-y-auto bg-black`}>
                 {((currentPage as any)?.videoUrl || entry.videoUrl) ? (
                   <ModernVideoPlayer
                     videoUrl={(currentPage as any)?.videoUrl || entry.videoUrl}

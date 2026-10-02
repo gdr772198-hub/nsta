@@ -32,6 +32,8 @@ export const PlayerWatermark: React.FC<PlayerWatermarkProps> = ({
 
   const defaultTitle = isTopBarHidden
     ? 'Top Bar Dikhayein (Tap to show top bar)'
+    : isFullscreen
+    ? 'Exit Fullscreen / Toggle Top Bar'
     : 'NSTA Logo • Tap karein to Top Bar hide/show hoga';
 
   return (
@@ -39,7 +41,7 @@ export const PlayerWatermark: React.FC<PlayerWatermarkProps> = ({
       type={onClick ? 'button' : undefined}
       onClick={onClick}
       title={onClick ? defaultTitle : undefined}
-      aria-label={onClick ? 'Toggle Top Bar' : undefined}
+      aria-label={onClick ? 'Toggle Top Bar / Fullscreen' : undefined}
       className={`absolute z-30 select-none flex items-center gap-1.5 px-2.5 py-1 rounded-full backdrop-blur-md transition-all duration-200 active:scale-90 ${posClasses[position] || posClasses['top-right']} ${
         onClick
           ? 'pointer-events-auto cursor-pointer hover:opacity-100 hover:scale-105 active:scale-95 shadow-lg'
