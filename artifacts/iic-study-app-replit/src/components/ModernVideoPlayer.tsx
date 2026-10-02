@@ -86,6 +86,36 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
   const [duration, setDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
 
+  // Double-tap / Multi-tap gesture state (Left: -10s, Center: Play/Pause, Right: +10s)
+  const tapStateRef = useRef<{
+    zone: 'left' | 'center' | 'right' | null;
+    count: number;
+    lastTapTime: number;
+    accumulatedSec: number;
+    resetTimer: ReturnType<typeof setTimeout> | null;
+  }>({
+    zone: null,
+    count: 0,
+    lastTapTime: 0,
+    accumulatedSec: 0,
+    resetTimer: null,
+  });
+
+  const [tapFeedback, setTapFeedback] = useState<{
+    zone: 'left' | 'center' | 'right';
+    text?: string;
+    action?: 'play' | 'pause';
+    key: number;
+  } | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (tapStateRef.current.resetTimer) {
+        clearTimeout(tapStateRef.current.resetTimer);
+      }
+    };
+  }, []);
+
   // Download state
   const [isDownloaded, setIsDownloaded] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -283,6 +313,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
 
   // NSTA logo tap: toggles top bar visibility (hide / show)
   const handleNstaLogoClick = useCallback(() => {
+    setShowSettingsMenu(false);
     setIsTopBarHidden((prev) => {
       const next = !prev;
       try {
@@ -416,6 +447,103 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
     }
   };
 
+  // Screen Tap Gesture Handler:
+  // - Center 2 taps: Play / Pause toggle
+  // - Right 2 taps: +10s forward (+10s more on each additional tap: 2 taps = +10s, 3 taps = +20s, etc.)
+  // - Left 2 taps: -10s rewind (-10s more on each additional tap: 2 taps = -10s, 3 taps = -20s, etc.)
+  const handleVideoScreenTap = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (showSettingsMenu) {
+      setShowSettingsMenu(false);
+      return;
+    }
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const width = rect.width || 1;
+    const ratio = clickX / width;
+
+    const zone: 'left' | 'center' | 'right' =
+      ratio < 0.35 ? 'left' : ratio > 0.65 ? 'right' : 'center';
+
+    const now = Date.now();
+    const state = tapStateRef.current;
+    const maxGap = state.count >= 2 && state.zone === zone && zone !== 'center' ? 650 : 400;
+    const isSameStreak = state.zone === zone && now - state.lastTapTime <= maxGap;
+
+    if (!isSameStreak) {
+      if (state.resetTimer) clearTimeout(state.resetTimer);
+      state.zone = zone;
+      state.count = 1;
+      state.lastTapTime = now;
+      state.accumulatedSec = 0;
+      state.resetTimer = setTimeout(() => {
+        state.zone = null;
+        state.count = 0;
+        state.accumulatedSec = 0;
+      }, 450);
+      return;
+    }
+
+    state.count += 1;
+    state.lastTapTime = now;
+    if (state.resetTimer) clearTimeout(state.resetTimer);
+
+    if (zone === 'center') {
+      if (!videoRef.current) return;
+      const willPlay = videoRef.current.paused;
+      if (willPlay) {
+        videoRef.current.play().catch(() => {});
+        setIsPlaying(true);
+      } else {
+        videoRef.current.pause();
+        setIsPlaying(false);
+      }
+      setTapFeedback({
+        zone: 'center',
+        action: willPlay ? 'play' : 'pause',
+        key: now,
+      });
+      state.zone = null;
+      state.count = 0;
+      state.accumulatedSec = 0;
+      state.resetTimer = setTimeout(() => {
+        setTapFeedback(null);
+      }, 650);
+      return;
+    }
+
+    // Left (-10s) or Right (+10s) — 2nd tap = 10s, 3rd tap = 20s, 4th tap = 30s, etc.
+    state.accumulatedSec += 10;
+    if (videoRef.current) {
+      if (zone === 'right') {
+        const maxDur =
+          videoRef.current.duration && !isNaN(videoRef.current.duration)
+            ? videoRef.current.duration
+            : duration;
+        videoRef.current.currentTime =
+          maxDur > 0
+            ? Math.min(maxDur, videoRef.current.currentTime + 10)
+            : videoRef.current.currentTime + 10;
+      } else {
+        videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 10);
+      }
+      setCurrentTime(videoRef.current.currentTime);
+    }
+
+    setTapFeedback({
+      zone,
+      text: zone === 'right' ? `+${state.accumulatedSec}s` : `-${state.accumulatedSec}s`,
+      key: now,
+    });
+
+    state.resetTimer = setTimeout(() => {
+      state.zone = null;
+      state.count = 0;
+      state.accumulatedSec = 0;
+      setTapFeedback(null);
+    }, 700);
+  };
+
   // If playback access is blocked due to expired subscription
   if (accessBlocked) {
     return (
@@ -454,7 +582,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
         <PlayerWatermark
           appLogo={appLogo}
           appName={appName}
-          position={isFullscreen ? 'top-right' : 'bottom-right'}
+          position="bottom-right"
           onClick={handleNstaLogoClick}
           isFullscreen={isFullscreen}
           isTopBarHidden={isTopBarHidden}
@@ -496,14 +624,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
               title={isRotated ? 'Rotate Portrait' : 'Rotate Landscape (Screen Ghumayein)'}
             >
               <RotateCw size={14} className={isRotated ? 'rotate-90 transition-transform' : ''} />
-            </button>
-            <button
-              type="button"
-              onClick={handleFullscreenClick}
-              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
-              title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-            >
-              {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
             </button>
           </div>
         </div>
@@ -532,7 +652,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
         <PlayerWatermark
           appLogo={appLogo}
           appName={appName}
-          position={isFullscreen ? 'top-right' : 'bottom-right'}
+          position="bottom-right"
           onClick={handleNstaLogoClick}
           isFullscreen={isFullscreen}
           isTopBarHidden={isTopBarHidden}
@@ -574,14 +694,6 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
               title={isRotated ? 'Rotate Portrait' : 'Rotate Landscape (Screen Ghumayein)'}
             >
               <RotateCw size={14} className={isRotated ? 'rotate-90 transition-transform' : ''} />
-            </button>
-            <button
-              type="button"
-              onClick={handleFullscreenClick}
-              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
-              title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-            >
-              {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
             </button>
           </div>
         </div>
@@ -617,19 +729,9 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
         if (showSettingsMenu) setShowSettingsMenu(false);
       }}
     >
-      {/* ── Official Semi-Transparent Logo Watermark ── */}
-      <PlayerWatermark
-        appLogo={appLogo}
-        appName={appName}
-        position={isFullscreen ? 'top-right' : 'bottom-right'}
-        onClick={handleNstaLogoClick}
-        isFullscreen={isFullscreen}
-        isTopBarHidden={isTopBarHidden}
-      />
-
-      {/* ── Top Bar Header Overlay ── */}
+      {/* ── Top Bar Header Overlay (With Rotate & 3-Dot Options Button) ── */}
       <div
-        className={`absolute top-0 left-0 right-0 p-3 flex items-center justify-between bg-gradient-to-b from-black/90 via-black/50 to-transparent z-20 transition-all duration-300 ${
+        className={`absolute top-0 left-0 right-0 p-3 flex items-center justify-between bg-gradient-to-b from-black/90 via-black/50 to-transparent z-30 transition-all duration-300 ${
           isTopBarHidden
             ? '-translate-y-full opacity-0 pointer-events-none'
             : 'translate-y-0 opacity-100 pointer-events-auto'
@@ -653,8 +755,8 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           </div>
         </div>
 
-        {/* Top Right: Rotate and Fullscreen Controls */}
-        <div className="flex items-center gap-1.5">
+        {/* Top Right: Rotate & 3-Dot Options Menu */}
+        <div className="flex items-center gap-1.5 relative">
           <button
             type="button"
             onClick={toggleRotate}
@@ -665,52 +767,228 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
           >
             <RotateCw size={14} className={isRotated ? 'rotate-90 transition-transform' : ''} />
           </button>
-          <button
-            type="button"
-            onClick={handleFullscreenClick}
-            className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
-            title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-          >
-            {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
-          </button>
+
+          {/* 3-Dot Options Button in Top Bar */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowSettingsMenu((v) => !v);
+              }}
+              className={`p-1.5 rounded-lg transition active:scale-90 flex items-center justify-center cursor-pointer ${
+                showSettingsMenu
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-white/10 hover:bg-white/20 text-white'
+              }`}
+              title="Options (Quality Change, Speed, Loop, Save)"
+              aria-label="Video Options"
+            >
+              <MoreVertical size={16} />
+            </button>
+
+            {/* 3-Dot Settings & Quality Dropdown Popup (Opens Downward From Top Bar) */}
+            {showSettingsMenu && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="absolute right-0 top-full mt-2 w-60 max-h-[70vh] overflow-y-auto bg-slate-900/98 backdrop-blur-xl border border-slate-700/80 rounded-2xl p-3 shadow-2xl text-white z-50 animate-in fade-in zoom-in-95 space-y-3"
+              >
+                {/* Quality Change Section */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                      Quality / Resolution
+                    </p>
+                    <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
+                      {selectedQuality}
+                    </span>
+                  </div>
+                  <div className="space-y-1">
+                    {availableQualities.map((q) => (
+                      <button
+                        key={q.quality}
+                        onClick={() => handleQualitySelect(q.quality, q.isLocked)}
+                        className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-left text-xs transition active:scale-95 ${
+                          selectedQuality === q.quality
+                            ? 'bg-indigo-600 text-white font-bold shadow'
+                            : 'hover:bg-slate-800 text-slate-200'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          {selectedQuality === q.quality && (
+                            <Check size={12} className="text-white shrink-0" />
+                          )}
+                          <span>{q.label}</span>
+                        </div>
+                        {q.isLocked && <Lock size={12} className="text-amber-400 shrink-0" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Playback Speed Section */}
+                <div className="pt-2 border-t border-slate-800">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">
+                    Playback Speed
+                  </p>
+                  <div className="grid grid-cols-4 gap-1">
+                    {[0.75, 1, 1.25, 1.5].map((speed) => (
+                      <button
+                        key={speed}
+                        onClick={() => handleSpeedChange(speed)}
+                        className={`py-1 rounded-lg text-center text-xs font-bold transition active:scale-90 ${
+                          playbackRate === speed
+                            ? 'bg-indigo-600 text-white shadow'
+                            : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300'
+                        }`}
+                      >
+                        {speed}x
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Loop Video Option */}
+                <div className="pt-2 border-t border-slate-800">
+                  <button
+                    onClick={handleLoopToggle}
+                    className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition active:scale-95 ${
+                      isLooping
+                        ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40'
+                        : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Repeat size={13} className={isLooping ? 'text-indigo-400' : 'text-slate-400'} />
+                      <span>Loop Video</span>
+                    </div>
+                    <span className="text-[10px] uppercase font-black">{isLooping ? 'ON' : 'OFF'}</span>
+                  </button>
+                </div>
+
+                {/* Offline Save inside App Option */}
+                <div className="pt-2 border-t border-slate-800">
+                  {isDownloaded ? (
+                    <div className="flex items-center justify-between px-2.5 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold">
+                      <span className="flex items-center gap-1.5">
+                        <CheckCircle size={13} /> App Me Saved Hai
+                      </span>
+                      <span className="text-[9px] uppercase font-black bg-emerald-500/20 px-1.5 py-0.5 rounded">
+                        Offline
+                      </span>
+                    </div>
+                  ) : isDownloading ? (
+                    <div className="flex items-center justify-between px-2.5 py-2 rounded-xl bg-indigo-500/20 border border-indigo-500/40 text-indigo-200 text-xs font-bold animate-pulse">
+                      <span className="flex items-center gap-1.5">
+                        <Download size={13} className="animate-bounce" /> Downloading...
+                      </span>
+                      <span className="text-[10px] font-black">{downloadProgress}%</span>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setShowSettingsMenu(false);
+                        handleDownload();
+                      }}
+                      className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition active:scale-95 shadow ${
+                        isUltraUser
+                          ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:brightness-110'
+                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        {isUltraUser ? <Download size={13} /> : <Crown size={13} />}
+                        <span>Save Inside App</span>
+                      </span>
+                      <span className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-black/30">
+                        {isUltraUser ? 'Offline' : 'Ultra'}
+                      </span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* ── Video Element ── */}
-      <div className="w-full h-full flex-1 relative flex items-center justify-center bg-black pt-8 pb-12">
+      {/* ── Video Element & Multi-Tap Gesture Surface ── */}
+      <div
+        className="w-full h-full flex-1 relative flex items-center justify-center bg-black pt-8 pb-12 cursor-pointer select-none"
+        onClick={handleVideoScreenTap}
+        onDoubleClick={(e) => e.preventDefault()}
+      >
         {videoUrl ? (
-          <video
-            ref={videoRef}
-            src={currentPlayUrl}
-            playsInline
-            preload="metadata"
-            autoPlay={autoPlay}
-            onClick={togglePlayPause}
-            className="w-full h-full max-h-full object-contain bg-black cursor-pointer"
-            onError={handleVideoError}
-            onTimeUpdate={() => {
-              if (videoRef.current) {
-                setCurrentTime(videoRef.current.currentTime);
-                if (videoRef.current.duration && !isNaN(videoRef.current.duration)) {
+          <>
+            <video
+              ref={videoRef}
+              src={currentPlayUrl}
+              playsInline
+              preload="metadata"
+              autoPlay={autoPlay}
+              onDoubleClick={(e) => e.preventDefault()}
+              className="w-full h-full max-h-full object-contain bg-black pointer-events-none"
+              onError={handleVideoError}
+              onTimeUpdate={() => {
+                if (videoRef.current) {
+                  setCurrentTime(videoRef.current.currentTime);
+                  if (videoRef.current.duration && !isNaN(videoRef.current.duration)) {
+                    setDuration(videoRef.current.duration);
+                  }
+                }
+              }}
+              onLoadedMetadata={() => {
+                if (videoRef.current && videoRef.current.duration) {
                   setDuration(videoRef.current.duration);
                 }
-              }
-            }}
-            onLoadedMetadata={() => {
-              if (videoRef.current && videoRef.current.duration) {
-                setDuration(videoRef.current.duration);
-              }
-            }}
-            onPlay={() => {
-              setIsPlaying(true);
-              setVideoError(null);
-            }}
-            onPause={() => setIsPlaying(false)}
-            onEnded={() => {
-              setIsPlaying(false);
-              if (onNext) onNext();
-            }}
-          />
+              }}
+              onPlay={() => {
+                setIsPlaying(true);
+                setVideoError(null);
+              }}
+              onPause={() => setIsPlaying(false)}
+              onEnded={() => {
+                setIsPlaying(false);
+                if (onNext) onNext();
+              }}
+            />
+
+            {/* Left Rewind Visual Feedback (-10s, -20s, ...) */}
+            {tapFeedback && tapFeedback.zone === 'left' && (
+              <div
+                key={tapFeedback.key}
+                className="pointer-events-none absolute left-6 top-1/2 -translate-y-1/2 flex flex-col items-center justify-center bg-black/70 backdrop-blur-md text-white px-5 py-3.5 rounded-full border border-white/15 shadow-2xl animate-in fade-in zoom-in-95 duration-150"
+              >
+                <RotateCcw size={24} className="text-indigo-400 mb-1" />
+                <span className="text-xs font-black tracking-wide">{tapFeedback.text}</span>
+              </div>
+            )}
+
+            {/* Center Play/Pause Visual Feedback */}
+            {tapFeedback && tapFeedback.zone === 'center' && (
+              <div
+                key={tapFeedback.key}
+                className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center w-16 h-16 bg-black/70 backdrop-blur-md text-white rounded-full border border-white/15 shadow-2xl animate-in fade-in zoom-in-95 duration-150"
+              >
+                {tapFeedback.action === 'play' ? (
+                  <Play size={28} className="text-white ml-1" fill="currentColor" />
+                ) : (
+                  <Pause size={28} className="text-white" fill="currentColor" />
+                )}
+              </div>
+            )}
+
+            {/* Right Forward Visual Feedback (+10s, +20s, ...) */}
+            {tapFeedback && tapFeedback.zone === 'right' && (
+              <div
+                key={tapFeedback.key}
+                className="pointer-events-none absolute right-6 top-1/2 -translate-y-1/2 flex flex-col items-center justify-center bg-black/70 backdrop-blur-md text-white px-5 py-3.5 rounded-full border border-white/15 shadow-2xl animate-in fade-in zoom-in-95 duration-150"
+              >
+                <RotateCw size={24} className="text-indigo-400 mb-1" />
+                <span className="text-xs font-black tracking-wide">{tapFeedback.text}</span>
+              </div>
+            )}
+          </>
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 bg-slate-950 p-6 text-center">
             <AlertTriangle size={36} className="text-amber-500 mb-2 opacity-80" />
@@ -720,7 +998,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
         )}
       </div>
 
-      {/* ── BOTTOM CONTROLS BAR: 3 DOT BUTTON NICHE JO THA USHI ME ADD KIYA QUALITY CHANGE OPTION ── */}
+      {/* ── BOTTOM CONTROLS BAR (NSTA Logo Button in place of 3-Dot Button; stays here even on rotate) ── */}
       <div className="absolute bottom-0 left-0 right-0 px-3 pb-2 pt-6 bg-gradient-to-t from-black/95 via-black/60 to-transparent z-20 pointer-events-auto">
         {/* Progress Scrubber */}
         <div
@@ -743,40 +1021,8 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
 
         {/* Bottom Controls Row */}
         <div className="flex items-center justify-between text-white text-xs">
-          {/* Left Controls: Play/Pause, Skip -10s, Time */}
+          {/* Left Controls: Mute & Time */}
           <div className="flex items-center gap-2.5">
-            <button
-              onClick={togglePlayPause}
-              className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
-              title={isPlaying ? 'Pause' : 'Play'}
-            >
-              {isPlaying ? <Pause size={17} /> : <Play size={17} className="ml-0.5" />}
-            </button>
-
-            <button
-              onClick={() => {
-                if (videoRef.current) {
-                  videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 10);
-                }
-              }}
-              className="p-1 rounded-md text-slate-300 hover:text-white transition active:scale-90"
-              title="-10 seconds"
-            >
-              <RotateCcw size={14} />
-            </button>
-
-            <button
-              onClick={() => {
-                if (videoRef.current) {
-                  videoRef.current.currentTime = Math.min(duration, videoRef.current.currentTime + 10);
-                }
-              }}
-              className="p-1 rounded-md text-slate-300 hover:text-white transition active:scale-90"
-              title="+10 seconds"
-            >
-              <RotateCw size={14} />
-            </button>
-
             <button
               onClick={() => {
                 if (videoRef.current) {
@@ -795,161 +1041,48 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
             </span>
           </div>
 
-          {/* Right Controls: Quality Badge, 3-Dot Options Button (With Quality Menu), Fullscreen */}
-          <div className="flex items-center gap-1.5 relative">
+          {/* Right Controls: Quality Badge & NSTA Logo Button (replaces 3-Dot Button at bottom, stays here on rotate) */}
+          <div className="flex items-center gap-2 relative">
             {/* Active Quality Badge */}
             <span className="text-[10px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-500/30 text-indigo-300 border border-indigo-500/40">
               {selectedQuality}
             </span>
 
-            {/* 3-Dot Options Button: User requirement: "3 dot button niche jo tha ushi me add karna tha quality change karne wala option" */}
-            <div className="relative">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowSettingsMenu((v) => !v);
-                }}
-                className={`p-1.5 rounded-lg transition active:scale-90 flex items-center justify-center cursor-pointer ${
-                  showSettingsMenu
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-white/10 hover:bg-white/20 text-white'
-                }`}
-                title="Options (Quality Change, Speed, Loop, Save)"
-                aria-label="Video Options"
-              >
-                <MoreVertical size={16} />
-              </button>
-
-              {/* 3-Dot Settings & Quality Dropdown Popup (Opens Upward From Bottom) */}
-              {showSettingsMenu && (
-                <div
-                  onClick={(e) => e.stopPropagation()}
-                  className="absolute right-0 bottom-full mb-2.5 w-60 max-h-[75vh] overflow-y-auto bg-slate-900/98 backdrop-blur-xl border border-slate-700/80 rounded-2xl p-3 shadow-2xl text-white z-50 animate-in fade-in zoom-in-95 space-y-3"
-                >
-                  {/* Quality Change Section (Inside 3-Dot Menu at Bottom) */}
-                  <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-                        Quality / Resolution
-                      </p>
-                      <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
-                        {selectedQuality}
-                      </span>
-                    </div>
-                    <div className="space-y-1">
-                      {availableQualities.map((q) => (
-                        <button
-                          key={q.quality}
-                          onClick={() => handleQualitySelect(q.quality, q.isLocked)}
-                          className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-left text-xs transition active:scale-95 ${
-                            selectedQuality === q.quality
-                              ? 'bg-indigo-600 text-white font-bold shadow'
-                              : 'hover:bg-slate-800 text-slate-200'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2">
-                            {selectedQuality === q.quality && (
-                              <Check size={12} className="text-white shrink-0" />
-                            )}
-                            <span>{q.label}</span>
-                          </div>
-                          {q.isLocked && <Lock size={12} className="text-amber-400 shrink-0" />}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Playback Speed Section */}
-                  <div className="pt-2 border-t border-slate-800">
-                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">
-                      Playback Speed
-                    </p>
-                    <div className="grid grid-cols-4 gap-1">
-                      {[0.75, 1, 1.25, 1.5].map((speed) => (
-                        <button
-                          key={speed}
-                          onClick={() => handleSpeedChange(speed)}
-                          className={`py-1 rounded-lg text-center text-xs font-bold transition active:scale-90 ${
-                            playbackRate === speed
-                              ? 'bg-indigo-600 text-white shadow'
-                              : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300'
-                          }`}
-                        >
-                          {speed}x
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Loop Video Option */}
-                  <div className="pt-2 border-t border-slate-800">
-                    <button
-                      onClick={handleLoopToggle}
-                      className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition active:scale-95 ${
-                        isLooping
-                          ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40'
-                          : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Repeat size={13} className={isLooping ? 'text-indigo-400' : 'text-slate-400'} />
-                        <span>Loop Video</span>
-                      </div>
-                      <span className="text-[10px] uppercase font-black">{isLooping ? 'ON' : 'OFF'}</span>
-                    </button>
-                  </div>
-
-                  {/* Offline Save inside App Option */}
-                  <div className="pt-2 border-t border-slate-800">
-                    {isDownloaded ? (
-                      <div className="flex items-center justify-between px-2.5 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold">
-                        <span className="flex items-center gap-1.5">
-                          <CheckCircle size={13} /> App Me Saved Hai
-                        </span>
-                        <span className="text-[9px] uppercase font-black bg-emerald-500/20 px-1.5 py-0.5 rounded">
-                          Offline
-                        </span>
-                      </div>
-                    ) : isDownloading ? (
-                      <div className="flex items-center justify-between px-2.5 py-2 rounded-xl bg-indigo-500/20 border border-indigo-500/40 text-indigo-200 text-xs font-bold animate-pulse">
-                        <span className="flex items-center gap-1.5">
-                          <Download size={13} className="animate-bounce" /> Downloading...
-                        </span>
-                        <span className="text-[10px] font-black">{downloadProgress}%</span>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          setShowSettingsMenu(false);
-                          handleDownload();
-                        }}
-                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition active:scale-95 shadow ${
-                          isUltraUser
-                            ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:brightness-110'
-                            : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
-                        }`}
-                      >
-                        <span className="flex items-center gap-1.5">
-                          {isUltraUser ? <Download size={13} /> : <Crown size={13} />}
-                          <span>Save Inside App</span>
-                        </span>
-                        <span className="text-[9px] uppercase font-black px-1.5 py-0.5 rounded bg-black/30">
-                          {isUltraUser ? 'Offline' : 'Ultra'}
-                        </span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Bottom Fullscreen Button */}
+            {/* NSTA Logo Button (Fixed in bottom bar where 3-dot button was; never moves to top on rotate) */}
             <button
-              onClick={handleFullscreenClick}
-              className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition active:scale-90"
-              title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen (Top bar hide hoga)'}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleNstaLogoClick();
+              }}
+              title={
+                isTopBarHidden
+                  ? 'Top Bar Dikhayein (Tap to show top bar)'
+                  : 'NSTA Logo • Tap karein to Top Bar hide/show hoga'
+              }
+              aria-label="Toggle Top Bar"
+              className={`select-none flex items-center gap-1.5 px-2.5 py-1 rounded-full backdrop-blur-md transition-all duration-200 cursor-pointer hover:opacity-100 hover:scale-105 active:scale-95 shadow-lg ${
+                isTopBarHidden ? 'ring-2 ring-indigo-400/60 shadow-indigo-500/30' : ''
+              }`}
+              style={{
+                background: isTopBarHidden ? 'rgba(30, 27, 75, 0.92)' : 'rgba(15, 23, 42, 0.85)',
+                border: isTopBarHidden
+                  ? '1px solid rgba(165, 180, 252, 0.5)'
+                  : '1px solid rgba(255, 255, 255, 0.25)',
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.45)',
+              }}
             >
-              {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
+              <img
+                src={appLogo || '/branding/nsta-logo.png'}
+                alt={appName || 'NSTA'}
+                className="w-4 h-4 object-contain rounded-full shadow-sm shrink-0"
+                onError={(e) => {
+                  (e.currentTarget as HTMLElement).style.display = 'none';
+                }}
+              />
+              <span className="text-[10px] font-black tracking-wider text-white drop-shadow-md uppercase whitespace-nowrap">
+                {appName || 'NSTA'}
+              </span>
             </button>
           </div>
         </div>

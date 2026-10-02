@@ -1,6 +1,6 @@
 {
-  "name": "Remix Remix Remix Remix nsta",
-  "description": "Imported from GitHub",
+  "name": "NSTA - National Study & Tracking App",
+  "description": "Comprehensive learning platform with syllabus, notes, audio studio, MCQs, and student progress tracking.",
   "capabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]

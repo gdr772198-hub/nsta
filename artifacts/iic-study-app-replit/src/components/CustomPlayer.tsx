@@ -227,7 +227,7 @@ export const CustomPlayer: React.FC<CustomPlayerProps> = ({
             onContextMenu={blockMenu}
         >
             {/* ── Official Corner App Logo Watermark ── */}
-            <PlayerWatermark position="top-right" />
+            <PlayerWatermark position="bottom-right" />
 
             {/* ── iframe or direct video ── */}
             <div style={iframeWrapStyle} onClick={isDirectVideo ? showTopBar : undefined}>
