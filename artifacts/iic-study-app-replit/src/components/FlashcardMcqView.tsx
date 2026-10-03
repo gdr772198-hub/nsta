@@ -2208,7 +2208,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
                     showEliminateTool={showEliminateTool}
                     onSelect={handleProjectorOptionSelect}
                     actionsBelow={
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         {isAdmin && (
                           <button
                             type="button"
@@ -2217,7 +2217,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
                               setAdminEditingImageQIdx(projectorQIndex);
                             }}
                             title={pq?.imageUrl ? "Photo Badlein / Resize Karein (Admin)" : "Photo Jodein (Admin - Direct Telegram Cloud)"}
-                            className="px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 active:scale-95 transition-all text-xs cursor-pointer shadow-xs"
+                            className="px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-xl font-bold flex items-center gap-1.5 active:scale-95 transition-all text-xs cursor-pointer shadow-xs"
                             style={{
                               border: `1.5px solid ${pq?.imageUrl ? '#10b981' : pillBorder}`,
                               background: pq?.imageUrl ? 'rgba(16,185,129,0.18)' : pillBg,
@@ -2244,9 +2244,9 @@ export const FlashcardMcqView: React.FC<Props> = ({
                           }}
                           title={speaking ? 'Stop Speaking' : 'Read Question Aloud (Hindi/English)'}
                           aria-label="Read Question Aloud"
-                          className="px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 active:scale-95 transition-all text-xs cursor-pointer shadow-xs"
+                          className="px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-xl font-bold flex items-center gap-1.5 active:scale-95 transition-all text-xs cursor-pointer shadow-xs"
                           style={{
-                            border: `1px solid ${pillBorder}`,
+                            border: `1px solid ${speaking ? '#fca5a5' : pillBorder}`,
                             background: speaking ? '#fee2e2' : pillBg,
                             color: speaking ? '#ef4444' : pillText,
                           }}
@@ -2254,7 +2254,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
                           {speaking ? (
                             <>
                               <Square size={13} style={{ fill: 'currentColor' } as React.CSSProperties} />
-                              <span>Stop Speech</span>
+                              <span>Stop</span>
                             </>
                           ) : (
                             <>

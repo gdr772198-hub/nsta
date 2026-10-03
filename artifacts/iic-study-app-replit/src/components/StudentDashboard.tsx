@@ -778,6 +778,20 @@ export const StudentDashboard: React.FC<Props> = ({
     return () => window.removeEventListener('nst-dark-theme-change', handler);
   }, []);
 
+  // Safe settings updater to prevent 'setSettings is not defined' crashes during inline edit / admin page edit
+  const setSettings = useCallback((updater: any) => {
+    try {
+      if (typeof updater === 'function') {
+        const updated = updater(settings || {});
+        if (updated && onUpdateSettings) onUpdateSettings(updated);
+      } else if (updater && onUpdateSettings) {
+        onUpdateSettings(updater);
+      }
+    } catch (e) {
+      console.error('[StudentDashboard] setSettings helper error:', e);
+    }
+  }, [settings, onUpdateSettings]);
+
   const [levelAnimOff, setLevelAnimOff] = useState(() => {
     try { return localStorage.getItem('nst_level_anim_off') === '1'; } catch { return false; }
   });
@@ -4439,9 +4453,11 @@ export const StudentDashboard: React.FC<Props> = ({
   useEffect(() => {
     const newId = lucentNoteViewer?.id ?? null;
     if (newId !== null && newId !== prevLucentIdRef.current) {
-      // New viewer opened — reset TTS accumulator and session score baseline
+      // New viewer opened — reset TTS accumulator and session score baseline, and ensure UI is visible
       lucentTtsSessionPtsRef.current = 0;
       setLucentOpenScore(user?.totalScore || 0);
+      setIsLandscapeUiHidden(false);
+      setIsTopBarHidden(false);
     }
     if (newId === null && prevLucentIdRef.current !== null) {
       // Viewer just closed — show TTS summary if anything was earned
@@ -5061,9 +5077,90 @@ export const StudentDashboard: React.FC<Props> = ({
     source?: StarredNoteSource;
   };
   const [starredNotes, setStarredNotes] = useState<StarredNote[]>(() => {
-    try { return JSON.parse(localStorage.getItem('nst_starred_notes_v1') || '[]'); } catch { return []; }
+    try {
+      const list1 = JSON.parse(localStorage.getItem('nst_starred_notes_v1') || '[]');
+      const list2 = JSON.parse(localStorage.getItem('nst_starred_notes') || '[]');
+      const offlineItems = JSON.parse(localStorage.getItem('nst_offline_items') || '[]');
+      const offlineNotes: StarredNote[] = (offlineItems || [])
+        .filter((item: any) => item.type === 'NOTE')
+        .map((item: any) => ({
+          noteKey: item.id || `offline_${item.title}`,
+          topicText: item.title + (item.subtitle ? ` (${item.subtitle})` : '') + (item.data?.theory ? `\n${item.data.theory.slice(0, 300)}` : ''),
+          savedAt: new Date(item.savedAt || Date.now()).toISOString(),
+          source: {
+            lessonTitle: item.title,
+            subject: item.subtitle,
+          }
+        }));
+      const combined = [...list1];
+      for (const item of [...list2, ...offlineNotes]) {
+        const key = item.noteKey || item.id;
+        const text = item.topicText || item.content || item.title;
+        if (!combined.some((c: any) => (c.noteKey && c.noteKey === key) || (c.topicText && c.topicText === text))) {
+          combined.push({
+            noteKey: key || `starred_${Date.now()}`,
+            topicText: text,
+            savedAt: item.savedAt || new Date().toISOString(),
+            source: item.source || {
+              lessonTitle: item.title || item.subjectName,
+              subject: item.subjectName || item.subtitle,
+            }
+          });
+        }
+      }
+      return combined;
+    } catch { return []; }
   });
   const [showStarredPage, setShowStarredPage] = useState(false);
+
+  // Sync starred notes whenever the page is opened or updated across components
+  useEffect(() => {
+    const refreshStarredNotes = () => {
+      try {
+        const list1 = JSON.parse(localStorage.getItem('nst_starred_notes_v1') || '[]');
+        const list2 = JSON.parse(localStorage.getItem('nst_starred_notes') || '[]');
+        const offlineItems = JSON.parse(localStorage.getItem('nst_offline_items') || '[]');
+        const offlineNotes: StarredNote[] = (offlineItems || [])
+          .filter((item: any) => item.type === 'NOTE')
+          .map((item: any) => ({
+            noteKey: item.id || `offline_${item.title}`,
+            topicText: item.title + (item.subtitle ? ` (${item.subtitle})` : '') + (item.data?.theory ? `\n${item.data.theory.slice(0, 300)}` : ''),
+            savedAt: new Date(item.savedAt || Date.now()).toISOString(),
+            source: {
+              lessonTitle: item.title,
+              subject: item.subtitle,
+            }
+          }));
+        const combined = [...list1];
+        for (const item of [...list2, ...offlineNotes]) {
+          const key = item.noteKey || item.id;
+          const text = item.topicText || item.content || item.title;
+          if (!combined.some((c: any) => (c.noteKey && c.noteKey === key) || (c.topicText && c.topicText === text))) {
+            combined.push({
+              noteKey: key || `starred_${Date.now()}`,
+              topicText: text,
+              savedAt: item.savedAt || new Date().toISOString(),
+              source: item.source || {
+                lessonTitle: item.title || item.subjectName,
+                subject: item.subjectName || item.subtitle,
+              }
+            });
+          }
+        }
+        setStarredNotes(combined);
+      } catch {}
+    };
+    if (showStarredPage) {
+      refreshStarredNotes();
+    }
+    window.addEventListener('storage', refreshStarredNotes);
+    window.addEventListener('nst_notes_updated', refreshStarredNotes);
+    return () => {
+      window.removeEventListener('storage', refreshStarredNotes);
+      window.removeEventListener('nst_notes_updated', refreshStarredNotes);
+    };
+  }, [showStarredPage]);
+
   const [showRevisionHubScreen, setShowRevisionHubScreen] = useState(false);
   const [showUpdatesPage, setShowUpdatesPage] = useState(false);
   const [forceShowBottomNav, setForceShowBottomNav] = useState(true);
@@ -5463,10 +5560,15 @@ export const StudentDashboard: React.FC<Props> = ({
           const imgHtml = `\n<figure style="text-align:center; margin:16px auto; display:block;"><img src="${res.url}" alt="${cleanCaption || 'Notes Photo'}" style="max-width:100%; border-radius:12px; margin:0 auto; box-shadow:0 2px 8px rgba(0,0,0,0.08);" />${figCaption}</figure>\n`;
           setInlineEditPointDraft(`${before}${imgHtml}${after}`);
         } else {
-          // Chunk mode: insert photo markdown
-          // The words before cursor stay on top, the photo is added, and whatever follows is placed below!
-          const imgMd = `\n\n![${cleanCaption}](${res.url})\n\n`;
-          setInlineEditPointDraft(`${before.trimEnd()}${imgMd}${after.trimStart()}`);
+          // Chunk mode: insert photo markdown cleanly
+          const imgMd = `![${cleanCaption || 'Notes Photo'}](${res.url})`;
+          if (!inlineEditPointDraft.trim()) {
+            setInlineEditPointDraft(imgMd);
+          } else {
+            const sepBefore = before.trim() ? '\n\n' : '';
+            const sepAfter = after.trim() ? '\n\n' : '';
+            setInlineEditPointDraft(`${before.trimEnd()}${sepBefore}${imgMd}${sepAfter}${after.trimStart()}`);
+          }
         }
         showAlert('✅ Photo Telegram Cloud par upload ho gayi!', 'SUCCESS');
       } else {
@@ -5704,7 +5806,6 @@ export const StudentDashboard: React.FC<Props> = ({
           ...(type === 'hw_html' ? { htmlNotes: joinedText } : { chunkNotes: joinedText }),
         };
         await saveHomeworkEntryDirect(updatedHw);
-        setActiveHw(updatedHw);
         setSettings((prev: any) => {
           if (!prev) return prev;
           const currentList = prev.homework || [];
@@ -7304,7 +7405,10 @@ export const StudentDashboard: React.FC<Props> = ({
         // Already saved → remove it.
         const updated = prev.filter(n => !(n.noteKey === noteKey && n.topicText === topicText));
         didUnstar = true;
-        try { localStorage.setItem('nst_starred_notes_v1', JSON.stringify(updated)); } catch {}
+        try {
+          localStorage.setItem('nst_starred_notes_v1', JSON.stringify(updated));
+          window.dispatchEvent(new Event('nst_notes_updated'));
+        } catch {}
         return updated;
       }
       const updated = [
@@ -7318,7 +7422,10 @@ export const StudentDashboard: React.FC<Props> = ({
         },
       ];
       didStar = true;
-      try { localStorage.setItem('nst_starred_notes_v1', JSON.stringify(updated)); } catch {}
+      try {
+        localStorage.setItem('nst_starred_notes_v1', JSON.stringify(updated));
+        window.dispatchEvent(new Event('nst_notes_updated'));
+      } catch {}
       return updated;
     });
     if (didStar) {
@@ -8618,10 +8725,32 @@ export const StudentDashboard: React.FC<Props> = ({
     lucentCat: boolean;
   }>>([]);
 
+  const isPoppingNavRef = useRef(false);
+  const prevActiveTabRef = useRef(activeTab);
+  const lastExitPressRef = useRef<number>(0);
+
   const navStateRef = useRef({
     activeTab,
     contentViewStep,
-    // overlays — ordered from topmost to bottommost z-layer
+    // overlays & modals — ordered from topmost to bottommost z-layer
+    showGroupStudyModal:  !!showGroupStudyModal,
+    showWhatsAppChatModal: !!showWhatsAppChatModal,
+    showCameraModal:      !!showCameraModal,
+    showLevelModal:       !!showLevelModal,
+    showAiModal:          !!showAiModal,
+    showDemandModal:      !!showDemandModal,
+    showRequestModal:     !!showRequestModal,
+    showAdminLucentMediaModal: !!showAdminLucentMediaModal,
+    showCommunityStarsPage: !!showCommunityStarsPage,
+    showContentCodeModal: !!showContentCodeModal,
+    showDownloadsHub:     !!showDownloadsHub,
+    showFeatureLimitsModal: !!showFeatureLimitsModal,
+    showNameChangeModal:  !!showNameChangeModal,
+    showNotesFixTrackerModal: !!showNotesFixTrackerModal,
+    showPedroVipExpiryModal: !!showPedroVipExpiryModal,
+    showRecoveryModal:    !!showRecoveryModal,
+    showStudyModeModal:   !!showStudyModeModal,
+    showSubDetailsModal:  !!showSubDetailsModal,
     lucentNoteViewer:    !!lucentNoteViewer,
     lucentPageListViewer: !!lucentPageListViewer,
     lucentPageIndex,
@@ -8647,6 +8776,8 @@ export const StudentDashboard: React.FC<Props> = ({
     showInbox,
     showRevisionHubScreen,
     showUpdatesPage,
+    flashcardMcqs:       !!flashcardMcqs,
+    compMcqSession:      !!compMcqSession,
     // content-tree state
     initialParentSubject,
     homeworkSubjectView,
@@ -8654,14 +8785,28 @@ export const StudentDashboard: React.FC<Props> = ({
     lucentCategoryView,
     activeSessionClass,
   });
-  // Update navStateRef synchronously during render so the popstate handler
-  // always sees fresh state even when the user presses back rapidly (before
-  // the next useEffect run). React allows ref writes during render — they
-  // don't cause re-renders and are safe as long as you don't read the ref
-  // during the same render's output (we only read in event handlers).
+
   navStateRef.current = {
     activeTab,
     contentViewStep,
+    showGroupStudyModal:  !!showGroupStudyModal,
+    showWhatsAppChatModal: !!showWhatsAppChatModal,
+    showCameraModal:      !!showCameraModal,
+    showLevelModal:       !!showLevelModal,
+    showAiModal:          !!showAiModal,
+    showDemandModal:      !!showDemandModal,
+    showRequestModal:     !!showRequestModal,
+    showAdminLucentMediaModal: !!showAdminLucentMediaModal,
+    showCommunityStarsPage: !!showCommunityStarsPage,
+    showContentCodeModal: !!showContentCodeModal,
+    showDownloadsHub:     !!showDownloadsHub,
+    showFeatureLimitsModal: !!showFeatureLimitsModal,
+    showNameChangeModal:  !!showNameChangeModal,
+    showNotesFixTrackerModal: !!showNotesFixTrackerModal,
+    showPedroVipExpiryModal: !!showPedroVipExpiryModal,
+    showRecoveryModal:    !!showRecoveryModal,
+    showStudyModeModal:   !!showStudyModeModal,
+    showSubDetailsModal:  !!showSubDetailsModal,
     lucentNoteViewer:    !!lucentNoteViewer,
     lucentPageListViewer: !!lucentPageListViewer,
     lucentPageIndex,
@@ -8687,6 +8832,8 @@ export const StudentDashboard: React.FC<Props> = ({
     showInbox,
     showRevisionHubScreen,
     showUpdatesPage,
+    flashcardMcqs:       !!flashcardMcqs,
+    compMcqSession:      !!compMcqSession,
     initialParentSubject,
     homeworkSubjectView,
     class612SubjectView: !!class612SubjectView,
@@ -8695,6 +8842,35 @@ export const StudentDashboard: React.FC<Props> = ({
   };
   // Keep lucentViewerRef in sync (navStateRef only holds the boolean, not the object).
   lucentViewerRef.current = lucentNoteViewer;
+
+  // Track tab navigation across the dashboard automatically
+  useEffect(() => {
+    if (isPoppingNavRef.current) {
+      isPoppingNavRef.current = false;
+      prevActiveTabRef.current = activeTab;
+      return;
+    }
+    if (prevActiveTabRef.current !== activeTab) {
+      const prev = prevActiveTabRef.current;
+      prevActiveTabRef.current = activeTab;
+      const history = navTabHistory.current;
+      const last = history[history.length - 1];
+      if (!last || last.tab !== prev) {
+        history.push({
+          tab: prev,
+          lucentViewer: lucentViewerRef.current,
+          lucentPageIdx: navStateRef.current.lucentPageIndex,
+          lucentCat: navStateRef.current.lucentCategoryView,
+        });
+        if (history.length > 30) {
+          history.shift();
+        }
+        try {
+          window.history.pushState({ __nstTrap: true }, "");
+        } catch {}
+      }
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     // Push an initial trap entry so the first back press is captured.
@@ -8723,6 +8899,24 @@ export const StudentDashboard: React.FC<Props> = ({
       const isAtRoot =
         s.activeTab === 'HOME' &&
         navTabHistory.current.length === 0 &&
+        !s.showGroupStudyModal &&
+        !s.showWhatsAppChatModal &&
+        !s.showCameraModal &&
+        !s.showLevelModal &&
+        !s.showAiModal &&
+        !s.showDemandModal &&
+        !s.showRequestModal &&
+        !s.showAdminLucentMediaModal &&
+        !s.showCommunityStarsPage &&
+        !s.showContentCodeModal &&
+        !s.showDownloadsHub &&
+        !s.showFeatureLimitsModal &&
+        !s.showNameChangeModal &&
+        !s.showNotesFixTrackerModal &&
+        !s.showPedroVipExpiryModal &&
+        !s.showRecoveryModal &&
+        !s.showStudyModeModal &&
+        !s.showSubDetailsModal &&
         !s.lucentNoteViewer &&
         !s.lucentPageListViewer &&
         !s.hwActiveHwId &&
@@ -8732,6 +8926,7 @@ export const StudentDashboard: React.FC<Props> = ({
         !s.showStarredPage &&
         !s.showCompMcqHub &&
         !s.showMistakePractice &&
+        !s.showDailyEventPage &&
         !s.showRulesPage &&
         !s.showAllNotesCatalog &&
         !s.showTopicDirectory &&
@@ -8747,11 +8942,42 @@ export const StudentDashboard: React.FC<Props> = ({
         !s.showRevisionHubScreen &&
         !s.showUpdatesPage &&
         !s.flashcardMcqs &&
-        !s.compMcqSession;
+        !s.compMcqSession &&
+        !s.activeSessionClass;
 
-      if (!isAtRoot) {
+      if (isAtRoot) {
+        const now = Date.now();
+        if (now - lastExitPressRef.current < 2000) {
+          return;
+        }
+        lastExitPressRef.current = now;
         reTrap();
+        showAlert("App से बाहर निकलने के लिए एक बार और Back दबाएं (Press back again to exit)", "INFO");
+        try { hapticMedium(); } catch {}
+        return;
       }
+
+      reTrap();
+
+      // 0. Close Modals & Dialogs first
+      if (s.showGroupStudyModal)        { setShowGroupStudyModal(false); return; }
+      if (s.showWhatsAppChatModal)      { setShowWhatsAppChatModal(false); return; }
+      if (s.showCameraModal)            { setShowCameraModal(false); return; }
+      if (s.showLevelModal)             { setShowLevelModal(false); return; }
+      if (s.showAiModal)                { setShowAiModal(false); return; }
+      if (s.showDemandModal)            { setShowDemandModal(false); return; }
+      if (s.showRequestModal)           { setShowRequestModal(false); return; }
+      if (s.showAdminLucentMediaModal)  { setShowAdminLucentMediaModal(false); return; }
+      if (s.showCommunityStarsPage)     { setShowCommunityStarsPage(false); return; }
+      if (s.showContentCodeModal)       { setShowContentCodeModal(false); return; }
+      if (s.showDownloadsHub)           { setShowDownloadsHub(false); return; }
+      if (s.showFeatureLimitsModal)     { setShowFeatureLimitsModal(false); return; }
+      if (s.showNameChangeModal)        { setShowNameChangeModal(false); return; }
+      if (s.showNotesFixTrackerModal)   { setShowNotesFixTrackerModal(false); return; }
+      if (s.showPedroVipExpiryModal)    { setShowPedroVipExpiryModal(false); return; }
+      if (s.showRecoveryModal)          { setShowRecoveryModal(false); return; }
+      if (s.showStudyModeModal)         { setShowStudyModeModal(false); return; }
+      if (s.showSubDetailsModal)        { setShowSubDetailsModal(false); return; }
       // ───────────────────────────────────────────────────────────────────────
 
       // 1. Close full-screen overlays one at a time (topmost first).
@@ -8855,19 +9081,23 @@ export const StudentDashboard: React.FC<Props> = ({
           setHomeworkSubjectView(null);
         } else if (s.lucentCategoryView) {
           setLucentCategoryView(false);
+        } else if (s.activeSessionClass) {
+          // Step back from class-specific subjects to class selection screen
+          setActiveSessionClass(null);
         } else {
           // SUBJECTS root → retrace tab history step-by-step, or fall back to HOME.
-          // Drain stale entries where we're already on that tab (avoids no-op loops).
           while (navTabHistory.current.length > 0 && navTabHistory.current[navTabHistory.current.length - 1].tab === 'COURSES') {
             navTabHistory.current.pop();
           }
           if (navTabHistory.current.length > 0) {
             const _prev = navTabHistory.current.pop()!;
+            isPoppingNavRef.current = true;
             onTabChange(_prev.tab as any);
             if (_prev.lucentViewer) { setLucentNoteViewer(_prev.lucentViewer); setLucentPageIndex(_prev.lucentPageIdx); }
             if (_prev.lucentCat) setLucentCategoryView(true);
           } else {
             setActiveSessionClass(null);
+            isPoppingNavRef.current = true;
             onTabChange("HOME");
           }
         }
@@ -8877,16 +9107,17 @@ export const StudentDashboard: React.FC<Props> = ({
       // 4. Any other non-home tab (HISTORY / PROFILE / UPDATES / etc.)
       //    → retrace tab history step-by-step, or fall back to HOME.
       if (s.activeTab !== "HOME") {
-        // Drain stale same-tab entries first.
         while (navTabHistory.current.length > 0 && navTabHistory.current[navTabHistory.current.length - 1].tab === s.activeTab) {
           navTabHistory.current.pop();
         }
         if (navTabHistory.current.length > 0) {
           const _prev = navTabHistory.current.pop()!;
+          isPoppingNavRef.current = true;
           onTabChange(_prev.tab as any);
           if (_prev.lucentViewer) { setLucentNoteViewer(_prev.lucentViewer); setLucentPageIndex(_prev.lucentPageIdx); }
           if (_prev.lucentCat) setLucentCategoryView(true);
         } else {
+          isPoppingNavRef.current = true;
           onTabChange("HOME");
         }
         return;
@@ -22301,6 +22532,9 @@ export const StudentDashboard: React.FC<Props> = ({
                           hideTopBar={isLandscapeUiHidden}
                           isAdmin={user.role === 'ADMIN' || user.role === 'SUB_ADMIN'}
                           isAdminImportant={isTopicAdminImportant}
+                          noteKey={`lesson_${lce.id}`}
+                          isStarred={(text) => isNoteTopicStarred(`lesson_${lce.id}`, text)}
+                          onStarToggle={(text) => toggleStarNote(`lesson_${lce.id}`, text, { kind: 'lucent', lessonTitle: lce.lessonTitle, subject: selectedSubject?.name })}
                           language="hi-IN"
                           onOpenGroupStudy={isCreateStudyRoomHidden ? undefined : () => handleOpenGroupStudyForContext({
                             contentType: 'READING_NOTES',
@@ -25772,11 +26006,13 @@ export const StudentDashboard: React.FC<Props> = ({
                       }
                     }}
                     noteKey={`lucent_${entry.id}_p${safeIndex}`}
-                    isStarred={(text) => _isAdminUser ? isTopicAdminImportant(text) : isNoteTopicStarred(`lucent_${entry.id}_p${safeIndex}`, text)}
-                    onStarToggle={(text) => _isAdminUser
-                      ? toggleAdminImportant(`lucent_${entry.id}_p${safeIndex}`, text, { kind: 'lucent', lucentId: entry.id, pageIndex: safeIndex, pageNo: currentPage?.pageNo, lessonTitle: entry.lessonTitle, subject: entry.subject })
-                      : toggleStarNote(`lucent_${entry.id}_p${safeIndex}`, text, { kind: 'lucent', lucentId: entry.id, pageIndex: safeIndex, pageNo: currentPage?.pageNo, lessonTitle: entry.lessonTitle, subject: entry.subject })
-                    }
+                    isStarred={(text) => isNoteTopicStarred(`lucent_${entry.id}_p${safeIndex}`, text)}
+                    onStarToggle={(text) => {
+                      toggleStarNote(`lucent_${entry.id}_p${safeIndex}`, text, { kind: 'lucent', lucentId: entry.id, pageIndex: safeIndex, pageNo: currentPage?.pageNo, lessonTitle: entry.lessonTitle, subject: entry.subject });
+                      if (_isAdminUser) {
+                        toggleAdminImportant(`lucent_${entry.id}_p${safeIndex}`, text, { kind: 'lucent', lucentId: entry.id, pageIndex: safeIndex, pageNo: currentPage?.pageNo, lessonTitle: entry.lessonTitle, subject: entry.subject });
+                      }
+                    }}
                     isAdminImportant={isTopicAdminImportant}
                     sourceMeta={{ lessonTitle: entry.lessonTitle, pageNo: currentPage?.pageNo, subject: entry.subject, classLevel: (entry as any).classLevel }}
                     readingScoreConfig={user?.id ? {
@@ -32435,15 +32671,30 @@ Explanation: Yahan explanation...`}</p>
                             </div>
                           </div>
                         ) : (
-                          /* ── Display this block (stripped preview) ── */
+                          /* ── Display this block (stripped preview + photo badge) ── */
                           <div className="flex items-start gap-2 px-4 py-3 group">
-                            <span className={`flex-1 text-[13px] leading-snug ${
-                              isHeading
-                                ? 'font-black text-violet-800 text-[14px]'
-                                : 'font-medium text-slate-700'
-                            }`}>
-                              {preview || <span className="text-slate-300 italic text-[11px]">empty block</span>}
-                            </span>
+                            <div className="flex-1 flex flex-col gap-1.5">
+                              <span className={`text-[13px] leading-snug ${
+                                isHeading
+                                  ? 'font-black text-violet-800 text-[14px]'
+                                  : 'font-medium text-slate-700'
+                              }`}>
+                                {preview || <span className="text-slate-300 italic text-[11px]">empty block</span>}
+                              </span>
+                              {(() => {
+                                const imgMatch = block.match(/<img[^>]+src=["']([^"']+)["']/i) || block.match(/!\[(.*?)\]\((https?:\/\/[^\s)]+)\)/);
+                                if (imgMatch) {
+                                  const imgUrl = imgMatch[1].startsWith('http') ? imgMatch[1] : (imgMatch[2] || imgMatch[1]);
+                                  return (
+                                    <div className="inline-flex items-center gap-2 p-1.5 bg-violet-50/80 border border-violet-200 rounded-xl max-w-sm">
+                                      <img src={imgUrl} alt="Photo" className="w-12 h-12 object-cover rounded-lg border border-violet-100 bg-white" />
+                                      <span className="text-[11px] font-bold text-violet-700">📷 Photo Added</span>
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              })()}
+                            </div>
                             <button
                               onClick={() => { setInlineEditPointIdx(idx); setInlineEditPointDraft(block); }}
                               className="p-1.5 rounded-lg bg-slate-50 hover:bg-violet-50 text-slate-400 hover:text-violet-600 active:scale-90 transition-all shrink-0"
@@ -32555,15 +32806,43 @@ Explanation: Yahan explanation...`}</p>
                         ) : (
                           /* ── Display this point ── */
                           <div className="flex items-start gap-2 px-4 py-3 group">
-                            <span className={`flex-1 text-[13px] leading-snug ${
-                              isHeading
-                                ? 'font-black text-indigo-800 text-[14px]'
-                                : 'font-medium text-slate-700'
-                            }`}>
-                              {isHeading
-                                ? point.replace(/^#{1,6}\s+/, '').replace(/^\*\*|\*\*$/g, '')
-                                : point.replace(/^[*\-•]\s+/, '')}
-                            </span>
+                            <div className="flex-1 flex flex-col gap-1.5">
+                              {(() => {
+                                const imgMatch = point.match(/!\[(.*?)\]\((https?:\/\/[^\s)]+)\)/);
+                                if (imgMatch) {
+                                  const caption = imgMatch[1];
+                                  const imgUrl = imgMatch[2];
+                                  const remainingText = point.replace(imgMatch[0], '').trim();
+                                  return (
+                                    <div className="flex flex-col gap-1.5">
+                                      {remainingText && (
+                                        <span className={`text-[13px] leading-snug ${
+                                          isHeading ? 'font-black text-indigo-800 text-[14px]' : 'font-medium text-slate-700'
+                                        }`}>
+                                          {isHeading ? remainingText.replace(/^#{1,6}\s+/, '').replace(/^\*\*|\*\*$/g, '') : remainingText.replace(/^[*\-•]\s+/, '')}
+                                        </span>
+                                      )}
+                                      <div className="inline-flex items-center gap-2.5 p-2 bg-indigo-50/80 border border-indigo-200 rounded-xl max-w-sm">
+                                        <img src={imgUrl} alt={caption || 'Photo'} className="w-12 h-12 object-cover rounded-lg border border-indigo-100 bg-white shrink-0" />
+                                        <div className="flex flex-col min-w-0">
+                                          <span className="text-[12px] font-black text-indigo-900 truncate">📷 {caption || 'Photo Note'}</span>
+                                          <span className="text-[10px] text-indigo-600 font-medium">Image attached</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                return (
+                                  <span className={`text-[13px] leading-snug ${
+                                    isHeading ? 'font-black text-indigo-800 text-[14px]' : 'font-medium text-slate-700'
+                                  }`}>
+                                    {isHeading
+                                      ? point.replace(/^#{1,6}\s+/, '').replace(/^\*\*|\*\*$/g, '')
+                                      : point.replace(/^[*\-•]\s+/, '')}
+                                  </span>
+                                );
+                              })()}
+                            </div>
                             <button
                               onClick={() => { setInlineEditPointIdx(idx); setInlineEditPointDraft(point); }}
                               className="p-1.5 rounded-lg bg-slate-50 hover:bg-indigo-50 text-slate-400 hover:text-indigo-600 active:scale-90 transition-all shrink-0"

@@ -3,7 +3,8 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom';
 import { Volume2, Square, BookOpen, Star, Palette, Check, Type, RotateCcw, Search, Monitor, X, LayoutGrid, MoreVertical, ChevronRight, WifiOff, Flame, Lightbulb, Pencil, Presentation, Copy, Users } from 'lucide-react';
 import { AdminWhiteBoard } from './AdminWhiteBoard';
-import { rotateScreen, isDesktopModeOn, setDesktopMode } from '../utils/displayPrefs';
+import { rotateScreen, isDesktopModeOn, setDesktopMode, exitFullscreenSafe } from '../utils/displayPrefs';
+import { resolveTelegramUrl } from '../services/telegramStorageService';
 import { saveSuggestion, auth, findDuplicateSuggestionByPoint, incrementSuggestionReportCount, updateSuggestionLeaderboard } from '../firebase';
 import { FREE_DAILY_FIX_LIMIT, getFreeDailyFixUsedCount, getFreeDailyFixRemaining, incrementFreeDailyFixCount } from '../utils/freeFixLimit';
 import { speakText, stopSpeech } from '../utils/textToSpeech';
@@ -279,12 +280,13 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
       return `\x00M${saved.length - 1}\x00`;
     });
     r = r
-      .replace(/!\[(.*?)\]\((.*?)\)/g, (_, alt, url) => {
+      .replace(/!\[([\s\S]*?)\]\(([\s\S]*?)\)/g, (_, alt, url) => {
         const titleText = (alt || '').trim();
+        const resolvedSrc = resolveTelegramUrl(url.trim());
         const captionHtml = titleText
           ? `<figcaption class="text-[12px] font-bold text-slate-500 dark:text-slate-400 mt-1.5 text-center select-none">${titleText}</figcaption>`
           : '';
-        return `<figure class="my-3 text-center select-none inline-block max-w-full"><img src="${url.trim()}" alt="${titleText || 'Notes Picture'}" class="max-w-full h-auto rounded-xl mx-auto border border-slate-200/80 dark:border-slate-700 shadow-xs max-h-[420px] object-contain" loading="lazy" />${captionHtml}</figure>`;
+        return `<figure class="my-3 text-center select-none inline-block max-w-full"><img src="${resolvedSrc}" alt="${titleText || 'Notes Picture'}" class="max-w-full h-auto rounded-xl mx-auto border border-slate-200/80 dark:border-slate-700 shadow-xs max-h-[420px] object-contain" loading="lazy" onerror="this.style.display='none'" />${captionHtml}</figure>`;
       })
       .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
@@ -869,7 +871,12 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
     };
   }, [showScoreInfo, showReadingActiveInfo, showControls]);
 
-  // Re-apply desktop mode on orientation/resize changes so it survives rotation
+  // Dismiss any lingering browser fullscreen on notes mount to avoid system notification banner
+  useEffect(() => {
+    exitFullscreenSafe();
+  }, []);
+
+  // Re-apply desktop mode on orientation change only (NOT on every resize)
   useEffect(() => {
     const reapply = () => {
       setTimeout(() => {
@@ -879,10 +886,8 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
       }, 400);
     };
     window.addEventListener('orientationchange', reapply);
-    window.addEventListener('resize', reapply);
     return () => {
       window.removeEventListener('orientationchange', reapply);
-      window.removeEventListener('resize', reapply);
     };
   }, []);
 
@@ -2401,7 +2406,7 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                     fontFamily: activeFont?.family,
                   }}
                 >
-                  {!/^\s*!\[.*?\]\(.*?\)\s*$/.test(topic.text) && !/^\s*<(?:img|figure)\b/i.test(topic.text) && (
+                  {!/!\[.*?\]\(.*?\)/.test(topic.text) && !/<(?:img|figure)\b/i.test(topic.text) && (
                     <span className={`font-bold mr-1.5 ${starred ? 'text-amber-400' : 'text-indigo-400'}`}>•</span>
                   )}
                   <span dangerouslySetInnerHTML={{ __html: renderMathInHtml(inlineMd(topic.text)) }} />
@@ -2410,6 +2415,49 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                     "Important / Starred Notes" ke Global tab page par dikhega taa ki
                     reading view clean rahe. */}
               </button>
+
+              {/* ⭐ Visible Star / Save Note button — always easily tappable */}
+              {!isActive && !showSuggestionPanel && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    if (freeStarLocked) {
+                      if (onUpgradeClick) onUpgradeClick();
+                      return;
+                    }
+                    try { if (navigator.vibrate) navigator.vibrate([30, 30, 50]); } catch {}
+                    if (onStarToggle && !(isAdmin && useImportantMark2)) {
+                      onStarToggle(topic.text);
+                    } else if (isAdmin && useImportantMark2 && onMark2Toggle) {
+                      onMark2Toggle(topic.text);
+                    } else {
+                      try {
+                        const raw = localStorage.getItem('nst_starred_notes_v1');
+                        const list = raw ? JSON.parse(raw) : [];
+                        const exists = list.some((n: any) => n.topicText === topic.text);
+                        const updated = exists
+                          ? list.filter((n: any) => n.topicText !== topic.text)
+                          : [...list, { id: Date.now().toString(), noteKey: noteKey || 'reading_note', topicText: topic.text, savedAt: new Date().toISOString() }];
+                        localStorage.setItem('nst_starred_notes_v1', JSON.stringify(updated));
+                        window.dispatchEvent(new Event('nst_notes_updated'));
+                      } catch {}
+                    }
+                  }}
+                  onPointerDown={(e) => { e.stopPropagation(); }}
+                  style={{ width: '28px', height: '28px', padding: 0 }}
+                  className={`absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full inline-flex items-center justify-center transition-all z-20 cursor-pointer ${
+                    starred
+                      ? 'bg-amber-100 text-amber-500 border border-amber-300 shadow-sm opacity-100 scale-105'
+                      : 'text-slate-400 hover:text-amber-500 hover:bg-amber-50 border border-slate-200/60 hover:border-amber-300 opacity-60 sm:opacity-40 group-hover:opacity-100'
+                  }`}
+                  title={starred ? 'Important Notes me saved hai (Tap to remove)' : 'Important Notes me save karein ⭐'}
+                >
+                  <Star size={13} className={starred ? 'fill-amber-400 text-amber-500' : 'text-slate-400 hover:text-amber-500'} />
+                </button>
+              )}
+
               {/* TTS active indicator */}
               {isActive && (
                 <span

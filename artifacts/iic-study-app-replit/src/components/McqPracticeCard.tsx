@@ -71,66 +71,123 @@ const McqPracticeCard: React.FC<Props> = ({
 
   return (
     <div className="space-y-3.5 landscape:space-y-2">
-      <div className={`${questionCardClass} rounded-[22px] transition-colors ${isProjector ? 'p-5 sm:p-7 landscape:p-3 sm:landscape:p-4' : 'p-4 landscape:p-2.5'}`}>
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-2 landscape:mb-1">
-              {number !== undefined && number !== null && (
-                <span className={`${isProjector ? 'text-xl sm:text-2xl landscape:text-lg' : 'text-base'} font-black ${isDark ? 'text-amber-400' : isSepia ? 'text-amber-900' : 'text-slate-800'}`}>
-                  Q{number}.
-                </span>
-              )}
-              {isBookmarked && (
-                <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-300 border border-amber-500/30">
-                  ★ Bookmarked
-                </span>
-              )}
+      <div className={`${questionCardClass} rounded-[22px] transition-colors ${isProjector ? 'p-4 sm:p-6 landscape:p-3 sm:landscape:p-4' : 'p-4 landscape:p-2.5'}`}>
+        {isProjector ? (
+          /* ── PROJECTOR MODE: Row 1 = Question Number + Pic Add + Speaker + Save ── */
+          <div className="flex flex-col gap-2">
+            {/* ROW 1: Q-Number on left, 📷 Pic + 🔊 Speaker + 🔖 Save on right */}
+            <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-200/50 dark:border-slate-800/60 flex-wrap">
+              <div className="flex items-center gap-2">
+                {number !== undefined && number !== null && (
+                  <span className="text-xl sm:text-2xl landscape:text-lg font-black text-amber-500 dark:text-amber-400">
+                    Q{number}.
+                  </span>
+                )}
+                {isBookmarked && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-300 border border-amber-500/30">
+                    ★ Saved
+                  </span>
+                )}
+              </div>
+
+              {/* Row 1 Action Controls: Pic Add, Speaker, Save */}
+              <div className="flex items-center gap-1.5 flex-wrap ml-auto">
+                {actionsBelow}
+                {actions}
+                {onToggleBookmark && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleBookmark();
+                    }}
+                    title={isBookmarked ? 'Saved (Remove bookmark)' : 'Question Save / Bookmark karein'}
+                    aria-label="Save question"
+                    className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-xl border font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-xs active:scale-95 ${
+                      isBookmarked
+                        ? 'bg-amber-500/20 text-amber-600 dark:text-amber-300 border-amber-500/40'
+                        : isDark
+                          ? 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white hover:bg-slate-700'
+                          : isSepia
+                            ? 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
+                            : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
+                    }`}
+                  >
+                    <Bookmark size={14} className={isBookmarked ? 'fill-amber-500 text-amber-500' : ''} />
+                    <span>{isBookmarked ? 'Saved' : 'Save'}</span>
+                  </button>
+                )}
+              </div>
             </div>
-            <div style={fontSize ? { fontSize } : undefined}>
+
+            {/* ROW 2: Question Display — gets full unobstructed space */}
+            <div style={fontSize ? { fontSize } : undefined} className="pt-1">
               <McqQuestionDisplay
                 q={q}
                 questionClassName={
-                  isProjector
-                    ? isDark
-                      ? "font-bold text-slate-100 leading-relaxed tracking-wide landscape:text-sm sm:landscape:text-base"
-                      : isSepia
-                        ? "font-bold text-amber-950 leading-relaxed landscape:text-sm sm:landscape:text-base"
-                        : "font-bold text-slate-900 leading-relaxed landscape:text-sm sm:landscape:text-base"
-                    : "text-[15px] font-bold text-slate-800 leading-relaxed landscape:text-sm"
+                  isDark
+                    ? "font-bold text-slate-100 leading-relaxed tracking-wide landscape:text-sm sm:landscape:text-base"
+                    : isSepia
+                      ? "font-bold text-amber-950 leading-relaxed landscape:text-sm sm:landscape:text-base"
+                      : "font-bold text-slate-900 leading-relaxed landscape:text-sm sm:landscape:text-base"
                 }
               />
             </div>
-            {actionsBelow && (
-              <div className="mt-3 pt-2.5 border-t border-slate-200/50 dark:border-slate-700/50 flex flex-wrap items-center gap-2">
-                {actionsBelow}
+          </div>
+        ) : (
+          /* ── DEFAULT / COMPACT MODE ── */
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-2 landscape:mb-1">
+                {number !== undefined && number !== null && (
+                  <span className="text-base font-black text-slate-800">
+                    Q{number}.
+                  </span>
+                )}
+                {isBookmarked && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-300 border border-amber-500/30">
+                    ★ Bookmarked
+                  </span>
+                )}
               </div>
-            )}
-          </div>
+              <div style={fontSize ? { fontSize } : undefined}>
+                <McqQuestionDisplay
+                  q={q}
+                  questionClassName="text-[15px] font-bold text-slate-800 leading-relaxed landscape:text-sm"
+                />
+              </div>
+              {actionsBelow && (
+                <div className="mt-3 pt-2.5 border-t border-slate-200/50 dark:border-slate-700/50 flex flex-wrap items-center gap-2">
+                  {actionsBelow}
+                </div>
+              )}
+            </div>
 
-          <div className="shrink-0 flex items-center gap-1.5">
-            {onToggleBookmark && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleBookmark();
-                }}
-                title={isBookmarked ? 'Remove bookmark' : 'Bookmark question for review'}
-                aria-label="Bookmark question"
-                className={`p-1.5 rounded-xl border transition-all ${
-                  isBookmarked
-                    ? 'bg-amber-100 text-amber-700 border-amber-300 shadow-xs'
-                    : isDark
-                      ? 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
-                      : 'bg-slate-50 text-slate-400 border-slate-200 hover:text-slate-600'
-                }`}
-              >
-                <Bookmark size={isProjector ? 18 : 15} className={isBookmarked ? 'fill-amber-500 text-amber-600' : ''} />
-              </button>
-            )}
-            {actions}
+            <div className="shrink-0 flex items-center gap-1.5">
+              {onToggleBookmark && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleBookmark();
+                  }}
+                  title={isBookmarked ? 'Remove bookmark' : 'Bookmark question for review'}
+                  aria-label="Bookmark question"
+                  className={`p-1.5 rounded-xl border transition-all ${
+                    isBookmarked
+                      ? 'bg-amber-100 text-amber-700 border-amber-300 shadow-xs'
+                      : isDark
+                        ? 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
+                        : 'bg-slate-50 text-slate-400 border-slate-200 hover:text-slate-600'
+                  }`}
+                >
+                  <Bookmark size={15} className={isBookmarked ? 'fill-amber-500 text-amber-600' : ''} />
+                </button>
+              )}
+              {actions}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* MCQ Options: Row 1 = Option A & B, Row 2 = Option C & D in rotated/landscape & projector mode */}

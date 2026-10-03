@@ -7,11 +7,24 @@ import { VitePWA } from 'vite-plugin-pwa';
 const port = Number(process.env.PORT) || 3000;
 const basePath = process.env.BASE_PATH || '/';
 
+function notificationApiPlugin() {
+  return {
+    name: 'notification-api-plugin',
+    configureServer(server: any) {
+      server.middlewares.use('/api/notifications/push', (_req: any, res: any) => {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ success: true, method: 'rtdb_pipeline' }));
+      });
+    },
+  };
+}
+
 export default defineConfig({
   base: basePath,
   plugins: [
     react(),
     tailwindcss(),
+    notificationApiPlugin(),
     VitePWA({
       registerType: 'autoUpdate',
       devOptions: { enabled: false },

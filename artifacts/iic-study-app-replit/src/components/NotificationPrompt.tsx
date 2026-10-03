@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Bell, X, CheckCircle2, Sparkles } from 'lucide-react';
-import { requestNotificationPermission, subscribeUserToPush } from './NotificationManager';
+import { requestNotificationPermission, subscribeUserToPush, dispatchSmartNotification } from './NotificationManager';
 
 interface Props {
   userId?: string;
@@ -32,6 +32,12 @@ export const NotificationPrompt: React.FC<Props> = ({ userId }) => {
             if (granted) {
                 await subscribeUserToPush(userId);
                 setEnabledSuccess(true);
+                dispatchSmartNotification({
+                    title: '🔔 Notifications Active!',
+                    body: 'Aapko chat messages, friend requests aur study updates ke notifications aayenge.',
+                    category: 'DEFAULT',
+                    url: '/',
+                });
                 setTimeout(() => {
                     setShowPrompt(false);
                 }, 2200);

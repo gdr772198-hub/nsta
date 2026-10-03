@@ -2,7 +2,12 @@
 import { ref, set, get, update, onValue, push, remove } from 'firebase/database';
 import { doc, setDoc, deleteDoc, collection, getDocs, limit, query, onSnapshot, where } from 'firebase/firestore';
 import { rtdb, db } from '../firebase';
-import { notifyDirectMessageInBackground, notifyFriendRequestInBackground } from '../components/NotificationManager';
+import {
+  notifyDirectMessageInBackground,
+  notifyFriendRequestInBackground,
+  notifyFriendAcceptedInBackground,
+  notifyGroupMessageInBackground,
+} from '../components/NotificationManager';
 
 export interface ChatContact {
   id: string;
@@ -451,6 +456,28 @@ export const sendGroupMessage = async (
       lastMessageTime: timestamp,
       lastMessageSender: myUserName,
     }).catch(() => {});
+
+    // Notify other group members in background
+    try {
+      const metaSnap = await get(metaRef);
+      if (metaSnap.exists()) {
+        const meta = metaSnap.val();
+        const memberIds = Object.keys(meta.members || {}).filter((id) => id !== myUserId);
+        if (memberIds.length > 0) {
+          void notifyGroupMessageInBackground({
+            recipientIds: memberIds,
+            groupId,
+            groupName: meta.name || 'Study Group',
+            senderId: myUserId,
+            senderName: myUserName,
+            senderPhoto: myPhoto,
+            message: text,
+            messageType: type,
+            url: '/?open=messenger',
+          });
+        }
+      }
+    } catch (_) {}
   } catch (err) {
     console.warn('[WhatsApp] RTDB group write fallback:', err);
   }
@@ -1642,6 +1669,15 @@ export const acceptFriendRequest = async (
     await remove(ref(rtdb, `chat/friend_requests_sent/${cleanMy}/${cleanRequester}`)).catch(() => {});
     await set(ref(rtdb, `chat/friend_accepted/${cleanRequester}/${cleanMy}`), acceptedNotificationForSender).catch(() => {});
   }
+
+  // 1.1 Notify requester in real-time & background
+  void notifyFriendAcceptedInBackground({
+    recipientIds: [requester.id],
+    senderId: myUser.id,
+    senderName: myUser.name || 'Student',
+    senderPhoto: myUser.photoURL || '',
+    url: '/?open=messenger',
+  });
 
   // 2. Dual-Sync in Firestore (non-blocking in background)
   try {

@@ -1,6 +1,6 @@
 {
-  "name": "NSTA - National Study & Tracking App",
-  "description": "Comprehensive learning platform with syllabus, notes, audio studio, MCQs, and student progress tracking.",
+  "name": "Remix nsta",
+  "description": "Imported from GitHub",
   "capabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]

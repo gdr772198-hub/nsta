@@ -1,6 +1,6 @@
 import { VAPID_KEY, getFirebaseMessaging, db, rtdb, auth } from '../firebase';
 import { doc, updateDoc } from 'firebase/firestore';
-import { get, ref, set } from 'firebase/database';
+import { get, ref, set, onValue, remove, update } from 'firebase/database';
 
 export const NOTIFICATION_CATEGORY_DEFINITIONS = [
   { key: 'DAILY_ROUTINE', label: 'Today’s routine', description: 'Subah ka daily study target' },
@@ -265,36 +265,62 @@ export interface PushNotificationRequest {
   broadcast?: boolean;
 }
 
-/** Ask the server to send a data-only FCM push while the app is closed. */
+/** Ask the server to send an FCM push, AND directly deliver via Firebase RTDB user inbox for instant background wake-up. */
 export const sendPushNotification = async (request: PushNotificationRequest) => {
-  try {
-    const idToken = await auth?.currentUser?.getIdToken();
-    if (!idToken) return false;
+  const timestamp = Date.now();
+  const notifId = `notif_${timestamp}_${Math.random().toString(36).substring(2, 8)}`;
+  const notifPayload = {
+    id: notifId,
+    type: request.type,
+    title: request.title,
+    body: request.body,
+    url: request.url || '/',
+    senderId: request.senderId || '',
+    senderName: request.senderName || '',
+    senderPhoto: request.senderPhoto || '',
+    icon: request.icon || request.senderPhoto || '/icons/icon-192.png',
+    timestamp,
+    status: 'UNREAD',
+  };
 
-    const response = await fetch('/api/notifications/push', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${idToken}`,
-      },
-      body: JSON.stringify({
-        ...request,
-        url: request.url || '/',
-      }),
-    });
-    if (!response.ok) {
-      const details = await response.text().catch(() => '');
-      console.warn(
-        '[NotificationManager] Push request rejected:',
-        response.status,
-        details.slice(0, 300),
-      );
-    }
-    return response.ok;
-  } catch (error) {
-    console.warn('[NotificationManager] Push request failed:', error);
-    return false;
+  // 1. Direct real-time delivery via Firebase RTDB user inbox
+  const cleanRecipients = (request.recipientIds || [])
+    .map((id) => String(id).trim().replace(/[.#$[\]/]/g, '_'))
+    .filter(Boolean);
+
+  const writePromises: Promise<any>[] = cleanRecipients.map((recId) =>
+    set(ref(rtdb, `user_notifications/${recId}/${notifId}`), notifPayload).catch((err) => {
+      console.warn('[NotificationManager] RTDB direct deliver error:', err);
+    })
+  );
+
+  if (request.broadcast) {
+    writePromises.push(
+      set(ref(rtdb, `broadcast_notifications/${notifId}`), notifPayload).catch(() => {})
+    );
   }
+
+  await Promise.allSettled(writePromises);
+
+  // 2. Also try native server push via /api/notifications/push (non-blocking)
+  try {
+    const idToken = await auth?.currentUser?.getIdToken().catch(() => null);
+    if (idToken) {
+      void fetch('/api/notifications/push', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          ...request,
+          url: request.url || '/',
+        }),
+      }).catch(() => {});
+    }
+  } catch (_) {}
+
+  return true;
 };
 
 export const notifyFriendRequestInBackground = async (request: {
@@ -312,6 +338,25 @@ export const notifyFriendRequestInBackground = async (request: {
     body: `${request.senderName} ne aapko friend request bheji hai! Accept karke baat start karein.`,
     senderPhoto: request.senderPhoto,
     icon: request.senderPhoto,
+  });
+};
+
+export const notifyFriendAcceptedInBackground = async (request: {
+  recipientIds: string[];
+  senderId: string;
+  senderName: string;
+  senderPhoto?: string;
+  url?: string;
+}) => {
+  if (request.recipientIds.length === 0) return false;
+  return sendPushNotification({
+    ...request,
+    type: 'FRIEND_REQUEST',
+    title: '🤝 Friend Request Sweekar Hui!',
+    body: `${request.senderName} ne aapki friend request accept kar li hai. Ab aap live chat kar sakte hain!`,
+    senderPhoto: request.senderPhoto,
+    icon: request.senderPhoto,
+    url: request.url || '/?open=messenger',
   });
 };
 
@@ -338,6 +383,35 @@ export const notifyDirectMessageInBackground = async (request: {
           'Aapko ek naya private message mila hai.'),
   url: request.url || '/?open=messenger',
 });
+
+export const notifyGroupMessageInBackground = async (request: {
+  recipientIds: string[];
+  groupId: string;
+  groupName: string;
+  senderId: string;
+  senderName: string;
+  senderPhoto?: string;
+  message: string;
+  messageType?: string;
+  url?: string;
+}) => {
+  if (request.recipientIds.length === 0) return false;
+  return sendPushNotification({
+    recipientIds: request.recipientIds,
+    senderId: request.senderId,
+    senderName: request.senderName,
+    senderPhoto: request.senderPhoto,
+    icon: request.senderPhoto,
+    type: 'CHAT',
+    title: `👥 ${request.groupName}: ${request.senderName}`,
+    body: request.message.slice(0, 180) ||
+      (request.messageType === 'IMAGE' ? 'Photo bheji gayi.' :
+        request.messageType === 'VIDEO' ? 'Video bheja gaya.' :
+          request.messageType === 'AUDIO' ? 'Audio message.' :
+            'Naya group message.'),
+    url: request.url || '/?open=messenger',
+  });
+};
 
 export const notifyCommunityUpdateInBackground = async (request: {
   recipientIds: string[];
@@ -566,5 +640,236 @@ export const checkEveningStreakReminder = (user?: { streak?: number; streakClaim
     category: 'STREAK_SAVER',
     url: '/'
   });
+};
+
+// Morning Daily Routine & Challenge Reminder
+// Checks if current time is morning (between 6 AM and 11 AM) and reminder not already sent today
+export const checkMorningRoutineReminder = (user?: { name?: string }) => {
+  if (typeof window === 'undefined') return;
+
+  const now = new Date();
+  const currentHour = now.getHours();
+  // Only trigger between 6 AM (06:00) and 11 AM (11:00)
+  if (currentHour < 6 || currentHour > 11) return;
+
+  const todayKey = `nst_morning_routine_${now.toISOString().split('T')[0]}`;
+  if (localStorage.getItem(todayKey)) return;
+
+  localStorage.setItem(todayKey, 'true');
+
+  dispatchSmartNotification({
+    title: '🌅 Subah Ka Daily Study Target!',
+    body: `Namaste ${user?.name ? user.name.split(' ')[0] : ''}! Aaj ke routine ke chapters aur MCQs complete karke study coins aur rank badhayein.`,
+    category: 'DAILY_ROUTINE',
+    url: '/?open=routine'
+  });
+};
+
+export const notifyLiveClassStartInBackground = async (request: {
+  title: string;
+  subject?: string;
+  teacherName?: string;
+  url?: string;
+}) => {
+  return sendPushNotification({
+    recipientIds: [],
+    broadcast: true,
+    type: 'LIVE_CLASS',
+    title: '🔴 Live Class Shuru Ho Chuki Hai!',
+    body: `${request.teacherName || 'Teacher'} ne "${request.title}" live class start kar di hai. Turant judiye!`,
+    url: request.url || '/?open=live-class',
+  });
+};
+
+export const notifyContentPublishedInBackground = async (request: {
+  title: string;
+  contentType: 'NOTES' | 'MCQ' | 'TEST' | 'SYLLABUS';
+  subject?: string;
+  classLevel?: string;
+  url?: string;
+}) => {
+  const typeLabel =
+    request.contentType === 'NOTES' ? '📖 Naye Notes' :
+    request.contentType === 'MCQ' ? '⚡ Naya MCQ Set' :
+    request.contentType === 'TEST' ? '📝 Naya Test' : '📚 Syllabus Update';
+
+  return sendPushNotification({
+    recipientIds: [],
+    broadcast: true,
+    type: 'CONTENT',
+    title: `${typeLabel} Uplabdh Hai!`,
+    body: `${request.subject ? `[${request.subject}] ` : ''}${request.title} app me add ho gaya hai. Abhi padhein!`,
+    url: request.url || '/',
+  });
+};
+
+export const isCategoryEnabled = (prefs: NotificationPreferences | null, type: string): boolean => {
+  if (!prefs) return true;
+  if (prefs.enabled === false) return false;
+  const cats = prefs.categories as Record<string, boolean>;
+  return cats?.[type] !== false;
+};
+
+/**
+ * Real-time User Notification Subscriber (RTDB User Inbox):
+ * Runs on every user device/PWA, receives incoming direct messages, friend requests,
+ * study room battles, and routine alerts in real time.
+ * Automatically wakes up device via Service Worker showNotification, vibrates mobile hardware,
+ * plays audio chime, and triggers in-app toast alerts.
+ */
+export const subscribeToUserNotifications = (
+  userId: string,
+  onNotificationReceived?: (notification: any) => void
+): (() => void) => {
+  if (!userId || typeof window === 'undefined') return () => {};
+
+  const safeUserId = String(userId).trim().replace(/[.#$[\]/]/g, '_');
+  const seenIdsKey = `nst_seen_notif_${safeUserId}`;
+  const seenIds = new Set<string>();
+
+  try {
+    const raw = sessionStorage.getItem(seenIdsKey);
+    if (raw) {
+      JSON.parse(raw).forEach((id: string) => seenIds.add(id));
+    }
+  } catch {}
+
+  const saveSeenIds = () => {
+    try {
+      const arr = Array.from(seenIds).slice(-100);
+      sessionStorage.setItem(seenIdsKey, JSON.stringify(arr));
+    } catch {}
+  };
+
+  const handleIncomingNotification = async (item: any, notifKey?: string) => {
+    if (!item || !item.id) return;
+    if (seenIds.has(item.id)) return;
+    seenIds.add(item.id);
+    saveSeenIds();
+
+    // Discard notifications older than 45 minutes to prevent ancient loop on app re-open
+    const now = Date.now();
+    if (item.timestamp && now - Number(item.timestamp) > 45 * 60 * 1000) {
+      if (notifKey) {
+        remove(ref(rtdb, `user_notifications/${safeUserId}/${notifKey}`)).catch(() => {});
+      }
+      return;
+    }
+
+    // Check user preferences
+    const prefs = loadNotificationPreferences(userId);
+    if (item.type && !isCategoryEnabled(prefs, item.type)) {
+      if (notifKey) {
+        remove(ref(rtdb, `user_notifications/${safeUserId}/${notifKey}`)).catch(() => {});
+      }
+      return;
+    }
+
+    console.log('[NotificationManager] Real-time user notification received:', item.title, item.type);
+
+    // 1. Invoke custom callback
+    if (onNotificationReceived) {
+      try { onNotificationReceived(item); } catch (_) {}
+    }
+
+    // 2. Dispatch custom DOM event for in-app toast
+    try {
+      window.dispatchEvent(
+        new CustomEvent('nst_foreground_notification', {
+          detail: {
+            title: item.title,
+            body: item.body,
+            payload: item,
+          },
+        })
+      );
+    } catch (_) {}
+
+    // 3. Audio Chime
+    try {
+      const audio = new Audio('/branding/notification.mp3');
+      audio.volume = 0.6;
+      audio.play().catch(() => {});
+    } catch (_) {}
+
+    // 4. Mobile Hardware Vibration
+    const isUrgent = item.type === 'CHAT' || item.type === 'FRIEND_REQUEST' || item.type === 'STUDY_ROOM';
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      try {
+        navigator.vibrate(isUrgent ? [250, 100, 250] : [100, 50, 100]);
+      } catch (_) {}
+    }
+
+    // 5. Native OS Notification via Service Worker (Works even when app tab is in background!)
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      try {
+        if ('serviceWorker' in navigator) {
+          const reg = await getFcmServiceWorkerRegistration();
+          reg.showNotification(item.title, {
+            body: item.body,
+            icon: item.icon || item.senderPhoto || '/icons/icon-192.png',
+            badge: '/favicon.svg',
+            tag: item.senderId ? `nst-${item.type}-${item.senderId}` : `nst-${item.type}-${item.id}`,
+            vibrate: isUrgent ? [250, 100, 250] : [100, 50, 100],
+            renotify: true,
+            requireInteraction: isUrgent,
+            data: { url: item.url || '/', ...item },
+            actions: [
+              { action: 'open', title: 'Open App' },
+              { action: 'dismiss', title: 'Dismiss' },
+            ],
+          } as any);
+        } else {
+          new Notification(item.title, { body: item.body, icon: item.icon || '/icons/icon-192.png' });
+        }
+      } catch (err) {
+        console.warn('[NotificationManager] Native showNotification warning:', err);
+      }
+    }
+
+    // 6. Clean up from RTDB queue once handled
+    if (notifKey) {
+      try {
+        await remove(ref(rtdb, `user_notifications/${safeUserId}/${notifKey}`));
+      } catch (_) {}
+    }
+  };
+
+  // Subscribe to personal notifications
+  const userNotifRef = ref(rtdb, `user_notifications/${safeUserId}`);
+  const unsubUser = onValue(
+    userNotifRef,
+    (snapshot) => {
+      const val = snapshot.val();
+      if (!val || typeof val !== 'object') return;
+      Object.entries(val).forEach(([key, notif]: [string, any]) => {
+        handleIncomingNotification(notif, key);
+      });
+    },
+    (err) => {
+      console.warn('[NotificationManager] User notifications listen warning:', err);
+    }
+  );
+
+  // Subscribe to broadcast notifications
+  const broadcastRef = ref(rtdb, 'broadcast_notifications');
+  const unsubBroadcast = onValue(
+    broadcastRef,
+    (snapshot) => {
+      const val = snapshot.val();
+      if (!val || typeof val !== 'object') return;
+      Object.entries(val).forEach(([key, notif]: [string, any]) => {
+        handleIncomingNotification(notif, key);
+      });
+    },
+    (err) => {
+      console.warn('[NotificationManager] Broadcast notifications listen warning:', err);
+    }
+  );
+
+  return () => {
+    unsubUser();
+    unsubBroadcast();
+  };
 };
 

@@ -425,7 +425,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
     } catch (err: any) {
       console.error('Download error:', err);
       setIsDownloading(false);
-      alert('Video download nahi ho paya. Kripya dobara koshish karein.');
+      alert('Video in-app offline download nahi ho paya. Kripya apna internet connection check karein.');
     }
   };
 

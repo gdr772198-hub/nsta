@@ -51,6 +51,7 @@ import {
   ChevronDown,
   ChevronUp,
   Settings,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 const FaWhatsapp = ({ size = 14, className = "" }: { size?: number; className?: string }) => (
@@ -289,6 +290,9 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   );
 
   const isFreeUser = userTier === 'FREE' && !isAdmin && !user?.isPro && !user?.isVip && !user?.isUltraVip;
+  const isUltraUser = userTier === 'ULTRA' || isAdmin || Boolean(user?.isUltraVip);
+  const isBasicUser = userTier === 'BASIC' || isUltraUser || Boolean(user?.isPro || user?.isVip);
+  const isFreeOnly = !isBasicUser;
 
   const maxDurationMinutesAllowed = isAdmin ? 240 : (
     userTier === 'ULTRA' ? 120 :
@@ -441,6 +445,21 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [battleBook, setBattleBook] = useState<string>('ALL');
   const [battleClass, setBattleClass] = useState<string>('ALL');
   const [battleSubject, setBattleSubject] = useState<string>('ALL');
+  const [battleSubjects, setBattleSubjects] = useState<string[]>(['ALL']);
+  const [selectedCuratedSets, setSelectedCuratedSets] = useState<string[]>([]);
+  const [limitMode, setLimitMode] = useState<'ALL' | 'PER_LESSON' | 'PER_SUBJECT' | 'TOTAL'>('ALL');
+  const [questionsPerLessonLimit, setQuestionsPerLessonLimit] = useState<number>(10);
+  const [questionsPerSubjectLimit, setQuestionsPerSubjectLimit] = useState<number>(15);
+  const [totalQuestionsLimit, setTotalQuestionsLimit] = useState<number>(20);
+  const [questionOrderMode, setQuestionOrderMode] = useState<'SEQUENTIAL' | 'RANDOM'>('RANDOM');
+  const [showUltraQuestionInspector, setShowUltraQuestionInspector] = useState<boolean>(false);
+  const [ultraExcludedQuestionKeys, setUltraExcludedQuestionKeys] = useState<Set<string>>(new Set());
+  const [ultraQuestionsSearch, setUltraQuestionsSearch] = useState<string>('');
+  const [tierFeaturePrompt, setTierFeaturePrompt] = useState<{
+    title: string;
+    description: string;
+    targetTier: 'BASIC' | 'ULTRA';
+  } | null>(null);
   const [battleCategory, setBattleCategory] = useState<'ALL' | 'NOTES' | 'HOMEWORK'>('ALL');
   const [battleSearch, setBattleSearch] = useState<string>('');
   const [showChapterChooser, setShowChapterChooser] = useState<boolean>(false);
@@ -870,6 +889,14 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     return getLucentSubjectOptions(settings);
   }, [settings]);
 
+  // Academic Subject Options (for Academic Mode)
+  const academicSubjects = useMemo(() => {
+    const classLessons = allRealLessons.filter(
+      (l) => l.classLevel && l.classLevel !== 'COMPETITION' && (battleClass === 'ALL' || l.classLevel === battleClass)
+    );
+    return Array.from(new Set(classLessons.map((l) => l.subject))).filter(Boolean).sort();
+  }, [allRealLessons, battleClass]);
+
   // ── Build Available Real MCQ Sets from Syllabus / Context / App Data (In-Room 3rd Screen) ─────
   const availableBattleSets = useMemo(() => {
     const sets: Array<{
@@ -884,6 +911,14 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
       questions: GroupStudyMcqQuestion[];
     }> = [];
 
+    const isSubjectAllowed = (subj: string) => {
+      if (isBasicUser && battleSubjects && battleSubjects.length > 0) {
+        if (battleSubjects.includes('ALL')) return true;
+        return battleSubjects.includes(subj);
+      }
+      return battleSubject === 'ALL' || subj === battleSubject;
+    };
+
     const isRevisionHub = currentRoom?.mcqType === 'REVISION_HUB';
 
     if (isRevisionHub) {
@@ -896,9 +931,7 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
         if (battleClass !== 'ALL') {
           revLessons = revLessons.filter((l) => l.classLevel === battleClass || l.classLevel === 'ALL');
         }
-        if (battleSubject !== 'ALL') {
-          revLessons = revLessons.filter((l) => l.subject === battleSubject);
-        }
+        revLessons = revLessons.filter((l) => isSubjectAllowed(l.subject));
       } else {
         // 🏆 COMPETITION in MCQ+ Mode: STRICTLY ONLY LUCENT!
         // "par mcq+ me competition me revision hub me only lucent jata hai to only lucent hi rahega bas."
@@ -911,9 +944,7 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
           return isLucent && !isOtherBook;
         });
 
-        if (battleSubject !== 'ALL') {
-          revLessons = revLessons.filter((l) => l.subject === battleSubject);
-        }
+        revLessons = revLessons.filter((l) => isSubjectAllowed(l.subject));
       }
 
       if (battleSearch.trim()) {
@@ -968,6 +999,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
         } else if (battleCategory === 'HOMEWORK') {
           academicLessons = academicLessons.filter((l) => l.sourceType === 'HOMEWORK');
         }
+
+        academicLessons = academicLessons.filter((l) => isSubjectAllowed(l.subject));
 
         if (battleSearch.trim()) {
           const q = battleSearch.trim().toLowerCase();
@@ -1049,6 +1082,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
           compLessons = compLessons.filter((l) => getLessonCompetitionBookId(l) === battleBook);
         }
 
+        compLessons = compLessons.filter((l) => isSubjectAllowed(l.subject));
+
         if (battleSearch.trim()) {
           const q = battleSearch.trim().toLowerCase();
           compLessons = compLessons.filter(
@@ -1091,6 +1126,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     battleBook,
     battleClass,
     battleSubject,
+    battleSubjects,
+    isBasicUser,
     battleCategory,
     battleSearch,
     allCompetitionBooks,
@@ -1101,10 +1138,54 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
       if (!availableBattleSets.some((s) => s.id === selectedCuratedSet)) {
         setSelectedCuratedSet(availableBattleSets[0].id);
       }
+      if (selectedCuratedSets.length === 0) {
+        setSelectedCuratedSets([availableBattleSets[0].id]);
+      }
     } else {
       setSelectedCuratedSet('');
+      setSelectedCuratedSets([]);
     }
-  }, [availableBattleSets, selectedCuratedSet]);
+  }, [availableBattleSets, selectedCuratedSet, selectedCuratedSets.length]);
+
+  // Compute all available questions for Ultra Question Inspector
+  const allAvailableQuestionsForUltra = useMemo(() => {
+    let targetSets: typeof availableBattleSets = [];
+    if (isBasicUser && selectedCuratedSets.length > 0) {
+      targetSets = availableBattleSets.filter((s) => selectedCuratedSets.includes(s.id));
+    } else {
+      const single = availableBattleSets.find((s) => s.id === selectedCuratedSet);
+      if (single) targetSets = [single];
+    }
+    if (targetSets.length === 0 && availableBattleSets.length > 0) {
+      targetSets = [availableBattleSets[0]];
+    }
+
+    const list: { q: GroupStudyMcqQuestion; lessonTitle: string; subject: string; key: string }[] = [];
+    targetSets.forEach((s) => {
+      (s.questions || []).forEach((q, idx) => {
+        const key = `${s.id}__${idx}__${(q.question || '').slice(0, 30)}`;
+        list.push({
+          q,
+          lessonTitle: s.name,
+          subject: s.subject || 'General',
+          key,
+        });
+      });
+    });
+    return list;
+  }, [isBasicUser, selectedCuratedSets, selectedCuratedSet, availableBattleSets]);
+
+  const filteredUltraQuestions = useMemo(() => {
+    if (!ultraQuestionsSearch.trim()) return allAvailableQuestionsForUltra;
+    const q = ultraQuestionsSearch.trim().toLowerCase();
+    return allAvailableQuestionsForUltra.filter(
+      (item) =>
+        item.q.question.toLowerCase().includes(q) ||
+        item.subject.toLowerCase().includes(q) ||
+        item.lessonTitle.toLowerCase().includes(q) ||
+        item.q.options.some((opt) => opt.toLowerCase().includes(q))
+    );
+  }, [allAvailableQuestionsForUltra, ultraQuestionsSearch]);
 
   // ── Available Lessons for Create Room Modal ──────────────────────────────
   const createModalBattleSets = useMemo(() => {
@@ -1997,22 +2078,178 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
     setChatMessage('');
   };
 
+  // ── Subject & Lesson Selection Helpers (Free vs Basic vs Ultra) ─────────
+  const handleToggleBattleSubject = (subj: string) => {
+    if (!isBasicUser) {
+      setBattleSubject(subj);
+      setBattleSubjects([subj]);
+      return;
+    }
+    if (subj === 'ALL') {
+      setBattleSubject('ALL');
+      setBattleSubjects(['ALL']);
+      return;
+    }
+    setBattleSubjects((prev) => {
+      const withoutAll = prev.filter((s) => s !== 'ALL');
+      let next: string[];
+      if (withoutAll.includes(subj)) {
+        next = withoutAll.filter((s) => s !== subj);
+        if (next.length === 0) {
+          setBattleSubject('ALL');
+          return ['ALL'];
+        }
+      } else {
+        next = [...withoutAll, subj];
+      }
+      setBattleSubject(next.length === 1 ? next[0] : 'ALL');
+      return next;
+    });
+  };
+
+  const isBattleSubjectActive = (subj: string) => {
+    if (subj === 'ALL') {
+      return battleSubjects.includes('ALL') || battleSubject === 'ALL';
+    }
+    if (isBasicUser && battleSubjects && battleSubjects.length > 0 && !battleSubjects.includes('ALL')) {
+      return battleSubjects.includes(subj);
+    }
+    return battleSubject === subj;
+  };
+
+  const handleToggleBattleLesson = (setId: string) => {
+    if (!isBasicUser) {
+      setSelectedCuratedSet(setId);
+      setSelectedCuratedSets([setId]);
+      return;
+    }
+    setSelectedCuratedSets((prev) => {
+      if (prev.includes(setId)) {
+        if (prev.length <= 1) return prev;
+        const next = prev.filter((id) => id !== setId);
+        if (selectedCuratedSet === setId) setSelectedCuratedSet(next[0] || '');
+        return next;
+      } else {
+        const next = [...prev, setId];
+        setSelectedCuratedSet(setId);
+        return next;
+      }
+    });
+  };
+
+  const handleSelectAllBattleLessons = () => {
+    if (!isBasicUser) {
+      setTierFeaturePrompt({
+        title: '⭐ Basic & Ultra Power: Multi-Lesson Battle',
+        description: 'Ek sath kayi lessons aur chapters ke sawaal chune ki power Basic aur Ultra Host ke liye uplabdh hai.',
+        targetTier: 'BASIC',
+      });
+      return;
+    }
+    const allIds = availableBattleSets.map((s) => s.id);
+    setSelectedCuratedSets(allIds);
+    if (allIds.length > 0) setSelectedCuratedSet(allIds[0]);
+  };
+
+  const handleDeselectAllBattleLessons = () => {
+    if (availableBattleSets.length > 0) {
+      setSelectedCuratedSets([availableBattleSets[0].id]);
+      setSelectedCuratedSet(availableBattleSets[0].id);
+    }
+  };
+
   // ── MCQ Battle Handlers & Host Free Lesson Launch ─────────────────────────
   const handleLaunchCuratedMcq = async () => {
     if (!currentRoom || !isHost) return;
-    const selectedSet = availableBattleSets.find((s) => s.id === selectedCuratedSet);
-    if (!selectedSet || !selectedSet.questions.length) {
-      alert('Kripya pehle koi lesson chunein!');
+
+    // 1. Identify selected sets based on Host tier
+    let targetSets: typeof availableBattleSets = [];
+    if (isBasicUser && selectedCuratedSets.length > 0) {
+      targetSets = availableBattleSets.filter((s) => selectedCuratedSets.includes(s.id));
+    } else {
+      const single = availableBattleSets.find((s) => s.id === selectedCuratedSet);
+      if (single) targetSets = [single];
+    }
+
+    if (targetSets.length === 0) {
+      if (availableBattleSets.length > 0) {
+        targetSets = [availableBattleSets[0]];
+      } else {
+        alert('Kripya pehle koi lesson chunein!');
+        return;
+      }
+    }
+
+    // 2. Extract and compile questions according to Host settings
+    let compiledQuestions: GroupStudyMcqQuestion[] = [];
+
+    if (limitMode === 'PER_LESSON' && questionsPerLessonLimit > 0) {
+      targetSets.forEach((s) => {
+        const pool = questionOrderMode === 'RANDOM'
+          ? [...s.questions].sort(() => 0.5 - Math.random())
+          : s.questions;
+        compiledQuestions.push(...pool.slice(0, questionsPerLessonLimit));
+      });
+    } else if (limitMode === 'PER_SUBJECT' && questionsPerSubjectLimit > 0) {
+      const bySubj = new Map<string, GroupStudyMcqQuestion[]>();
+      targetSets.forEach((s) => {
+        const subKey = s.subject || 'General';
+        const list = bySubj.get(subKey) || [];
+        list.push(...s.questions);
+        bySubj.set(subKey, list);
+      });
+      bySubj.forEach((list) => {
+        const pool = questionOrderMode === 'RANDOM'
+          ? [...list].sort(() => 0.5 - Math.random())
+          : list;
+        compiledQuestions.push(...pool.slice(0, questionsPerSubjectLimit));
+      });
+    } else {
+      targetSets.forEach((s) => compiledQuestions.push(...s.questions));
+    }
+
+    // 3. Ultra Cherry-Picked filtering (if Ultra user excluded any questions in inspector)
+    if (isUltraUser && ultraExcludedQuestionKeys.size > 0) {
+      let filtered: GroupStudyMcqQuestion[] = [];
+      targetSets.forEach((s) => {
+        (s.questions || []).forEach((q, idx) => {
+          const key = `${s.id}__${idx}__${(q.question || '').slice(0, 30)}`;
+          if (!ultraExcludedQuestionKeys.has(key)) {
+            filtered.push(q);
+          }
+        });
+      });
+      if (filtered.length > 0) {
+        compiledQuestions = filtered;
+      }
+    }
+
+    // 4. Total cap if applicable
+    if (limitMode === 'TOTAL' && totalQuestionsLimit > 0) {
+      if (questionOrderMode === 'RANDOM') {
+        compiledQuestions = compiledQuestions.sort(() => 0.5 - Math.random());
+      }
+      compiledQuestions = compiledQuestions.slice(0, totalQuestionsLimit);
+    } else if (questionOrderMode === 'RANDOM') {
+      compiledQuestions = compiledQuestions.sort(() => 0.5 - Math.random());
+    }
+
+    if (compiledQuestions.length === 0) {
+      alert('Chune gaye lessons me koi questions uplabdh nahi hain. Kripya questions select karein.');
       return;
     }
 
+    const battleTitle = targetSets.length > 1
+      ? `${targetSets.length} Lessons Battle (${compiledQuestions.length} Questions)`
+      : targetSets[0].name;
+
     await handleLaunchRealLessonMcq(
       {
-        id: selectedSet.id,
-        lessonTitle: selectedSet.name,
-        classLevel: selectedSet.classLevel,
-        subject: selectedSet.subject,
-        questions: selectedSet.questions,
+        id: targetSets.length === 1 ? targetSets[0].id : `multi_${Date.now()}`,
+        lessonTitle: battleTitle,
+        classLevel: targetSets.length === 1 ? targetSets[0].classLevel : 'ALL',
+        subject: targetSets.length === 1 ? targetSets[0].subject : 'Multi-Subject',
+        questions: compiledQuestions,
       },
       currentRoom.mcqType
     );
@@ -3588,9 +3825,8 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                       <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto pr-1">
                                         <button
                                           type="button"
-                                          onClick={() => setBattleSubject('ALL')}
-                                          className={`px-2 py-0.5 rounded-lg text-[10px] font-bold cursor-pointer transition ${
-                                            battleSubject === 'ALL'
+                                          onClick={() => handleToggleBattleSubject('ALL')}
+                                          className={`px-2 py-0.5 rounded-lg text-[10px] font-bold cursor-pointer transition ${isBattleSubjectActive('ALL')
                                               ? 'bg-purple-600 text-white font-black shadow'
                                               : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200'
                                           }`}
@@ -3603,9 +3839,9 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                             <button
                                               key={`avail_sub_${sub || subIdx}`}
                                               type="button"
-                                              onClick={() => setBattleSubject(sub)}
+                                              onClick={() => handleToggleBattleSubject(sub)}
                                               className={`px-2 py-0.5 rounded-lg text-[10px] font-bold cursor-pointer transition ${
-                                                battleSubject === sub
+                                                isBattleSubjectActive(sub)
                                                   ? 'bg-purple-600 text-white font-black shadow'
                                                   : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200'
                                               }`}
@@ -3658,29 +3894,32 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                   <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto pr-1">
                                     <button
                                       type="button"
-                                      onClick={() => setBattleSubject('ALL')}
+                                      onClick={() => handleToggleBattleSubject('ALL')}
                                       className={`px-2 py-0.5 rounded-lg text-[10px] font-bold cursor-pointer transition ${
-                                        battleSubject === 'ALL'
+                                        isBattleSubjectActive('ALL')
                                           ? 'bg-amber-500 text-slate-950 font-black shadow'
                                           : 'bg-slate-900 border border-slate-800 text-slate-300 hover:text-white'
                                       }`}
                                     >
                                       Sabhi Lucent Topics
                                     </button>
-                                    {lucentSubjectOptions.map((opt) => (
-                                      <button
-                                        key={`luc_subj_${opt.id}`}
-                                        type="button"
-                                        onClick={() => setBattleSubject(opt.name)}
-                                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold cursor-pointer transition ${
-                                          battleSubject === opt.name
-                                            ? 'bg-amber-500 text-slate-950 font-black shadow'
-                                            : 'bg-slate-900 border border-slate-800 text-slate-300 hover:text-white'
-                                        }`}
-                                      >
-                                        {opt.name}
-                                      </button>
-                                    ))}
+                                    {lucentSubjectOptions.map((opt) => {
+                                      const isActive = isBattleSubjectActive(opt.name);
+                                      return (
+                                        <button
+                                          key={`luc_subj_${opt.id}`}
+                                          type="button"
+                                          onClick={() => handleToggleBattleSubject(opt.name)}
+                                          className={`px-2 py-0.5 rounded-lg text-[10px] font-bold cursor-pointer transition ${
+                                            isActive
+                                              ? 'bg-amber-500 text-slate-950 font-black shadow ring-1 ring-amber-300'
+                                              : 'bg-slate-900 border border-slate-800 text-slate-300 hover:text-white'
+                                          }`}
+                                        >
+                                          {opt.name}
+                                        </button>
+                                      );
+                                    })}
                                   </div>
                                 </div>
 
@@ -3844,8 +4083,8 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                             )
                           )}
 
-                          {/* 4. Lesson Selection List */}
-                          <div className="space-y-1.5">
+                          {/* 4. Lesson Selection List with Multi-Select Powers */}
+                          <div className="space-y-2">
                             <div className="flex items-center justify-between">
                               <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
                                 {currentRoom.mcqType === 'REVISION_HUB' ? (
@@ -3860,19 +4099,75 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                   </span>
                                 )}
                               </span>
-                              <span className="text-[10px] font-black text-slate-400">
-                                {availableBattleSets.length} Lessons Uplabdh
-                              </span>
+                              <div className="flex items-center gap-1.5">
+                                {isBasicUser ? (
+                                  <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-[10px] font-black border border-indigo-500/30">
+                                    ⭐ {selectedCuratedSets.length} Chune Gaye
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] font-black text-slate-400">
+                                    {availableBattleSets.length} Lessons Uplabdh
+                                  </span>
+                                )}
+                              </div>
                             </div>
+
+                            {/* Host Multi-Select Toolbar for Basic & Ultra */}
+                            {isBasicUser ? (
+                              <div className="flex items-center justify-between bg-slate-900/80 p-2 rounded-xl border border-indigo-500/30 text-[11px]">
+                                <span className="font-bold text-slate-300 flex items-center gap-1.5 text-[11px]">
+                                  <span className="text-amber-400 font-black">⭐ Multi-Lesson Mode:</span>
+                                  <span>{selectedCuratedSets.length} Lessons Selected</span>
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={handleSelectAllBattleLessons}
+                                    className="px-2 py-0.5 rounded-lg bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 font-bold hover:bg-indigo-600/50 cursor-pointer text-[10px]"
+                                  >
+                                    ✓ Sabhi Select
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={handleDeselectAllBattleLessons}
+                                    className="px-2 py-0.5 rounded-lg bg-slate-800 text-slate-400 hover:text-slate-200 cursor-pointer text-[10px]"
+                                  >
+                                    Reset
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-between bg-slate-900/60 p-2 rounded-xl border border-slate-800 text-[11px]">
+                                <span className="text-slate-400 text-[10px]">
+                                  🎓 Free Host: Single lesson battle test
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setTierFeaturePrompt({
+                                      title: '⭐ Basic & Ultra Host: Multi-Lesson Battle',
+                                      description: 'Ek sath multipul subjects aur lessons select karne ka option Basic aur Ultra hosts ke liye hai!',
+                                      targetTier: 'BASIC',
+                                    })
+                                  }
+                                  className="text-[10px] text-amber-400 font-bold hover:underline cursor-pointer"
+                                >
+                                  Multiple Lessons Unlock Karein →
+                                </button>
+                              </div>
+                            )}
 
                             {availableBattleSets.length > 0 ? (
                               <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
                                 {availableBattleSets.map((set, sIdx) => {
-                                  const isSelected = selectedCuratedSet === set.id;
+                                  const isSelected = isBasicUser
+                                    ? selectedCuratedSets.includes(set.id)
+                                    : selectedCuratedSet === set.id;
                                   const isRevision = currentRoom.mcqType === 'REVISION_HUB';
                                   return (
-                                    <label
+                                    <div
                                       key={set.id ? `${set.id}_${sIdx}` : `battle_set_${sIdx}`}
+                                      onClick={() => handleToggleBattleLesson(set.id)}
                                       className={`flex items-center gap-2.5 p-2.5 rounded-xl border cursor-pointer transition text-left ${
                                         isSelected
                                           ? isRevision
@@ -3881,13 +4176,22 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                           : 'bg-slate-900/90 border-slate-800 text-slate-300 hover:border-slate-700'
                                       }`}
                                     >
-                                      <input
-                                        type="radio"
-                                        name="mcqSet"
-                                        checked={isSelected}
-                                        onChange={() => setSelectedCuratedSet(set.id)}
-                                        className="sr-only"
-                                      />
+                                      {isBasicUser ? (
+                                        <input
+                                          type="checkbox"
+                                          checked={isSelected}
+                                          onChange={() => {}}
+                                          className="w-4 h-4 rounded text-amber-500 focus:ring-amber-400 bg-slate-900 border-slate-700 cursor-pointer shrink-0"
+                                        />
+                                      ) : (
+                                        <input
+                                          type="radio"
+                                          name="mcqSet"
+                                          checked={isSelected}
+                                          onChange={() => {}}
+                                          className="w-4 h-4 text-cyan-500 bg-slate-900 border-slate-700 cursor-pointer shrink-0"
+                                        />
+                                      )}
                                       <span className="text-xl shrink-0">{set.emoji}</span>
                                       <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-1.5">
@@ -3903,7 +4207,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                           )}
                                         </div>
                                         <p className="text-[10px] text-slate-400 mt-0.5">
-                                          {set.questions.length} Questions • {selectedTimerDuration}s per question
+                                          {set.questions.length} Questions • {set.subject || 'General'}
                                         </p>
                                       </div>
                                       {isSelected && (
@@ -3912,7 +4216,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                           className={`shrink-0 ${isRevision ? 'text-purple-400' : 'text-cyan-400'}`}
                                         />
                                       )}
-                                    </label>
+                                    </div>
                                   );
                                 })}
                               </div>
@@ -3926,6 +4230,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                   onClick={() => {
                                     setBattleSearch('');
                                     setBattleSubject('ALL');
+                                    setBattleSubjects(['ALL']);
                                     setBattleClass('ALL');
                                     setBattleCategory('ALL');
                                   }}
@@ -3935,6 +4240,196 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                 </button>
                               </div>
                             )}
+                          </div>
+
+                          {/* ── QUESTION LIMIT & CUSTOMIZATION PANEL (Basic & Ultra) ── */}
+                          <div className="p-3 rounded-2xl bg-slate-900/90 border border-slate-700/80 space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-black text-slate-200 flex items-center gap-1.5">
+                                <SlidersHorizontal size={14} className="text-amber-400" />
+                                <span>Question Limits & Order ({isBasicUser ? '⭐ Active' : '🔒 Basic & Ultra'})</span>
+                              </span>
+                              {!isBasicUser && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setTierFeaturePrompt({
+                                      title: '⭐ Basic & Ultra Power: Custom Question Limits',
+                                      description: 'Subject-wise, lesson-wise ya total question limits tay karne ka option Basic aur Ultra hosts ke liye hai.',
+                                      targetTier: 'BASIC',
+                                    })
+                                  }
+                                  className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-black cursor-pointer"
+                                >
+                                  Upgrade Power ⚡
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Limit Mode Switcher */}
+                            <div className="grid grid-cols-4 gap-1.5">
+                              {[
+                                { id: 'ALL', label: 'Sabhi (All)' },
+                                { id: 'PER_LESSON', label: 'Per Lesson' },
+                                { id: 'PER_SUBJECT', label: 'Per Subject' },
+                                { id: 'TOTAL', label: 'Total Limit' },
+                              ].map((m) => (
+                                <button
+                                  key={m.id}
+                                  type="button"
+                                  onClick={() => {
+                                    if (!isBasicUser) {
+                                      setTierFeaturePrompt({
+                                        title: '⭐ Basic Power: Question Limits',
+                                        description: 'Question limits tay karne ka feature Basic aur Ultra members ke liye hai.',
+                                        targetTier: 'BASIC',
+                                      });
+                                      return;
+                                    }
+                                    setLimitMode(m.id as any);
+                                  }}
+                                  className={`py-1.5 px-1 rounded-xl text-[10px] font-black transition cursor-pointer text-center ${
+                                    limitMode === m.id
+                                      ? 'bg-amber-500 text-slate-950 font-black shadow'
+                                      : 'bg-slate-950/80 border border-slate-800 text-slate-300 hover:text-white'
+                                  }`}
+                                >
+                                  {m.label}
+                                </button>
+                              ))}
+                            </div>
+
+                            {/* Numeric Selector depending on Limit Mode */}
+                            {limitMode === 'PER_LESSON' && (
+                              <div className="flex items-center justify-between pt-1">
+                                <span className="text-[11px] text-slate-300 font-bold">Har Lesson se Kitne Sawaal?</span>
+                                <div className="flex items-center gap-1">
+                                  {[5, 10, 15, 20].map((num) => (
+                                    <button
+                                      key={`pl_${num}`}
+                                      type="button"
+                                      onClick={() => setQuestionsPerLessonLimit(num)}
+                                      className={`px-2 py-0.5 rounded-lg text-[10px] font-black cursor-pointer transition ${
+                                        questionsPerLessonLimit === num
+                                          ? 'bg-amber-500 text-slate-950 shadow'
+                                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                                      }`}
+                                    >
+                                      {num}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {limitMode === 'PER_SUBJECT' && (
+                              <div className="flex items-center justify-between pt-1">
+                                <span className="text-[11px] text-slate-300 font-bold">Har Subject se Kitne Sawaal?</span>
+                                <div className="flex items-center gap-1">
+                                  {[5, 10, 15, 20, 25, 30].map((num) => (
+                                    <button
+                                      key={`ps_${num}`}
+                                      type="button"
+                                      onClick={() => setQuestionsPerSubjectLimit(num)}
+                                      className={`px-2 py-0.5 rounded-lg text-[10px] font-black cursor-pointer transition ${
+                                        questionsPerSubjectLimit === num
+                                          ? 'bg-amber-500 text-slate-950 shadow'
+                                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                                      }`}
+                                    >
+                                      {num}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {limitMode === 'TOTAL' && (
+                              <div className="flex items-center justify-between pt-1">
+                                <span className="text-[11px] text-slate-300 font-bold">Kul (Total) Questions Limit:</span>
+                                <div className="flex items-center gap-1">
+                                  {[10, 15, 20, 30, 50, 100].map((num) => (
+                                    <button
+                                      key={`tot_${num}`}
+                                      type="button"
+                                      onClick={() => setTotalQuestionsLimit(num)}
+                                      className={`px-2 py-0.5 rounded-lg text-[10px] font-black cursor-pointer transition ${
+                                        totalQuestionsLimit === num
+                                          ? 'bg-amber-500 text-slate-950 shadow'
+                                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                                      }`}
+                                    >
+                                      {num}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Question Shuffling / Order */}
+                            <div className="flex items-center justify-between pt-1 border-t border-slate-800">
+                              <span className="text-[11px] text-slate-300 font-bold">Sawaal Ka Order:</span>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setQuestionOrderMode('RANDOM')}
+                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition cursor-pointer ${
+                                    questionOrderMode === 'RANDOM'
+                                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50'
+                                      : 'bg-slate-800 text-slate-400'
+                                  }`}
+                                >
+                                  🎲 Shuffled (Random)
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setQuestionOrderMode('SEQUENTIAL')}
+                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition cursor-pointer ${
+                                    questionOrderMode === 'SEQUENTIAL'
+                                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50'
+                                      : 'bg-slate-800 text-slate-400'
+                                  }`}
+                                >
+                                  📋 Sequential
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* ── ULTRA USER QUESTION INSPECTOR CARD ── */}
+                          <div className="p-3 rounded-2xl bg-gradient-to-r from-amber-950/40 to-purple-950/40 border border-amber-500/30 flex items-center justify-between">
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs font-black text-amber-300 flex items-center gap-1">
+                                  👑 Ultra Question Inspector
+                                </span>
+                                <span className="px-1.5 py-0.2 rounded bg-amber-500 text-slate-950 text-[9px] font-black">
+                                  ULTRA VIP
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 mt-0.5">
+                                {isUltraUser
+                                  ? `Sare questions padhein aur tick lagayein (${allAvailableQuestionsForUltra.length - ultraExcludedQuestionKeys.size}/${allAvailableQuestionsForUltra.length} Selected)`
+                                  : 'Host sare questions scroll karke padh aur select kar sakta hai (Ultra exclusive)'}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!isUltraUser) {
+                                  setTierFeaturePrompt({
+                                    title: '👑 Ultra VIP Power: Direct Question Selector',
+                                    description: 'Pura Question Bank dekhkar ek-ek question ko tick ya un-tick karke test banane ki power sirf Ultra VIP users ke paas hai!',
+                                    targetTier: 'ULTRA',
+                                  });
+                                  return;
+                                }
+                                setShowUltraQuestionInspector(true);
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs shadow-md transition cursor-pointer shrink-0"
+                            >
+                              🔍 Sawal Chunein ({allAvailableQuestionsForUltra.length - ultraExcludedQuestionKeys.size})
+                            </button>
                           </div>
 
                           {/* 5. Big Launch Button */}
@@ -5585,6 +6080,210 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                 Band Karein
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── ULTRA QUESTION INSPECTOR MODAL (Cherry-Pick Individual Questions) ── */}
+      {showUltraQuestionInspector && (
+        <div className="fixed inset-0 z-[9999] bg-black/85 backdrop-blur-md flex flex-col p-3 md:p-6 overflow-hidden animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-amber-500/40 rounded-2xl flex-1 flex flex-col max-w-4xl w-full mx-auto overflow-hidden shadow-2xl">
+            {/* Header */}
+            <div className="p-4 border-b border-slate-800 bg-slate-950/80 flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">👑</span>
+                  <h3 className="text-base font-black text-white">Ultra Question Bank Selector</h3>
+                  <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-black">
+                    {allAvailableQuestionsForUltra.length - ultraExcludedQuestionKeys.size} of {allAvailableQuestionsForUltra.length} Selected
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Har ek sawal ko check/uncheck karke tay karein ki battle me kaun sa exact sawal aayega.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowUltraQuestionInspector(false)}
+                className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center font-bold text-sm cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Search & Actions Bar */}
+            <div className="p-3 border-b border-slate-800 bg-slate-900/60 flex flex-wrap items-center justify-between gap-2">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={ultraQuestionsSearch}
+                  onChange={(e) => setUltraQuestionsSearch(e.target.value)}
+                  placeholder="🔍 Sawaal ya option search karein..."
+                  className="w-full pl-9 pr-7 py-1.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+                />
+                {ultraQuestionsSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setUltraQuestionsSearch('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setUltraExcludedQuestionKeys(new Set())}
+                  className="px-2.5 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold hover:bg-emerald-500/30 transition cursor-pointer"
+                >
+                  ✓ Sabhi Chunein (Select All)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const allKeys = new Set(allAvailableQuestionsForUltra.map((item) => item.key));
+                    setUltraExcludedQuestionKeys(allKeys);
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[11px] font-bold hover:bg-rose-500/30 transition cursor-pointer"
+                >
+                  ✕ Sabhi Hatayein (Deselect All)
+                </button>
+              </div>
+            </div>
+
+            {/* Question List */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {filteredUltraQuestions.length > 0 ? (
+                filteredUltraQuestions.map((item, qIdx) => {
+                  const isIncluded = !ultraExcludedQuestionKeys.has(item.key);
+                  return (
+                    <div
+                      key={item.key || `ultra_q_${qIdx}`}
+                      onClick={() => {
+                        setUltraExcludedQuestionKeys((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(item.key)) next.delete(item.key);
+                          else next.add(item.key);
+                          return next;
+                        });
+                      }}
+                      className={`p-3.5 rounded-xl border transition cursor-pointer ${
+                        isIncluded
+                          ? 'bg-slate-950/80 border-amber-500/40 shadow-sm ring-1 ring-amber-500/20'
+                          : 'bg-slate-950/30 border-slate-800/60 opacity-50'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <input
+                          type="checkbox"
+                          checked={isIncluded}
+                          onChange={() => {}}
+                          className="mt-1 w-4 h-4 rounded text-amber-500 focus:ring-amber-400 bg-slate-900 border-slate-700 cursor-pointer shrink-0"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+                            <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 font-mono text-[10px] font-black">
+                              Q{qIdx + 1}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 text-[10px] font-bold">
+                              {item.subject}
+                            </span>
+                            <span className="text-[10px] text-slate-400 truncate max-w-xs">
+                              📖 {item.lessonTitle}
+                            </span>
+                          </div>
+
+                          <p className="text-xs font-bold text-slate-100 leading-relaxed">
+                            {item.q.question}
+                          </p>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 mt-2.5">
+                            {item.q.options.map((opt, optIdx) => {
+                              const isCorrect = optIdx === item.q.correctIndex;
+                              return (
+                                <div
+                                  key={`opt_${optIdx}`}
+                                  className={`p-1.5 px-2 rounded-lg text-[11px] font-medium border flex items-center gap-1.5 ${
+                                    isCorrect
+                                      ? 'bg-emerald-950/50 border-emerald-500/60 text-emerald-200'
+                                      : 'bg-slate-900/50 border-slate-800 text-slate-300'
+                                  }`}
+                                >
+                                  <span className="w-4 h-4 rounded bg-slate-800 text-[9px] font-mono flex items-center justify-center font-bold shrink-0">
+                                    {String.fromCharCode(65 + optIdx)}
+                                  </span>
+                                  <span className="truncate">{opt}</span>
+                                  {isCorrect && <span className="ml-auto text-[10px] text-emerald-400 font-bold">✓ Sahi</span>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="py-12 text-center text-slate-400 text-xs">
+                  Koi question nahi mila search query ke anusar.
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-3 border-t border-slate-800 bg-slate-950/90 flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-300">
+                Selected: <b className="text-amber-400">{allAvailableQuestionsForUltra.length - ultraExcludedQuestionKeys.size} Questions</b> Active For Battle
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowUltraQuestionInspector(false)}
+                className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-lg cursor-pointer"
+              >
+                ✓ Done & Save Selection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── TIER FEATURE PROMPT MODAL (Free user upgrade teaser) ── */}
+      {tierFeaturePrompt && (
+        <div className="fixed inset-0 z-[10000] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-amber-500/50 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl text-center">
+            <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center text-2xl mx-auto">
+              {tierFeaturePrompt.targetTier === 'ULTRA' ? '👑' : '⭐'}
+            </div>
+            <div>
+              <h3 className="text-base font-black text-white">{tierFeaturePrompt.title}</h3>
+              <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                {tierFeaturePrompt.description}
+              </p>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 text-left space-y-2 text-xs">
+              <div className="flex items-center gap-2 text-slate-400">
+                <span className="text-slate-500">🎓 Free:</span>
+                <span>Single Lesson Battle (Standard Test)</span>
+              </div>
+              <div className="flex items-center gap-2 text-indigo-300 font-bold">
+                <span>⭐ Basic:</span>
+                <span>Multiple Subjects + Multiple Chapters + Question Limits</span>
+              </div>
+              <div className="flex items-center gap-2 text-amber-300 font-bold">
+                <span>👑 Ultra:</span>
+                <span>Full Question Bank Browser + Cherry-Pick Exact Questions</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setTierFeaturePrompt(null)}
+              className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-lg cursor-pointer"
+            >
+              Samajh Gaya (Close)
+            </button>
           </div>
         </div>
       )}

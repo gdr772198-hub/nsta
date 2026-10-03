@@ -100,7 +100,7 @@ import { FreeSubjectLessonPopup } from './components/FreeSubjectLessonPopup';
 import { McqLimitLockedPopup } from './components/McqLimitLockedPopup';
 
 import { StreakLoginPopup } from './components/StreakLoginPopup';
-import { checkEveningStreakReminder, listenToForegroundMessages } from './components/NotificationManager';
+import { checkEveningStreakReminder, checkMorningRoutineReminder, listenToForegroundMessages, subscribeToUserNotifications } from './components/NotificationManager';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { logErrorToFirebase, setErrorLoggerUser } from './utils/errorLogger';
 import { MaintenanceBanner, AdminCrashPopup, MaintenanceScreen } from './components/MaintenanceScreen';
@@ -478,6 +478,28 @@ const App: React.FC = () => {
           document.documentElement.classList.remove('global-cards-3d');
       }
   }, [state.settings?.globalCards3D]);
+
+  // Real-time User Notification Subscriber (direct RTDB pipeline for chat, friends, study room, routine)
+  useEffect(() => {
+    if (!state.user?.id) return;
+    const unsub = subscribeToUserNotifications(state.user.id, (notif) => {
+      console.log('[App] Real-time notification received:', notif.title);
+    });
+
+    // Check morning and evening reminders
+    checkMorningRoutineReminder(state.user);
+    checkEveningStreakReminder(state.user);
+
+    const reminderInterval = setInterval(() => {
+      checkMorningRoutineReminder(state.user);
+      checkEveningStreakReminder(state.user);
+    }, 15 * 60 * 1000);
+
+    return () => {
+      unsub();
+      clearInterval(reminderInterval);
+    };
+  }, [state.user?.id]);
 
   // Card Rotating Border Animation Handler (Global Admin toggle + Student Profile preference + Theme color awareness)
   useEffect(() => {
@@ -3272,6 +3294,9 @@ const App: React.FC = () => {
       if (prev.view === 'LESSON') return { ...prev, view: 'CHAPTERS', lessonContent: null };
 
       if (prev.view === 'CHAPTERS') {
+          if (prev.user?.role === 'STUDENT' || prev.originalAdmin) {
+              return { ...prev, view: 'STUDENT_DASHBOARD', selectedChapter: null, selectedSubject: null };
+          }
           return { ...prev, view: 'SUBJECTS', selectedChapter: null };
       }
 

@@ -598,10 +598,8 @@ export const LessonView: React.FC<Props> = ({
       }, 400);
     };
     window.addEventListener('orientationchange', reapply);
-    window.addEventListener('resize', reapply);
     return () => {
       window.removeEventListener('orientationchange', reapply);
-      window.removeEventListener('resize', reapply);
     };
   }, []);
 
@@ -648,7 +646,10 @@ export const LessonView: React.FC<Props> = ({
       const updated = exists
         ? prev.filter(n => !(n.noteKey === noteKey && n.topicText === text))
         : [...prev, { id: Date.now().toString(), noteKey, topicText: text, savedAt: new Date().toISOString() }];
-      try { localStorage.setItem('nst_starred_notes_v1', JSON.stringify(updated)); } catch {}
+      try {
+        localStorage.setItem('nst_starred_notes_v1', JSON.stringify(updated));
+        window.dispatchEvent(new Event('nst_notes_updated'));
+      } catch {}
       return updated;
     });
     // Global social-proof sync so ANY user saving a note reflects globally in trending
