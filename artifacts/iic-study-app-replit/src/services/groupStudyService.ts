@@ -130,6 +130,7 @@ export interface GroupStudyRoom {
   durationMinutes: number;
   expiresAt: number;
   isExpired?: boolean;
+  isDeleted?: boolean;
   totalRoomXp?: number;
   isScheduled?: boolean;
   scheduledStartTime?: number;
@@ -1246,6 +1247,91 @@ export const startLiveMcqBattle = async (
     });
   } catch (err: any) {
     console.warn('[GroupStudy] RTDB startLiveMcqBattle sync error:', err);
+  }
+};
+
+// ── Schedule Room with Chosen Questions & Timing Mode ──
+export const scheduleRoomWithQuestions = async (
+  roomId: string,
+  scheduledStartTime: number,
+  questions: GroupStudyMcqQuestion[],
+  quizTitle: string,
+  durationPerQuestion: number = 20,
+  autoAdvance: boolean = true,
+  timerMode: 'PER_QUESTION' | 'TOTAL_TEST' | 'MIX' = 'PER_QUESTION',
+  totalTestDurationMinutes: number = 15,
+  targetPaceSeconds: number = 20,
+  vibrateOnPaceAlert: boolean = true,
+  autoRunWithoutHost: boolean = true
+): Promise<void> => {
+  const now = Date.now();
+  const safeQuestions = questions.map((q) => ({
+    question: q.question,
+    options: q.options,
+    correctIndex: q.correctIndex,
+    explanation: q.explanation || '',
+    statements: q.statements || [],
+  }));
+
+  const liveMcqData: any = {
+    isActive: false,
+    status: 'WAITING',
+    title: quizTitle,
+    totalQuestions: safeQuestions.length,
+    currentQuestionIndex: 0,
+    questionStartTime: 0,
+    durationPerQuestion,
+    autoAdvance,
+    timerMode,
+    totalTestDurationMinutes,
+    targetPaceSeconds,
+    vibrateOnPaceAlert,
+    questions: safeQuestions,
+    scores: {},
+    questionAnswers: {},
+  };
+
+  try {
+    const cached = getCachedRooms()[roomId];
+    if (cached) {
+      cached.isScheduled = true;
+      cached.scheduledStartTime = scheduledStartTime;
+      cached.autoRunWithoutHost = autoRunWithoutHost;
+      cached.preloadedTitle = quizTitle;
+      cached.preloadedQuestions = safeQuestions;
+      cached.liveMcq = liveMcqData;
+      cached.lastActive = now;
+      saveCachedRoom(cached);
+    }
+  } catch (cacheErr) {
+    console.warn('[GroupStudy] Local cache error in scheduleRoomWithQuestions:', cacheErr);
+  }
+
+  try {
+    const payload = cleanRtdbPayload({
+      isScheduled: true,
+      scheduledStartTime,
+      autoRunWithoutHost,
+      preloadedTitle: quizTitle,
+      preloadedQuestions: safeQuestions,
+      liveMcq: liveMcqData,
+      lastActive: now,
+    });
+
+    await update(ref(rtdb, `group_study_rooms/${roomId}`), payload);
+
+    const chatRef = ref(rtdb, `group_study_rooms/${roomId}/chat`);
+    const newMsgRef = push(chatRef);
+    await set(newMsgRef, {
+      id: newMsgRef.key,
+      userId: 'system',
+      userName: 'IIC Study Bot',
+      text: `⏰ Test Scheduled: "${quizTitle}" (${safeQuestions.length} Questions). Start Time: ${new Date(scheduledStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Auto-start is ON!`,
+      timestamp: now,
+      type: 'SYSTEM',
+    });
+  } catch (err: any) {
+    console.warn('[GroupStudy] RTDB scheduleRoomWithQuestions sync error:', err);
   }
 };
 

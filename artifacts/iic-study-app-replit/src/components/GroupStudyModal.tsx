@@ -25,6 +25,9 @@ import {
   HelpCircle,
   Video,
   ChevronRight,
+  ChevronLeft,
+  LayoutGrid,
+  Smartphone,
   UserCheck,
   Minimize2,
   Compass,
@@ -83,6 +86,7 @@ import {
   setRoomMode,
   setRoomMcqType,
   startLiveMcqBattle,
+  scheduleRoomWithQuestions,
   setRoomMcqDuration,
   setRoomMcqAutoAdvance,
   revealMcqAnswer,
@@ -429,6 +433,20 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [revealSecondsLeft, setRevealSecondsLeft] = useState<number>(3);
   const [autoAdvanceEnabled, setAutoAdvanceEnabled] = useState<boolean>(true);
   const [showLiveAnswersSheet, setShowLiveAnswersSheet] = useState<boolean>(false);
+
+  // ── Advanced Exam Timer & Pacing Modes ─────────────────────────────────────
+  const [testTimerMode, setTestTimerMode] = useState<'PER_QUESTION' | 'TOTAL_TEST' | 'MIX'>('PER_QUESTION');
+  const [totalTestMinutes, setTotalTestMinutes] = useState<number>(15);
+  const [mixPaceSeconds, setMixPaceSeconds] = useState<number>(20);
+  const [mixVibrateAlert, setMixVibrateAlert] = useState<boolean>(true);
+  const [studentActiveQIndex, setStudentActiveQIndex] = useState<number>(0);
+  const [totalTestSecondsLeft, setTotalTestSecondsLeft] = useState<number>(0);
+  const [paceSecondsLeft, setPaceSecondsLeft] = useState<number>(20);
+  const [hasPaceAlertTriggered, setHasPaceAlertTriggered] = useState<boolean>(false);
+  const [showQuestionPalette, setShowQuestionPalette] = useState<boolean>(true);
+  const [showSubmitConfirmModal, setShowSubmitConfirmModal] = useState<boolean>(false);
+  const [lobbyActionTab, setLobbyActionTab] = useState<'LAUNCH' | 'SCHEDULE'>('LAUNCH');
+  const [isSchedulingTest, setIsSchedulingTest] = useState<boolean>(false);
 
   // ── Staggered Batch Submission State (Zero Continuous RTDB Writes during questions) ──
   const [localBattleStats, setLocalBattleStats] = useState<{
@@ -1525,17 +1543,55 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     const { liveMcq } = currentRoom;
 
     let interval: any = null;
-    if (liveMcq.status === 'QUESTION' && liveMcq.questionStartTime) {
-      const updateMcqTick = () => {
-        const elapsedSec = Math.floor((Date.now() - liveMcq.questionStartTime) / 1000);
-        const duration = liveMcq.durationPerQuestion || 20;
-        const remaining = Math.max(0, duration - elapsedSec);
-        setMcqSecondsLeft(remaining);
+    if (liveMcq.status === 'QUESTION') {
+      const isSelfPaced = liveMcq.timerMode === 'TOTAL_TEST' || liveMcq.timerMode === 'MIX';
 
-        // Auto-reveal exactly when selected timer expires (0s) - Host or Elected Runner
-        if (isElectedRunner && remaining <= 0 && liveMcq.status === 'QUESTION') {
-          handleRevealAnswer();
-          return;
+      const updateMcqTick = () => {
+        const now = Date.now();
+
+        if (isSelfPaced) {
+          // Total exam timer countdown
+          const totalEnd = liveMcq.testEndTime || (liveMcq.testStartTime ? liveMcq.testStartTime + (liveMcq.totalTestDurationMinutes || 15) * 60000 : now + 600000);
+          const totalRem = Math.max(0, Math.floor((totalEnd - now) / 1000));
+          setTotalTestSecondsLeft(totalRem);
+
+          if (totalRem <= 0) {
+            // Auto submit when time runs out!
+            if (isElectedRunner) {
+              endLiveMcqBattle(currentRoom.id).catch(console.warn);
+            }
+            return;
+          }
+
+          // If MIX mode: question pace countdown & mobile vibration
+          if (liveMcq.timerMode === 'MIX') {
+            setPaceSecondsLeft((prev) => {
+              const next = Math.max(0, prev - 1);
+              if (next === 0 && !hasPaceAlertTriggered) {
+                setHasPaceAlertTriggered(true);
+                if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+                  try {
+                    navigator.vibrate([150, 70, 150]);
+                  } catch {}
+                }
+              }
+              return next;
+            });
+          }
+        } else {
+          // Standard Per-Question countdown
+          if (liveMcq.questionStartTime) {
+            const elapsedSec = Math.floor((now - liveMcq.questionStartTime) / 1000);
+            const duration = liveMcq.durationPerQuestion || 20;
+            const remaining = Math.max(0, duration - elapsedSec);
+            setMcqSecondsLeft(remaining);
+
+            // Auto-reveal exactly when selected timer expires (0s) - Host or Elected Runner
+            if (isElectedRunner && remaining <= 0 && liveMcq.status === 'QUESTION') {
+              handleRevealAnswer();
+              return;
+            }
+          }
         }
       };
 
@@ -1550,7 +1606,11 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     currentRoom?.liveMcq?.status,
     currentRoom?.liveMcq?.questionStartTime,
     currentRoom?.liveMcq?.durationPerQuestion,
+    currentRoom?.liveMcq?.timerMode,
+    currentRoom?.liveMcq?.testEndTime,
+    currentRoom?.liveMcq?.testStartTime,
     isElectedRunner,
+    hasPaceAlertTriggered,
   ]);
 
   // ── Auto-advance Countdown during REVEAL ──
@@ -1603,7 +1663,12 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
             currentRoom.id,
             currentRoom.liveMcq.title,
             currentRoom.liveMcq.questions,
-            currentRoom.liveMcq.durationPerQuestion || 20
+            currentRoom.liveMcq.durationPerQuestion || 20,
+            currentRoom.liveMcq.autoAdvance ?? true,
+            currentRoom.liveMcq.timerMode || 'PER_QUESTION',
+            currentRoom.liveMcq.totalTestDurationMinutes || 15,
+            currentRoom.liveMcq.targetPaceSeconds || 20,
+            currentRoom.liveMcq.vibrateOnPaceAlert ?? true
           ).catch((e) => console.warn('[GroupStudy] Scheduled auto-start notice:', e));
         }
       }
@@ -1620,6 +1685,11 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     currentRoom?.liveMcq?.title,
     currentRoom?.liveMcq?.questions,
     currentRoom?.liveMcq?.durationPerQuestion,
+    currentRoom?.liveMcq?.autoAdvance,
+    currentRoom?.liveMcq?.timerMode,
+    currentRoom?.liveMcq?.totalTestDurationMinutes,
+    currentRoom?.liveMcq?.targetPaceSeconds,
+    currentRoom?.liveMcq?.vibrateOnPaceAlert,
     isElectedRunner,
   ]);
 
@@ -1919,20 +1989,6 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
 
       const durationMinutes = Math.min(newRoomDurationMinutes || 30, maxDurationMinutesAllowed);
 
-      let scheduledStartTime: number | undefined = undefined;
-      if (isScheduleMode) {
-        if (!isBasicUser && !isUltraUser && !isAdmin) {
-          alert('Room schedule karne ka option Basic aur Ultra members ke liye hai. Kripya Store se upgrade karein.');
-          return;
-        }
-        const combined = new Date(`${scheduledDate}T${scheduledTime}`);
-        scheduledStartTime = combined.getTime();
-        if (isNaN(scheduledStartTime) || scheduledStartTime < Date.now() - 60000) {
-          alert('Kripya aane wale samay (future time) ka date aur time select karein.');
-          return;
-        }
-      }
-
       // Check if questions are preloaded for this room
       const lessonToLaunch = selectedPreloadLesson || (
         prefilledContext?.mcqData && Array.isArray(prefilledContext.mcqData) && prefilledContext.mcqData.length > 0
@@ -1958,9 +2014,9 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
           durationMinutes,
           maxMembers: Math.min(newRoomMaxMembers || 30, maxRoomCapacityAllowed),
           isPrivate: !!cleanPassword,
-          isScheduled: isScheduleMode,
-          scheduledStartTime,
-          autoRunWithoutHost,
+          isScheduled: false,
+          scheduledStartTime: undefined,
+          autoRunWithoutHost: true,
           themeColor: roomTheme,
           preloadedQuestions: lessonToLaunch?.questions || [],
           preloadedTitle: lessonToLaunch?.lessonTitle || `${effectiveRoomName} MCQ Battle`,
@@ -2437,10 +2493,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
   };
 
   // ── MCQ Battle Handlers & Host Free Lesson Launch ─────────────────────────
-  const handleLaunchCuratedMcq = async () => {
-    if (!currentRoom || !isHost) return;
-
-    // 1. Identify selected sets based on Host tier
+  const compileSelectedQuestions = (): { targetSets: typeof availableBattleSets; compiledQuestions: GroupStudyMcqQuestion[]; battleTitle: string } | null => {
     let targetSets: typeof availableBattleSets = [];
     if (isBasicUser && selectedCuratedSets.length > 0) {
       targetSets = availableBattleSets.filter((s) => selectedCuratedSets.includes(s.id));
@@ -2454,11 +2507,10 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
         targetSets = [availableBattleSets[0]];
       } else {
         alert('Kripya pehle koi lesson chunein!');
-        return;
+        return null;
       }
     }
 
-    // 2. Extract and compile questions according to Host settings
     let compiledQuestions: GroupStudyMcqQuestion[] = [];
 
     if (limitMode === 'PER_LESSON' && questionsPerLessonLimit > 0) {
@@ -2486,7 +2538,6 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
       targetSets.forEach((s) => compiledQuestions.push(...s.questions));
     }
 
-    // 3. Ultra Cherry-Picked filtering (if Ultra user excluded any questions in inspector)
     if (isUltraUser && ultraExcludedQuestionKeys.size > 0) {
       let filtered: GroupStudyMcqQuestion[] = [];
       targetSets.forEach((s) => {
@@ -2502,7 +2553,6 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
       }
     }
 
-    // 4. Total cap if applicable
     if (limitMode === 'TOTAL' && totalQuestionsLimit > 0) {
       if (questionOrderMode === 'RANDOM') {
         compiledQuestions = compiledQuestions.sort(() => 0.5 - Math.random());
@@ -2514,23 +2564,109 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
 
     if (compiledQuestions.length === 0) {
       alert('Chune gaye lessons me koi questions uplabdh nahi hain. Kripya questions select karein.');
-      return;
+      return null;
     }
 
     const battleTitle = targetSets.length > 1
       ? `${targetSets.length} Lessons Battle (${compiledQuestions.length} Questions)`
       : targetSets[0].name;
 
+    return { targetSets, compiledQuestions, battleTitle };
+  };
+
+  const handleLaunchCuratedMcq = async () => {
+    if (!currentRoom || !isHost) return;
+    const compiled = compileSelectedQuestions();
+    if (!compiled) return;
+
     await handleLaunchRealLessonMcq(
       {
-        id: targetSets.length === 1 ? targetSets[0].id : `multi_${Date.now()}`,
-        lessonTitle: battleTitle,
-        classLevel: targetSets.length === 1 ? targetSets[0].classLevel : 'ALL',
-        subject: targetSets.length === 1 ? targetSets[0].subject : 'Multi-Subject',
-        questions: compiledQuestions,
+        id: compiled.targetSets.length === 1 ? compiled.targetSets[0].id : `multi_${Date.now()}`,
+        lessonTitle: compiled.battleTitle,
+        classLevel: compiled.targetSets.length === 1 ? compiled.targetSets[0].classLevel : 'ALL',
+        subject: compiled.targetSets.length === 1 ? compiled.targetSets[0].subject : 'Multi-Subject',
+        questions: compiled.compiledQuestions,
       },
       currentRoom.mcqType
     );
+  };
+
+  const handleScheduleCuratedMcq = async () => {
+    if (!currentRoom || !isHost) return;
+
+    if (!isBasicUser && !isUltraUser && !isAdmin) {
+      alert('Room schedule karne ka option Basic aur Ultra members ke liye hai. Kripya Store se upgrade karein.');
+      return;
+    }
+
+    // Free User Host Restriction: Free users cannot host MCQ+ sets
+    if (isFreeUser && currentRoom.mcqType === 'REVISION_HUB') {
+      alert('🔒 MCQ+ Question Sets sirf Pro / Ultra members host kar sakte hain! Kripya standard MCQ sets chunein.');
+      return;
+    }
+
+    const combined = new Date(`${scheduledDate}T${scheduledTime}`);
+    const scheduledStartTime = combined.getTime();
+    if (isNaN(scheduledStartTime) || scheduledStartTime < Date.now() - 60000) {
+      alert('Kripya aane wale samay (future time) ka date aur time select karein.');
+      return;
+    }
+
+    const compiled = compileSelectedQuestions();
+    if (!compiled) return;
+
+    setIsSchedulingTest(true);
+    try {
+      await scheduleRoomWithQuestions(
+        currentRoom.id,
+        scheduledStartTime,
+        compiled.compiledQuestions,
+        compiled.battleTitle,
+        selectedTimerDuration || 20,
+        autoAdvanceEnabled,
+        testTimerMode,
+        totalTestMinutes,
+        mixPaceSeconds,
+        mixVibrateAlert,
+        autoRunWithoutHost
+      );
+
+      const updatedRoom: GroupStudyRoom = {
+        ...currentRoom,
+        isScheduled: true,
+        scheduledStartTime,
+        autoRunWithoutHost,
+        preloadedTitle: compiled.battleTitle,
+        preloadedQuestions: compiled.compiledQuestions,
+        liveMcq: {
+          isActive: false,
+          status: 'WAITING',
+          title: compiled.battleTitle,
+          totalQuestions: compiled.compiledQuestions.length,
+          currentQuestionIndex: 0,
+          questionStartTime: 0,
+          durationPerQuestion: selectedTimerDuration || 20,
+          autoAdvance: autoAdvanceEnabled,
+          timerMode: testTimerMode,
+          totalTestDurationMinutes: totalTestMinutes,
+          targetPaceSeconds: mixPaceSeconds,
+          vibrateOnPaceAlert: mixVibrateAlert,
+          questions: compiled.compiledQuestions,
+          scores: {},
+          questionAnswers: {},
+        },
+      };
+
+      saveCachedRoom(updatedRoom);
+      setCurrentRoom(updatedRoom);
+      if (onActiveRoomChange) onActiveRoomChange(updatedRoom);
+
+      alert(`🎉 Test schedule ho gaya! Start time: ${new Date(scheduledStartTime).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}.`);
+    } catch (e: any) {
+      alert('Schedule karne me samasya: ' + (e?.message || 'Unknown error'));
+    } finally {
+      setIsSchedulingTest(false);
+    }
   };
 
   // Host launches ANY real lesson MCQ for FREE (0 credits)
@@ -2593,6 +2729,13 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
       return;
     }
 
+    // Free User Host Restriction: Free users cannot host MCQ+ sets
+    const isMcqPlusLesson = lesson.isRevisionHub || lesson.sourceType === 'REVISION_HUB' || targetMcqType === 'REVISION_HUB' || chooserMcqType === 'REVISION_HUB';
+    if (isFreeUser && isMcqPlusLesson) {
+      alert('🔒 MCQ+ Question Sets sirf Pro / Ultra members host kar sakte hain! Kripya standard MCQ sets chunein ya Store se plan upgrade karein.');
+      return;
+    }
+
     // Check host authority generously (creator, admin, host ID, name)
     const userIsHost =
       isHost ||
@@ -2618,6 +2761,10 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
       const duration = selectedTimerDuration || 30;
       const displayTitle = `${lesson.lessonTitle} (${lesson.classLevel === 'COMPETITION' ? 'Competition' : `Class ${lesson.classLevel}`} • ${lesson.subject || 'MCQ'})`;
 
+      const now = Date.now();
+      const testStartTime = now;
+      const testEndTime = now + (totalTestMinutes || 10) * 60 * 1000;
+
       // 2. IMMEDIATE local update: show live MCQ arena instantly!
       const updatedRoom: GroupStudyRoom = {
         ...targetRoom,
@@ -2628,19 +2775,28 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
           title: displayTitle,
           currentQuestionIndex: 0,
           totalQuestions: cleanQuestions.length,
-          questionStartTime: Date.now(),
+          questionStartTime: now,
           durationPerQuestion: duration,
           autoAdvance: autoAdvanceEnabled,
+          timerMode: testTimerMode,
+          totalTestDurationMinutes: totalTestMinutes,
+          testStartTime,
+          testEndTime,
+          targetPaceSeconds: mixPaceSeconds,
+          vibrateOnPaceAlert: mixVibrateAlert,
           status: 'QUESTION',
           questions: cleanQuestions,
           scores: {},
           questionAnswers: {},
         },
-        lastActive: Date.now(),
+        lastActive: now,
       };
 
       saveCachedRoom(updatedRoom);
       setCurrentRoom(updatedRoom);
+      setStudentActiveQIndex(0);
+      setPaceSecondsLeft(mixPaceSeconds || 20);
+      setHasPaceAlertTriggered(false);
       if (onActiveRoomChange) onActiveRoomChange(updatedRoom);
 
       // 3. Background sync to RTDB & peers
@@ -2649,7 +2805,11 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
         displayTitle,
         cleanQuestions,
         duration,
-        autoAdvanceEnabled
+        autoAdvanceEnabled,
+        testTimerMode,
+        totalTestMinutes,
+        mixPaceSeconds,
+        mixVibrateAlert
       );
 
       if (chosenType !== targetRoom.mcqType) {
@@ -2702,7 +2862,11 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
         `${chapterTitle} · Free Lesson MCQ`,
         questions,
         duration,
-        autoAdvanceEnabled
+        autoAdvanceEnabled,
+        testTimerMode,
+        totalTestMinutes,
+        mixPaceSeconds,
+        mixVibrateAlert
       );
 
       setShowChapterChooser(false);
@@ -2782,15 +2946,22 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
 
   // Student/Member submits answer
   const handleSelectOption = async (optIdx: number) => {
-    if (!currentRoom || hasAnsweredCurrentQ || !currentRoom.liveMcq) return;
-    setSelectedOption(optIdx);
-    setHasAnsweredCurrentQ(true);
+    if (!currentRoom || !currentRoom.liveMcq) return;
+    const isSelfPaced = currentRoom.liveMcq.timerMode === 'TOTAL_TEST' || currentRoom.liveMcq.timerMode === 'MIX';
+    if (!isSelfPaced && hasAnsweredCurrentQ) return;
 
-    const q = currentRoom.liveMcq.questions[currentRoom.liveMcq.currentQuestionIndex];
+    setSelectedOption(optIdx);
+    if (!isSelfPaced) {
+      setHasAnsweredCurrentQ(true);
+    }
+
+    const curIdx = isSelfPaced ? studentActiveQIndex : currentRoom.liveMcq.currentQuestionIndex;
+    const q = currentRoom.liveMcq.questions[curIdx];
+    if (!q) return;
+
     const isCorrect = optIdx === q.correctIndex;
     const durationLimit = currentRoom.liveMcq.durationPerQuestion || 20;
-    const timeTaken = Math.max(0.5, durationLimit - mcqSecondsLeft);
-    const curIdx = currentRoom.liveMcq.currentQuestionIndex;
+    const timeTaken = isSelfPaced ? 5 : Math.max(0.5, durationLimit - mcqSecondsLeft);
 
     // Optimistically record the answer in currentRoom.liveMcq.questionAnswers immediately
     setCurrentRoom((prev) => {
@@ -2822,40 +2993,40 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
     // Staggered Zero-Firebase-Write Engine: Calculate score and answers 100% locally in React memory!
     let netXpChange = 0;
     setLocalBattleStats((prev) => {
-      const oldStreak = prev.currentStreak;
-      let newStreak = 0;
-      let maxStreak = prev.maxStreak;
-      let baseXp = 0;
-      let streakBonusXp = 0;
-      let streakBrokenAt: number | undefined = undefined;
+      const prevAnswer = prev.answers[curIdx];
+      const wasAlreadyAnswered = prevAnswer !== undefined;
+      const wasCorrectBefore = prevAnswer?.isCorrect;
 
-      if (isCorrect) {
-        baseXp = 5;
-        newStreak = oldStreak + 1;
-        maxStreak = Math.max(maxStreak, newStreak);
+      let correctCount = prev.correctCount;
+      let wrongCount = prev.wrongCount;
+      let totalAnswered = prev.totalAnswered;
+
+      if (!wasAlreadyAnswered) {
+        totalAnswered += 1;
+        if (isCorrect) correctCount += 1;
+        else wrongCount += 1;
       } else {
-        baseXp = -2;
-        if (oldStreak >= 10) streakBonusXp = 20;
-        else if (oldStreak >= 7) streakBonusXp = 20;
-        else if (oldStreak >= 5) streakBonusXp = 15;
-        else if (oldStreak >= 3) streakBonusXp = 10;
-        if (streakBonusXp > 0) streakBrokenAt = oldStreak;
+        if (wasCorrectBefore && !isCorrect) {
+          correctCount = Math.max(0, correctCount - 1);
+          wrongCount += 1;
+        } else if (!wasCorrectBefore && isCorrect) {
+          wrongCount = Math.max(0, wrongCount - 1);
+          correctCount += 1;
+        }
       }
 
-      const earnedPoints = isCorrect ? Math.max(1, Math.round(10 - timeTaken * 0.3)) : 0;
-      const newScore = Math.max(0, prev.score + earnedPoints);
-      netXpChange = baseXp + streakBonusXp;
-      const newTotalXp = Math.max(0, prev.userXp + netXpChange);
+      const newScore = Math.max(0, correctCount * 4 - wrongCount * 1);
+      const newTotalXp = Math.max(0, correctCount * 5 - wrongCount * 2);
 
       const updatedStats = {
         score: newScore,
-        correctCount: prev.correctCount + (isCorrect ? 1 : 0),
-        wrongCount: prev.wrongCount + (isCorrect ? 0 : 1),
-        totalAnswered: prev.totalAnswered + 1,
-        currentStreak: newStreak,
-        maxStreak,
+        correctCount,
+        wrongCount,
+        totalAnswered,
+        currentStreak: isCorrect ? prev.currentStreak + 1 : 0,
+        maxStreak: Math.max(prev.maxStreak, isCorrect ? prev.currentStreak + 1 : 0),
         userXp: newTotalXp,
-        streakBonusXp: prev.streakBonusXp + streakBonusXp,
+        streakBonusXp: prev.streakBonusXp,
         answers: {
           ...prev.answers,
           [curIdx]: { selectedOption: optIdx, isCorrect, timeTakenSec: timeTaken },
@@ -2956,6 +3127,10 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
 
   const handleSwitchMcqType = async (type: StudyRoomMcqType) => {
     if (!currentRoom || !isHost) return;
+    if (type === 'REVISION_HUB' && isFreeUser) {
+      alert('🔒 MCQ+ Question Sets sirf Pro / Ultra members host kar sakte hain! Free users standard MCQ practice sets host kar sakte hain.');
+      return;
+    }
     const updated: GroupStudyRoom = { ...currentRoom, mcqType: type };
     setCurrentRoom(updated);
     saveCachedRoom(updated);
@@ -3683,15 +3858,23 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                             🎯 MCQ
                           </button>
                           <button
-                            onClick={() => handleSwitchMcqType('REVISION_HUB')}
+                            onClick={() => {
+                              if (isFreeUser) {
+                                alert('🔒 MCQ+ Question Sets sirf Pro / Ultra members host kar sakte hain! Free users standard MCQ practice sets host kar sakte hain.');
+                                return;
+                              }
+                              handleSwitchMcqType('REVISION_HUB');
+                            }}
                             className={`px-2.5 py-1 rounded-lg text-[10px] font-black cursor-pointer transition ${
                               currentRoom.mcqType === 'REVISION_HUB'
                                 ? 'bg-purple-500 text-slate-950 shadow-sm'
+                                : isFreeUser
+                                ? 'bg-slate-900 text-slate-500 border border-slate-800'
                                 : 'bg-slate-800 text-slate-300 hover:text-white'
                             }`}
-                            title="Revision Hub ke Subjects & Lessons"
+                            title={isFreeUser ? 'MCQ+ Mode (Pro/Ultra Members Only)' : 'Revision Hub ke Subjects & Lessons'}
                           >
-                            ⚡ MCQ +
+                            ⚡ MCQ + {isFreeUser && '🔒'}
                           </button>
                         </div>
                       )}
@@ -4019,26 +4202,34 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                               <button
                                 type="button"
                                 onClick={() => {
+                                  if (isFreeUser) {
+                                    alert('🔒 MCQ+ Question Sets sirf Pro / Ultra members host kar sakte hain! Free users standard MCQ practice sets host kar sakte hain.');
+                                    return;
+                                  }
                                   handleSwitchMcqType('REVISION_HUB');
                                   setBattleSearch('');
                                   setBattleSubject('ALL');
                                   setBattleBook('ALL');
                                 }}
                                 className={`p-2.5 rounded-xl border text-left cursor-pointer transition relative ${
-                                  currentRoom.mcqType === 'REVISION_HUB'
+                                  isFreeUser
+                                    ? 'bg-slate-950/50 border-slate-800 text-slate-500 hover:border-amber-500/40'
+                                    : currentRoom.mcqType === 'REVISION_HUB'
                                     ? 'bg-purple-600/30 border-purple-400 text-white shadow ring-1 ring-purple-500/50'
                                     : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
                                 }`}
                               >
                                 <div className="flex items-center justify-between">
                                   <span className="text-xs font-black flex items-center gap-1">
-                                    <span>⚡</span> MCQ + Mode
+                                    <span>⚡</span> MCQ + Mode {isFreeUser && <span className="text-[10px] text-amber-400 font-bold ml-1">🔒 PRO</span>}
                                   </span>
                                   {currentRoom.mcqType === 'REVISION_HUB' && (
                                     <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
                                   )}
                                 </div>
-                                <p className="text-[9px] text-slate-300 mt-0.5">Revision Hub & Only Lucent Comp</p>
+                                <p className="text-[9px] text-slate-300 mt-0.5">
+                                  {isFreeUser ? '🔒 Pro/Ultra Host Only (Locked)' : 'Revision Hub & Only Lucent Comp'}
+                                </p>
                               </button>
                             </div>
 
@@ -4100,49 +4291,220 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                             </div>
                           </div>
 
-                          {/* 2. Timer & Auto-Advance Settings */}
-                          <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-700/80 space-y-2.5">
+                          {/* 2. Advanced Exam Timer Mode Controller (Host Setup) */}
+                          <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-700/80 space-y-3 shadow-lg">
                             <div className="flex items-center justify-between">
-                              <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-                                <Clock size={14} className="text-amber-400" /> Har Sawal Ka Timer:
+                              <span className="text-xs font-black text-white flex items-center gap-1.5">
+                                <Clock size={15} className="text-amber-400" /> Test Timing Mode:
                               </span>
-                              <span className="text-xs font-black text-amber-400">
-                                {selectedTimerDuration} Sec
+                              <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                                {testTimerMode === 'PER_QUESTION' ? '⚡ Per-Question' : testTimerMode === 'TOTAL_TEST' ? '⏱️ Full Exam Mode' : '📳 Mix / Alert Mode'}
                               </span>
-                            </div>
-                            <div className="grid grid-cols-6 gap-1.5">
-                              {[10, 15, 20, 30, 45, 60].map((sec) => (
-                                <button
-                                  key={`dur_top_${sec}`}
-                                  type="button"
-                                  onClick={() => setSelectedTimerDuration(sec)}
-                                  className={`py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${
-                                    selectedTimerDuration === sec
-                                      ? 'bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-300'
-                                      : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                                  }`}
-                                >
-                                  {sec}s
-                                </button>
-                              ))}
                             </div>
 
-                            <div className="pt-2 border-t border-slate-800 flex items-center justify-between">
-                              <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                                <Zap size={14} className="text-emerald-400" /> Auto-Advance (Agla Sawal):
-                              </span>
+                            {/* 3 Timing Mode Cards */}
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                              {/* Option 1: Per-Question Timer */}
                               <button
                                 type="button"
-                                onClick={() => setAutoAdvanceEnabled(!autoAdvanceEnabled)}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-black transition cursor-pointer ${
-                                  autoAdvanceEnabled
-                                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50'
-                                    : 'bg-slate-800 text-slate-400 border border-slate-700'
+                                onClick={() => setTestTimerMode('PER_QUESTION')}
+                                className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                                  testTimerMode === 'PER_QUESTION'
+                                    ? 'bg-amber-500/20 border-amber-400 text-white ring-1 ring-amber-400/50 shadow-md'
+                                    : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:border-slate-700'
                                 }`}
                               >
-                                {autoAdvanceEnabled ? '⚡ ON (3s Auto)' : 'OFF (Manual)'}
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-xs font-black text-amber-300 flex items-center gap-1">
+                                    ⚡ Per-Question
+                                  </span>
+                                  {testTimerMode === 'PER_QUESTION' && <span className="w-2 h-2 rounded-full bg-amber-400" />}
+                                </div>
+                                <p className="text-[10px] text-slate-300 leading-snug">
+                                  Har sawal ka fix timer (10s-60s). Auto-next rapid fire battle.
+                                </p>
+                              </button>
+
+                              {/* Option 2: Total Test Timer */}
+                              <button
+                                type="button"
+                                onClick={() => setTestTimerMode('TOTAL_TEST')}
+                                className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                                  testTimerMode === 'TOTAL_TEST'
+                                    ? 'bg-emerald-500/20 border-emerald-400 text-white ring-1 ring-emerald-400/50 shadow-md'
+                                    : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:border-slate-700'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-xs font-black text-emerald-300 flex items-center gap-1">
+                                    ⏱️ Total Test Time
+                                  </span>
+                                  {testTimerMode === 'TOTAL_TEST' && <span className="w-2 h-2 rounded-full bg-emerald-400" />}
+                                </div>
+                                <p className="text-[10px] text-slate-300 leading-snug">
+                                  Pura test ka timer. Question Grid se jump & time up par auto-submit.
+                                </p>
+                              </button>
+
+                              {/* Option 3: Mix Mode with Vibration */}
+                              <button
+                                type="button"
+                                onClick={() => setTestTimerMode('MIX')}
+                                className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                                  testTimerMode === 'MIX'
+                                    ? 'bg-purple-500/20 border-purple-400 text-white ring-1 ring-purple-400/50 shadow-md'
+                                    : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:border-slate-700'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-xs font-black text-purple-300 flex items-center gap-1">
+                                    📳 Mix (Vibrate Alert)
+                                  </span>
+                                  {testTimerMode === 'MIX' && <span className="w-2 h-2 rounded-full bg-purple-400" />}
+                                </div>
+                                <p className="text-[10px] text-slate-300 leading-snug">
+                                  No auto-next. Time hone par mobile vibrate karega & Grid se switch.
+                                </p>
                               </button>
                             </div>
+
+                            {/* Mode Specific Settings */}
+                            {testTimerMode === 'PER_QUESTION' && (
+                              <div className="space-y-2 pt-2 border-t border-slate-800">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[11px] font-bold text-slate-300">Har Sawal Ka Time:</span>
+                                  <span className="text-xs font-black text-amber-400">{selectedTimerDuration} Sec</span>
+                                </div>
+                                <div className="grid grid-cols-6 gap-1.5">
+                                  {[10, 15, 20, 30, 45, 60].map((sec) => (
+                                    <button
+                                      key={`dur_top_${sec}`}
+                                      type="button"
+                                      onClick={() => setSelectedTimerDuration(sec)}
+                                      className={`py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${
+                                        selectedTimerDuration === sec
+                                          ? 'bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-300'
+                                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                                      }`}
+                                    >
+                                      {sec}s
+                                    </button>
+                                  ))}
+                                </div>
+
+                                <div className="pt-2 flex items-center justify-between">
+                                  <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                                    <Zap size={13} className="text-emerald-400" /> Auto-Advance (Agla Sawal):
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setAutoAdvanceEnabled(!autoAdvanceEnabled)}
+                                    className={`px-2.5 py-1 rounded-lg text-xs font-black transition cursor-pointer ${
+                                      autoAdvanceEnabled
+                                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50'
+                                        : 'bg-slate-800 text-slate-400 border border-slate-700'
+                                    }`}
+                                  >
+                                    {autoAdvanceEnabled ? '⚡ ON (3s Auto)' : 'OFF (Manual)'}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {testTimerMode === 'TOTAL_TEST' && (
+                              <div className="space-y-2 pt-2 border-t border-slate-800">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[11px] font-bold text-slate-300">Pura Test Ka Total Time:</span>
+                                  <span className="text-xs font-black text-emerald-400">{totalTestMinutes} Minutes</span>
+                                </div>
+                                <div className="grid grid-cols-7 gap-1">
+                                  {[5, 10, 15, 20, 30, 45, 60].map((min) => (
+                                    <button
+                                      key={`total_min_${min}`}
+                                      type="button"
+                                      onClick={() => setTotalTestMinutes(min)}
+                                      className={`py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${
+                                        totalTestMinutes === min
+                                          ? 'bg-emerald-500 text-slate-950 shadow-md ring-2 ring-emerald-300'
+                                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                                      }`}
+                                    >
+                                      {min}m
+                                    </button>
+                                  ))}
+                                </div>
+                                <p className="text-[10px] text-emerald-300/90 bg-emerald-950/30 border border-emerald-500/30 rounded-xl p-2 mt-1">
+                                  💡 <b>Student Friendly Exam:</b> User kisi bhi sawal par kitna bhi time bita sakta hai, Question Grid se aage-peeche jump kar sakega, aur <b>{totalTestMinutes} minute</b> hote hi test automatically submit ho jayega!
+                                </p>
+                              </div>
+                            )}
+
+                            {testTimerMode === 'MIX' && (
+                              <div className="space-y-2.5 pt-2 border-t border-slate-800">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[11px] font-bold text-slate-300">1. Total Exam Time:</span>
+                                  <span className="text-xs font-black text-purple-400">{totalTestMinutes} Min</span>
+                                </div>
+                                <div className="grid grid-cols-6 gap-1">
+                                  {[5, 10, 15, 20, 30, 45].map((min) => (
+                                    <button
+                                      key={`mix_total_${min}`}
+                                      type="button"
+                                      onClick={() => setTotalTestMinutes(min)}
+                                      className={`py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${
+                                        totalTestMinutes === min
+                                          ? 'bg-purple-500 text-white shadow-md ring-2 ring-purple-300'
+                                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                                      }`}
+                                    >
+                                      {min}m
+                                    </button>
+                                  ))}
+                                </div>
+
+                                <div className="flex items-center justify-between pt-1">
+                                  <span className="text-[11px] font-bold text-slate-300">2. Ideal Question Pace (Alert):</span>
+                                  <span className="text-xs font-black text-amber-400">{mixPaceSeconds} Sec</span>
+                                </div>
+                                <div className="grid grid-cols-5 gap-1">
+                                  {[15, 20, 30, 45, 60].map((sec) => (
+                                    <button
+                                      key={`mix_pace_${sec}`}
+                                      type="button"
+                                      onClick={() => setMixPaceSeconds(sec)}
+                                      className={`py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${
+                                        mixPaceSeconds === sec
+                                          ? 'bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-300'
+                                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                                      }`}
+                                    >
+                                      {sec}s
+                                    </button>
+                                  ))}
+                                </div>
+
+                                <div className="pt-2 flex items-center justify-between border-t border-slate-800/80">
+                                  <span className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5">
+                                    <Smartphone size={13} className="text-purple-400" /> Phone Vibration Alert:
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setMixVibrateAlert(!mixVibrateAlert)}
+                                    className={`px-2.5 py-1 rounded-lg text-xs font-black transition cursor-pointer ${
+                                      mixVibrateAlert
+                                        ? 'bg-purple-500/20 text-purple-300 border border-purple-500/50'
+                                        : 'bg-slate-800 text-slate-400 border border-slate-700'
+                                    }`}
+                                  >
+                                    {mixVibrateAlert ? '📳 Vibrate ON' : 'Mute'}
+                                  </button>
+                                </div>
+
+                                <p className="text-[10px] text-purple-300/90 bg-purple-950/30 border border-purple-500/30 rounded-xl p-2">
+                                  ✨ <b>Self-Paced Alert Mode:</b> Sawal auto-change nahi hoga! {mixPaceSeconds}s hote hi student ka phone vibrate karega taaki pata chale ideal time beet gaya, aur student Question Grid se kisi bhi sawal par aage-peeche ja sakega.
+                                </p>
+                              </div>
+                            )}
                           </div>
 
                           {/* 3. Filter Section based on Mode & Domain */}
@@ -4820,23 +5182,134 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                             </button>
                           </div>
 
-                          {/* 5. Big Launch Button */}
-                          <button
-                            onClick={handleLaunchCuratedMcq}
-                            disabled={availableBattleSets.length === 0}
-                            className={`w-full py-3.5 rounded-xl font-black text-sm shadow-xl active:scale-95 transition cursor-pointer flex items-center justify-center gap-2 ${
-                              availableBattleSets.length === 0
-                                ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                                : currentRoom.mcqType === 'REVISION_HUB'
-                                ? 'bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-400 hover:to-indigo-500 text-white shadow-purple-900/30'
-                                : 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-amber-900/30'
-                            }`}
-                          >
-                            <Play size={16} className="fill-current" />
-                            <span>
-                              🚀 Launch {currentRoom.mcqType === 'REVISION_HUB' ? 'MCQ + Battle' : 'MCQ Battle'} Now ({selectedTimerDuration}s)
-                            </span>
-                          </button>
+                          {/* 5. Launch or Schedule Action Section (Last Step after choosing questions) */}
+                          <div className="space-y-3 pt-1">
+                            {/* Toggle between Launch Now vs Schedule */}
+                            <div className="p-1 rounded-2xl bg-slate-950 border border-slate-800 grid grid-cols-2 gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setLobbyActionTab('LAUNCH')}
+                                className={`py-2 px-3 rounded-xl text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                                  lobbyActionTab === 'LAUNCH'
+                                    ? 'bg-gradient-to-r from-indigo-600 to-cyan-600 text-white shadow-md'
+                                    : 'text-slate-400 hover:text-white'
+                                }`}
+                              >
+                                <Play size={13} className="fill-current" />
+                                <span>🚀 Abhi Shuru Karein</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!isBasicUser && !isUltraUser && !isAdmin) {
+                                    alert('Test schedule karne ka option Basic aur Ultra members ke liye hai. Kripya Store se upgrade karein.');
+                                    return;
+                                  }
+                                  setLobbyActionTab('SCHEDULE');
+                                }}
+                                className={`py-2 px-3 rounded-xl text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                                  lobbyActionTab === 'SCHEDULE'
+                                    ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 shadow-md'
+                                    : 'text-slate-400 hover:text-white'
+                                }`}
+                              >
+                                <Clock size={13} />
+                                <span>⏰ Schedule Karein</span>
+                                {!isBasicUser && !isUltraUser && !isAdmin && (
+                                  <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">VIP</span>
+                                )}
+                              </button>
+                            </div>
+
+                            {/* If LAUNCH tab selected */}
+                            {lobbyActionTab === 'LAUNCH' && (
+                              <button
+                                type="button"
+                                onClick={handleLaunchCuratedMcq}
+                                disabled={availableBattleSets.length === 0}
+                                className={`w-full py-3.5 rounded-xl font-black text-sm shadow-xl active:scale-95 transition cursor-pointer flex items-center justify-center gap-2 ${
+                                  availableBattleSets.length === 0
+                                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                                    : currentRoom.mcqType === 'REVISION_HUB'
+                                    ? 'bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-400 hover:to-indigo-500 text-white shadow-purple-900/30'
+                                    : 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-amber-900/30'
+                                }`}
+                              >
+                                <Play size={16} className="fill-current" />
+                                <span>
+                                  🚀 Launch {currentRoom.mcqType === 'REVISION_HUB' ? 'MCQ + Battle' : 'MCQ Battle'} Now (
+                                  {testTimerMode === 'PER_QUESTION'
+                                    ? `${selectedTimerDuration}s/Q`
+                                    : testTimerMode === 'TOTAL_TEST'
+                                    ? `${totalTestMinutes}m Exam`
+                                    : `${totalTestMinutes}m + ${mixPaceSeconds}s Alert`}
+                                  )
+                                </span>
+                              </button>
+                            )}
+
+                            {/* If SCHEDULE tab selected */}
+                            {lobbyActionTab === 'SCHEDULE' && (
+                              <div className="p-3.5 rounded-2xl bg-slate-950/90 border border-amber-500/40 space-y-3 animate-in fade-in duration-150">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-black text-amber-300 flex items-center gap-1.5">
+                                    <Clock size={14} className="text-amber-400" /> Test Shuru Hone Ka Samay Set Karein:
+                                  </span>
+                                  <span className="text-[10px] font-bold text-slate-400">
+                                    24-Hour Format
+                                  </span>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <label className="block text-[10px] font-bold text-slate-400 mb-1">Date:</label>
+                                    <input
+                                      type="date"
+                                      required
+                                      value={scheduledDate}
+                                      min={new Date().toISOString().split('T')[0]}
+                                      onChange={(e) => setScheduledDate(e.target.value)}
+                                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-[10px] font-bold text-slate-400 mb-1">Time:</label>
+                                    <input
+                                      type="time"
+                                      required
+                                      value={scheduledTime}
+                                      onChange={(e) => setScheduledTime(e.target.value)}
+                                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400"
+                                    />
+                                  </div>
+                                </div>
+
+                                <label className="flex items-start gap-2 text-xs text-slate-300 cursor-pointer pt-0.5">
+                                  <input
+                                    type="checkbox"
+                                    checked={autoRunWithoutHost}
+                                    onChange={(e) => setAutoRunWithoutHost(e.target.checked)}
+                                    className="mt-0.5 rounded text-amber-500 focus:ring-0"
+                                  />
+                                  <span className="text-[11px] leading-relaxed">
+                                    <b>Bina host ke auto-start:</b> Host offline rahe tab bhi samay aane par sabhi online students ke liye test apne aap shuru ho jayega!
+                                  </span>
+                                </label>
+
+                                <button
+                                  type="button"
+                                  onClick={handleScheduleCuratedMcq}
+                                  disabled={availableBattleSets.length === 0 || isSchedulingTest}
+                                  className="w-full py-3.5 rounded-xl font-black text-sm bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 shadow-xl shadow-amber-900/30 active:scale-95 transition cursor-pointer flex items-center justify-center gap-2"
+                                >
+                                  <Clock size={16} />
+                                  <span>
+                                    {isSchedulingTest ? 'Scheduling...' : `⏰ Confirm & Schedule Test (${scheduledTime} baje)`}
+                                  </span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       ) : (
                         <div className="py-4 space-y-4 max-w-lg mx-auto text-left">
@@ -4956,10 +5429,13 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                   )}
 
                   {/* Battle State: QUESTION or REVEAL */}
-                  {currentRoom.liveMcq?.isActive &&
+                    {currentRoom.liveMcq?.isActive &&
                     (currentRoom.liveMcq.status === 'QUESTION' || currentRoom.liveMcq.status === 'REVEAL') &&
                     (() => {
-                      const qIdx = currentRoom.liveMcq!.currentQuestionIndex;
+                      const isSelfPaced = currentRoom.liveMcq!.timerMode === 'TOTAL_TEST' || currentRoom.liveMcq!.timerMode === 'MIX';
+                      const qIdx = isSelfPaced
+                        ? Math.max(0, Math.min(studentActiveQIndex, (currentRoom.liveMcq!.questions?.length || 1) - 1))
+                        : currentRoom.liveMcq!.currentQuestionIndex;
                       const q = currentRoom.liveMcq!.questions[qIdx];
                       if (!q) return null;
 
@@ -4974,9 +5450,17 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                       const answeredCount = Object.keys(currentQAnswers).length;
                       const totalMembersCount = Math.max(roomMembers.length, 1);
 
+                      const totalMinutesRem = Math.floor(totalTestSecondsLeft / 60);
+                      const totalSecsRem = totalTestSecondsLeft % 60;
+                      const formattedExamTime = `${String(totalMinutesRem).padStart(2, '0')}:${String(totalSecsRem).padStart(2, '0')}`;
+                      const answeredQuestionsCount = Object.keys(localBattleStats.answers).length;
+                      const activeSelectedOption = isSelfPaced
+                        ? (localBattleStats.answers[qIdx]?.selectedOption ?? null)
+                        : selectedOption;
+
                       return (
                         <div
-                          className={`flex-1 flex flex-col justify-between space-y-4 ${
+                          className={`flex-1 flex flex-col justify-between space-y-3.5 ${
                             isProjector ? 'p-2 sm:p-4 rounded-3xl bg-slate-950 border-2 border-cyan-500/40' : ''
                           }`}
                         >
@@ -4994,25 +5478,67 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
 
                               {/* Timer Badge */}
                               <div className="flex items-center gap-2">
-                                <span className="text-[11px] font-bold text-slate-400 hidden sm:inline">
-                                  {answeredCount}/{totalMembersCount} Answered
-                                </span>
-                                {isReveal ? (
-                                  <span className="font-mono font-black px-2.5 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1 text-xs animate-pulse">
-                                    <FastForward size={14} /> Agla Sawal: {revealSecondsLeft}s
-                                  </span>
+                                {isSelfPaced ? (
+                                  <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                                    {/* Overall Exam Timer */}
+                                    <span
+                                      className={`font-mono font-black px-2.5 py-1 rounded-xl border flex items-center gap-1.5 text-xs shadow-sm ${
+                                        totalTestSecondsLeft <= 120
+                                          ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 animate-pulse'
+                                          : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                      }`}
+                                    >
+                                      <Timer size={14} className={totalTestSecondsLeft <= 120 ? 'text-rose-400' : 'text-emerald-400'} />
+                                      <span>Exam: {formattedExamTime}</span>
+                                    </span>
+
+                                    {/* Mix Mode Pace Badge */}
+                                    {currentRoom.liveMcq?.timerMode === 'MIX' && (
+                                      <span
+                                        className={`font-mono font-black px-2 py-1 rounded-xl border text-[11px] flex items-center gap-1 transition ${
+                                          paceSecondsLeft === 0
+                                            ? 'bg-purple-600 text-white border-purple-400 animate-bounce'
+                                            : 'bg-slate-800 text-purple-300 border-slate-700'
+                                        }`}
+                                        title="Ideal time for this question"
+                                      >
+                                        <Smartphone size={12} className={paceSecondsLeft === 0 ? 'text-white' : 'text-purple-400'} />
+                                        {paceSecondsLeft === 0 ? '📳 Pace Alert!' : `${paceSecondsLeft}s Pace`}
+                                      </span>
+                                    )}
+
+                                    {/* Finish Button */}
+                                    <button
+                                      type="button"
+                                      onClick={() => setShowSubmitConfirmModal(true)}
+                                      className="px-2.5 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs transition cursor-pointer shadow flex items-center gap-1"
+                                    >
+                                      <CheckCircle2 size={13} /> Submit Test
+                                    </button>
+                                  </div>
                                 ) : (
-                                  <span
-                                    className={`font-mono font-black flex items-center gap-1 ${
-                                      isProjector
-                                        ? 'text-xl sm:text-2xl text-cyan-300'
-                                        : mcqSecondsLeft <= 5
-                                        ? 'text-rose-400 animate-pulse text-base'
-                                        : 'text-amber-400 text-sm'
-                                    }`}
-                                  >
-                                    <Timer size={14} /> {mcqSecondsLeft}s
-                                  </span>
+                                  <>
+                                    <span className="text-[11px] font-bold text-slate-400 hidden sm:inline">
+                                      {answeredCount}/{totalMembersCount} Answered
+                                    </span>
+                                    {isReveal ? (
+                                      <span className="font-mono font-black px-2.5 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1 text-xs animate-pulse">
+                                        <FastForward size={14} /> Agla Sawal: {revealSecondsLeft}s
+                                      </span>
+                                    ) : (
+                                      <span
+                                        className={`font-mono font-black flex items-center gap-1 ${
+                                          isProjector
+                                            ? 'text-xl sm:text-2xl text-cyan-300'
+                                            : mcqSecondsLeft <= 5
+                                            ? 'text-rose-400 animate-pulse text-base'
+                                            : 'text-amber-400 text-sm'
+                                        }`}
+                                      >
+                                        <Timer size={14} /> {mcqSecondsLeft}s
+                                      </span>
+                                    )}
+                                  </>
                                 )}
                               </div>
                             </div>
@@ -5024,6 +5550,13 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                   className="h-full bg-emerald-400 transition-all duration-1000"
                                   style={{
                                     width: `${Math.max(10, ((2 - revealSecondsLeft) / 2) * 100)}%`,
+                                  }}
+                                />
+                              ) : isSelfPaced ? (
+                                <div
+                                  className="h-full bg-gradient-to-r from-emerald-500 to-indigo-500 transition-all duration-500"
+                                  style={{
+                                    width: `${Math.min(100, Math.max(5, (answeredQuestionsCount / totalQuestions) * 100))}%`,
                                   }}
                                 />
                               ) : (
@@ -5044,6 +5577,78 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                               )}
                             </div>
                           </div>
+
+                          {/* ── QUESTION PALETTE / GRID (JUMP TO ANY QUESTION) ── */}
+                          {isSelfPaced && (
+                            <div className="rounded-2xl bg-slate-900/95 border border-slate-700/80 p-3 space-y-2 shadow-lg">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-1.5">
+                                  <LayoutGrid size={14} className="text-indigo-400" />
+                                  <span className="text-xs font-black text-white">
+                                    Question Palette (Sawal Grid)
+                                  </span>
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
+                                    Attempted: <b className="text-emerald-400">{answeredQuestionsCount}</b>/{totalQuestions}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2 text-[10px] text-slate-400 hidden sm:flex">
+                                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> Done</span>
+                                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-indigo-500" /> Current</span>
+                                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-700" /> Left</span>
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto p-1.5 rounded-xl bg-slate-950/70 border border-slate-800">
+                                {currentRoom.liveMcq!.questions.map((_, idx) => {
+                                  const isAnswered = localBattleStats.answers[idx] !== undefined;
+                                  const isCurrent = qIdx === idx;
+                                  return (
+                                    <button
+                                      key={`q_grid_btn_${idx}`}
+                                      type="button"
+                                      onClick={() => {
+                                        setStudentActiveQIndex(idx);
+                                        setPaceSecondsLeft(currentRoom.liveMcq?.targetPaceSeconds || mixPaceSeconds || 20);
+                                        setHasPaceAlertTriggered(false);
+                                      }}
+                                      className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl text-xs font-black transition flex items-center justify-center cursor-pointer select-none ${
+                                        isCurrent
+                                          ? 'bg-indigo-600 text-white ring-2 ring-indigo-300 ring-offset-2 ring-offset-slate-950 scale-105 shadow-md z-10'
+                                          : isAnswered
+                                          ? 'bg-emerald-600 text-white border border-emerald-400 shadow-sm'
+                                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700'
+                                      }`}
+                                    >
+                                      {idx + 1}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Mix Mode Alert Banner if pace is reached */}
+                          {isSelfPaced && currentRoom.liveMcq?.timerMode === 'MIX' && paceSecondsLeft === 0 && (
+                            <div className="p-2.5 rounded-xl bg-purple-950/40 border border-purple-500/40 flex items-center justify-between text-xs text-purple-200 animate-in fade-in duration-150">
+                              <span className="flex items-center gap-1.5 font-bold">
+                                <Smartphone size={14} className="text-purple-400 animate-pulse" />
+                                <b>Pace Alert:</b> Is sawal ka chuna hua time pura ho gaya! Mobile vibrate hua. Agle sawal par switch karein.
+                              </span>
+                              {qIdx < totalQuestions - 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setStudentActiveQIndex(qIdx + 1);
+                                    setPaceSecondsLeft(currentRoom.liveMcq?.targetPaceSeconds || mixPaceSeconds || 20);
+                                    setHasPaceAlertTriggered(false);
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-black shrink-0 transition cursor-pointer"
+                                >
+                                  Next Q ➡
+                                </button>
+                              )}
+                            </div>
+                          )}
 
                           {/* Question Card */}
                           <div
@@ -5135,7 +5740,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                 ? 'bg-slate-900/90 border-slate-700 text-white hover:border-cyan-400 text-base sm:text-lg'
                                 : 'bg-slate-800/70 border-slate-700 text-slate-200 hover:bg-slate-700 text-xs md:text-sm';
 
-                              if (selectedOption === optIdx) {
+                              if (activeSelectedOption === optIdx) {
                                 btnStyle = isProjector
                                   ? 'bg-cyan-600/50 border-cyan-400 text-white ring-2 ring-cyan-400'
                                   : 'bg-indigo-600/40 border-indigo-400 text-white ring-2 ring-indigo-400';
@@ -5145,7 +5750,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                 if (optIdx === q.correctIndex) {
                                   btnStyle =
                                     'bg-emerald-600/40 border-emerald-500 text-emerald-200 ring-2 ring-emerald-500';
-                                } else if (selectedOption === optIdx && optIdx !== q.correctIndex) {
+                                } else if (activeSelectedOption === optIdx && optIdx !== q.correctIndex) {
                                   btnStyle = 'bg-rose-600/40 border-rose-500 text-rose-200';
                                 }
                               }
@@ -5154,7 +5759,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                 <button
                                   key={`battle_opt_${optIdx}`}
                                   onClick={() => handleSelectOption(optIdx)}
-                                  disabled={hasAnsweredCurrentQ || isReveal}
+                                  disabled={(!isSelfPaced && hasAnsweredCurrentQ) || isReveal}
                                   className={`p-3.5 sm:p-4 rounded-2xl border text-left font-bold flex items-center gap-3 transition active:scale-95 disabled:cursor-not-allowed cursor-pointer ${btnStyle}`}
                                 >
                                   <span
@@ -5175,6 +5780,52 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                             })}
                           </div>
 
+                          {/* Navigation Buttons for Self-Paced (Total Test and Mix modes) */}
+                          {isSelfPaced && (
+                            <div className="flex items-center justify-between gap-2 pt-1">
+                              <button
+                                type="button"
+                                disabled={qIdx === 0}
+                                onClick={() => {
+                                  if (qIdx > 0) {
+                                    setStudentActiveQIndex(qIdx - 1);
+                                    setPaceSecondsLeft(currentRoom.liveMcq?.targetPaceSeconds || mixPaceSeconds || 20);
+                                    setHasPaceAlertTriggered(false);
+                                  }
+                                }}
+                                className="px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-black text-slate-200 flex items-center gap-1.5 transition cursor-pointer"
+                              >
+                                <ChevronLeft size={16} /> Pichla Sawal
+                              </button>
+
+                              <span className="text-xs font-bold text-slate-400 hidden sm:inline">
+                                Q <b className="text-white">{qIdx + 1}</b> of {totalQuestions}
+                              </span>
+
+                              {qIdx < totalQuestions - 1 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setStudentActiveQIndex(qIdx + 1);
+                                    setPaceSecondsLeft(currentRoom.liveMcq?.targetPaceSeconds || mixPaceSeconds || 20);
+                                    setHasPaceAlertTriggered(false);
+                                  }}
+                                  className="px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl border border-indigo-500 bg-indigo-600 hover:bg-indigo-500 text-xs font-black text-white flex items-center gap-1.5 transition cursor-pointer shadow-md"
+                                >
+                                  Agla Sawal <ChevronRight size={16} />
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setShowSubmitConfirmModal(true)}
+                                  className="px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl border border-emerald-500 bg-emerald-600 hover:bg-emerald-500 text-xs font-black text-white flex items-center gap-1.5 transition cursor-pointer shadow-md"
+                                >
+                                  Test Submit Karein <CheckCircle2 size={16} />
+                                </button>
+                              )}
+                            </div>
+                          )}
+
                           {/* Answer Status or Explanation */}
                           {isReveal ? (
                             <div className="rounded-xl bg-emerald-950/40 border border-emerald-500/40 p-3 text-xs text-emerald-200 space-y-1">
@@ -5192,7 +5843,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                 <p className="text-xs text-emerald-300/90 pt-0.5">{q.explanation}</p>
                               )}
                             </div>
-                          ) : hasAnsweredCurrentQ ? (
+                          ) : !isSelfPaced && hasAnsweredCurrentQ ? (
                             <div className="text-center text-xs font-medium text-slate-400">
                               <span className="text-indigo-300 font-black flex items-center justify-center gap-1.5">
                                 <CheckCircle2 size={15} /> Aapka Uttar Darj Ho Gaya! (Option {selectedOption !== null ? String.fromCharCode(65 + selectedOption) : ''} Chuna) • Timer khatam hote hi agla sawal aayega ({mcqSecondsLeft}s)...
@@ -6248,122 +6899,9 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                     MCQ Mode & Chapter Selection:
                   </p>
                   <p className="text-[11px] text-slate-300 leading-relaxed">
-                    Room banne ke baad aap Room Lobby me <b>🎯 MCQ Mode</b> ya <b>⚡ MCQ + Mode</b> chunn sakte hain aur kisi bhi book ya chapter ka Live Test start kar sakte hain.
+                    Room banne ke baad aap Room Lobby me <b>🎯 MCQ Mode</b> ya <b>⚡ MCQ + Mode</b> chunn sakte hain, question choose karke turant <b>🚀 Launch</b> ya <b>⏰ Schedule</b> kar sakte hain.
                   </p>
                 </div>
-              </div>
-
-              {/* ── LIVE NOW VS SCHEDULE TOGGLE ── */}
-              <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-300">Room Type:</span>
-                  <span className="text-[10px] text-amber-300 font-bold">
-                    {isScheduleMode ? '⏰ Scheduled Room (Basic & Ultra)' : '⚡ Instant Live Room'}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsScheduleMode(false)}
-                    className={`py-2 px-3 rounded-xl border text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 ${
-                      !isScheduleMode
-                        ? 'bg-indigo-600/30 border-indigo-400 text-white shadow-sm ring-1 ring-indigo-500'
-                        : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <span>⚡ Abhi Shuru Karein</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!isBasicUser && !isUltraUser && !isAdmin) {
-                        alert('Room schedule karne ka option Basic aur Ultra members ke liye hai. Kripya Store se upgrade karein.');
-                        return;
-                      }
-                      setIsScheduleMode(true);
-                    }}
-                    className={`py-2 px-3 rounded-xl border text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 ${
-                      isScheduleMode
-                        ? 'bg-amber-500/30 border-amber-400 text-amber-300 shadow-sm ring-1 ring-amber-500'
-                        : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <span>⏰ Schedule Karein</span>
-                    {!isBasicUser && !isUltraUser && !isAdmin && (
-                      <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">VIP</span>
-                    )}
-                  </button>
-                </div>
-
-                {isScheduleMode && (
-                  <div className="pt-2 space-y-3 border-t border-slate-800 animate-in fade-in duration-150">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-[10px] font-bold text-slate-400 mb-1">Date:</label>
-                        <input
-                          type="date"
-                          required
-                          value={scheduledDate}
-                          min={new Date().toISOString().split('T')[0]}
-                          onChange={(e) => setScheduledDate(e.target.value)}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-slate-400 mb-1">Time (24 Hr):</label>
-                        <input
-                          type="time"
-                          required
-                          value={scheduledTime}
-                          onChange={(e) => setScheduledTime(e.target.value)}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Pre-select Questions for Scheduled Room */}
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 mb-1 flex items-center justify-between">
-                        <span>Select Chapter / Questions:</span>
-                        <span className="text-[9px] text-emerald-400 font-bold">
-                          {selectedPreloadLesson ? `✅ ${selectedPreloadLesson.questions?.length || 0} Questions` : 'Curated Set'}
-                        </span>
-                      </label>
-                      <select
-                        value={selectedPreloadLesson?.lessonTitle || ''}
-                        onChange={(e) => {
-                          const found = allRealLessons.find((l) => l.lessonTitle === e.target.value);
-                          if (found) setSelectedPreloadLesson(found);
-                          else setSelectedPreloadLesson(null);
-                        }}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-white outline-none focus:border-amber-400"
-                      >
-                        <option value="">🎯 Curated General Knowledge MCQs (Auto-Selected)</option>
-                        {allRealLessons.slice(0, 50).map((l, i) => (
-                          <option key={`sched_les_${i}_${l.lessonTitle}`} value={l.lessonTitle}>
-                            📖 {l.lessonTitle} ({l.questions?.length || 0} MCQs) - {l.subject || 'General'}
-                          </option>
-                        ))}
-                      </select>
-                      <p className="text-[10px] text-slate-400 mt-1">
-                        Aap chapter select kar sakte hain ya default questions rehne de sakte hain.
-                      </p>
-                    </div>
-
-                    {/* Auto-Run without Host Checkbox */}
-                    <label className="flex items-start gap-2 text-xs text-slate-300 cursor-pointer pt-1">
-                      <input
-                        type="checkbox"
-                        checked={autoRunWithoutHost}
-                        onChange={(e) => setAutoRunWithoutHost(e.target.checked)}
-                        className="mt-0.5 rounded text-indigo-500 focus:ring-0"
-                      />
-                      <span className="text-[11px] leading-relaxed">
-                        <b>Bina host ke auto-run karein:</b> Host absent rahe tab bhi time aane par test apne aap shuru hoga aur har question ke baad auto-next question hoga!
-                      </span>
-                    </label>
-                  </div>
-                )}
               </div>
 
               {/* Room Duration Selection based on Plan */}
@@ -7027,6 +7565,97 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
             >
               Main Samajh Gaya (Test Jari Rakhein)
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── TEST SUBMIT CONFIRMATION MODAL (Total Test & Mix Mode) ── */}
+      {showSubmitConfirmModal && currentRoom?.liveMcq && (
+        <div className="fixed inset-0 z-[12000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in zoom-in-95 duration-150">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-3xl p-5 sm:p-6 shadow-2xl space-y-4 text-slate-100">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-black text-white flex items-center gap-2">
+                <CheckCircle2 size={18} className="text-emerald-400" /> Test Submit Karein?
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowSubmitConfirmModal(false)}
+                className="w-7 h-7 rounded-full bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center cursor-pointer"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Kul Sawal:</span>
+                <span className="font-black text-white">
+                  {currentRoom.liveMcq.totalQuestions || currentRoom.liveMcq.questions?.length || 0}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Attempt Kiye Gaye:</span>
+                <span className="font-black text-emerald-400">
+                  {Object.keys(localBattleStats.answers).length}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Bache Huye Sawal:</span>
+                <span className="font-black text-amber-400">
+                  {Math.max(
+                    0,
+                    (currentRoom.liveMcq.totalQuestions || currentRoom.liveMcq.questions?.length || 0) -
+                      Object.keys(localBattleStats.answers).length
+                  )}
+                </span>
+              </div>
+              <div className="flex items-center justify-between border-t border-slate-800 pt-2">
+                <span className="text-slate-400">Bacha Hua Samay:</span>
+                <span className="font-black text-cyan-300">
+                  {Math.floor(totalTestSecondsLeft / 60)}m {totalTestSecondsLeft % 60}s
+                </span>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Kya aap sach me test submit karna chahte hain? Submit karte hi aapka scorecard generate hoga aur final result screen khulegi.
+            </p>
+
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowSubmitConfirmModal(false)}
+                className="py-2.5 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-black transition cursor-pointer"
+              >
+                Aur Hal Karein
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setShowSubmitConfirmModal(false);
+                  if (isElectedRunner) {
+                    await endLiveMcqBattle(currentRoom.id).catch(console.warn);
+                  } else {
+                    setCurrentRoom((prev) => {
+                      if (!prev || !prev.liveMcq) return prev;
+                      const updated = {
+                        ...prev,
+                        liveMcq: {
+                          ...prev.liveMcq,
+                          status: 'ENDED' as const,
+                          isActive: false,
+                        },
+                      };
+                      saveCachedRoom(updated);
+                      return updated;
+                    });
+                  }
+                }}
+                className="py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition cursor-pointer shadow-lg"
+              >
+                Haan, Submit Karein
+              </button>
+            </div>
           </div>
         </div>
       )}
