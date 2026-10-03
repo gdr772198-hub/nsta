@@ -56,6 +56,8 @@ function openVaultDB(): Promise<IDBDatabase> {
   });
 }
 
+const CACHE_VAULT_NAME = 'NSTA_OFFLINE_MEDIA_CACHE_V1';
+
 /**
  * Normalizes media URLs for download (handles Google Drive export links, Telegram proxy, etc.)
  */
@@ -67,7 +69,7 @@ function normalizeDownloadUrl(rawUrl: string): string {
   if (url.includes('drive.google.com') && !url.includes('export=download')) {
     const fileIdMatch = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
     if (fileIdMatch && fileIdMatch[1]) {
-      return `https://drive.google.com/uc?export=download&id=${fileIdMatch[1]}`;
+      return `https://drive.google.com/uc?export=download&id=${fileIdMatch[1]}&confirm=t`;
     }
   }
 
@@ -75,9 +77,51 @@ function normalizeDownloadUrl(rawUrl: string): string {
 }
 
 /**
- * Downloads a remote URL file directly as a Blob and stores it in the in-app IndexedDB.
- * Automatically tries direct download first, and if blocked by CORS / host policy,
- * falls back to a CORS proxy so users can save the media offline.
+ * Safely saves a media Blob to the PWA CacheStorage API for high performance
+ */
+async function saveBlobToCacheStorage(id: string, blob: Blob, mimeType: string): Promise<boolean> {
+  if (typeof window === 'undefined' || !('caches' in window)) return false;
+  try {
+    const cache = await window.caches.open(CACHE_VAULT_NAME);
+    const fakeRequestUrl = `/_offline_vault_media/${encodeURIComponent(id)}`;
+    const response = new Response(blob, {
+      status: 200,
+      headers: {
+        'Content-Type': mimeType,
+        'Content-Length': String(blob.size),
+        'X-Offline-Vault-Id': id,
+      },
+    });
+    await cache.put(fakeRequestUrl, response);
+    return true;
+  } catch (err) {
+    console.warn('[OfflineStorage] CacheStorage save fallback to IndexedDB:', err);
+    return false;
+  }
+}
+
+/**
+ * Safely retrieves a media Blob from the PWA CacheStorage API
+ */
+async function getBlobFromCacheStorage(id: string): Promise<Blob | null> {
+  if (typeof window === 'undefined' || !('caches' in window)) return null;
+  try {
+    const cache = await window.caches.open(CACHE_VAULT_NAME);
+    const fakeRequestUrl = `/_offline_vault_media/${encodeURIComponent(id)}`;
+    const matched = await cache.match(fakeRequestUrl);
+    if (matched) {
+      return await matched.blob();
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Downloads a remote URL file directly as a Blob and stores it in the in-app PWA Cache & IndexedDB.
+ * Automatically tries direct download first, then internal backend streaming proxy (/api/media-proxy),
+ * followed by resilient public proxies.
  */
 export async function downloadAndSaveOfflineMedia(
   meta: Omit<OfflineMediaMeta, 'sizeBytes' | 'downloadedAt'>,
@@ -114,29 +158,57 @@ export async function downloadAndSaveOfflineMedia(
     });
   };
 
-  let blob: Blob;
+  let blob: Blob | null = null;
+
+  // 1. Try Direct Download (Works for same-origin or CORS-enabled CDNs)
   try {
-    // 1. Try direct download
     blob = await fetchBlob(targetUrl);
   } catch (directErr) {
-    console.warn('[OfflineStorage] Direct download failed, attempting via CORS proxy...', directErr);
+    console.log('[OfflineStorage] Direct download skipped/blocked by CORS, trying internal proxy...', directErr);
+  }
+
+  // 2. Try Internal Streamer Route (/api/media-proxy?url=...)
+  if (!blob) {
     try {
-      // 2. Fallback to CORS proxy
-      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
-      blob = await fetchBlob(proxyUrl);
-    } catch (proxyErr) {
-      console.warn('[OfflineStorage] CORS proxy download also failed:', proxyErr);
-      throw new Error('Network error or CORS restriction during media download');
+      const internalProxyUrl = `/api/media-proxy?url=${encodeURIComponent(targetUrl)}`;
+      blob = await fetchBlob(internalProxyUrl);
+    } catch (intProxyErr) {
+      console.warn('[OfflineStorage] Internal media-proxy failed, trying fallback stream...', intProxyErr);
     }
   }
 
+  // 3. Fallback to resilient CORS proxies if needed
+  if (!blob) {
+    const fallbackProxies = [
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+      `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+    ];
+    for (const pUrl of fallbackProxies) {
+      try {
+        blob = await fetchBlob(pUrl);
+        if (blob) break;
+      } catch (err) {
+        console.warn('[OfflineStorage] Fallback proxy attempt failed:', pUrl, err);
+      }
+    }
+  }
+
+  if (!blob) {
+    throw new Error('Video/Media in-app offline download nahi ho paya. Please try again.');
+  }
+
   const mimeType = blob.type || (meta.kind === 'video' ? 'video/mp4' : meta.kind === 'audio' ? 'audio/mpeg' : 'application/pdf');
+
+  // Store Blob in high-performance PWA Cache Storage
+  const savedInCache = await saveBlobToCacheStorage(meta.id, blob, mimeType);
+
   const completeItem: OfflineVaultRecord = {
     ...meta,
     mimeType,
     sizeBytes: blob.size,
     downloadedAt: Date.now(),
-    blob,
+    // Keep blob in IndexedDB as fallback if CacheStorage is not available
+    blob: savedInCache ? (null as any) : blob,
   };
 
   const db = await openVaultDB();
@@ -219,28 +291,37 @@ export async function isMediaOffline(id: string): Promise<boolean> {
 }
 
 /**
- * Retrieves a playable/readable Object URL from the stored Blob
+ * Retrieves a playable/readable Object URL from the stored CacheStorage or IndexedDB Blob
  */
 export async function getOfflineMediaObjectUrl(id: string): Promise<{ url: string; record: OfflineMediaMeta } | null> {
   try {
     const db = await openVaultDB();
-    return new Promise((resolve, reject) => {
+    const itemMeta: OfflineVaultRecord | null = await new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readonly');
       const store = tx.objectStore(STORE_NAME);
       const req = store.get(id);
-
-      req.onsuccess = () => {
-        const item = req.result as OfflineVaultRecord;
-        if (!item || !item.blob) {
-          resolve(null);
-          return;
-        }
-        const objectUrl = URL.createObjectURL(item.blob);
-        const { blob: _, ...meta } = item;
-        resolve({ url: objectUrl, record: meta });
-      };
+      req.onsuccess = () => resolve((req.result as OfflineVaultRecord) || null);
       req.onerror = () => reject(req.error);
     });
+
+    if (!itemMeta) return null;
+
+    // 1. Try reading Blob from CacheStorage first (High performance)
+    const cachedBlob = await getBlobFromCacheStorage(id);
+    if (cachedBlob) {
+      const objectUrl = URL.createObjectURL(cachedBlob);
+      const { blob: _, ...meta } = itemMeta;
+      return { url: objectUrl, record: meta };
+    }
+
+    // 2. Fallback to IndexedDB stored Blob
+    if (itemMeta.blob) {
+      const objectUrl = URL.createObjectURL(itemMeta.blob);
+      const { blob: _, ...meta } = itemMeta;
+      return { url: objectUrl, record: meta };
+    }
+
+    return null;
   } catch (err) {
     console.error('[OfflineVault] Error reading blob:', err);
     return null;
@@ -248,10 +329,19 @@ export async function getOfflineMediaObjectUrl(id: string): Promise<{ url: strin
 }
 
 /**
- * Deletes a specific media item from offline storage
+ * Deletes a specific media item from offline storage (CacheStorage and IndexedDB)
  */
 export async function deleteOfflineMedia(id: string): Promise<boolean> {
   try {
+    // Delete from CacheStorage
+    if (typeof window !== 'undefined' && 'caches' in window) {
+      try {
+        const cache = await window.caches.open(CACHE_VAULT_NAME);
+        await cache.delete(`/_offline_vault_media/${encodeURIComponent(id)}`);
+      } catch {}
+    }
+
+    // Delete from IndexedDB
     const db = await openVaultDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');
@@ -267,10 +357,18 @@ export async function deleteOfflineMedia(id: string): Promise<boolean> {
 }
 
 /**
- * Clears all downloaded offline files from storage
+ * Clears all downloaded offline files from storage (CacheStorage and IndexedDB)
  */
 export async function clearAllOfflineVault(): Promise<boolean> {
   try {
+    // Clear CacheStorage
+    if (typeof window !== 'undefined' && 'caches' in window) {
+      try {
+        await window.caches.delete(CACHE_VAULT_NAME);
+      } catch {}
+    }
+
+    // Clear IndexedDB
     const db = await openVaultDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');

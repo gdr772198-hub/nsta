@@ -250,19 +250,21 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
 
-      await authPersistenceReady;
+      // Run persistence in background without blocking synchronous user click gesture:
+      void setPersistence(auth, browserLocalPersistence).catch(() => {});
+
+      // In-App Popup: Keeps user inside the application without navigating away
       const result = await signInWithPopup(auth, provider);
       await completeGoogleRedirectLogin(result.user);
     } catch (err: any) {
-      if (err.code === 'auth/popup-blocked' || err.code === 'auth/operation-not-supported-in-this-environment') {
-        try {
-          const redirectProvider = new GoogleAuthProvider();
-          redirectProvider.setCustomParameters({ prompt: 'select_account' });
-          await signInWithRedirect(auth, redirectProvider);
-          return;
-        } catch (redirectError: any) {
-          setError(getAuthErrorMessage(redirectError, 'Google Login fail hua.'));
-        }
+      console.warn('[Auth] Google in-app sign-in error:', err);
+      if (err.code === 'auth/popup-closed-by-user') {
+        // User closed the account selector popup voluntarily
+        setError(null);
+      } else if (err.code === 'auth/popup-blocked') {
+        setError('Google popup window block ho gayi. Kripya browser setting me popups allow karein ya button par dobara tap karein.');
+      } else if (err.code === 'auth/cancelled-popup-request') {
+        // Ignored
       } else {
         setError(getAuthErrorMessage(err, 'Google Login fail hua.'));
       }

@@ -2043,7 +2043,7 @@ export interface StudentTestAttempt {
   answers: Record<number, number>; // question index -> selected answer index
 }
 
-export type StudentTab = 'HOME' | 'EXPLORE' | 'COURSES' | 'ROUTINE' | 'HISTORY' | 'REDEEM' | 'PREMIUM' | 'GAME' | 'EARN' | 'WEEKLY_TEST' | 'PROFILE' | 'LEADERBOARD' | 'STORE' | 'VIDEO' | 'PDF' | 'MCQ' | 'ANALYTICS' | 'PRIZES' | 'REWARDS' | 'UPDATES' | 'IIC_GALLERY' | 'SUPPORT' | 'CUSTOM_PAGE' | 'AI_CHAT' | 'REVISION' | 'MCQ_REVIEW' | 'AI_HUB' | 'AI_STUDIO' | 'UNIVERSAL_VIDEO' | 'DOWNLOADS' | 'APP_STORE' | 'THEME_BUILDER';
+export type StudentTab = 'HOME' | 'EXPLORE' | 'COURSES' | 'ROUTINE' | 'HISTORY' | 'REDEEM' | 'PREMIUM' | 'GAME' | 'EARN' | 'WEEKLY_TEST' | 'PROFILE' | 'LEADERBOARD' | 'STORE' | 'VIDEO' | 'PDF' | 'MCQ' | 'ANALYTICS' | 'PRIZES' | 'REWARDS' | 'UPDATES' | 'IIC_GALLERY' | 'SUPPORT' | 'CUSTOM_PAGE' | 'AI_CHAT' | 'REVISION' | 'MCQ_REVIEW' | 'AI_HUB' | 'AI_STUDIO' | 'UNIVERSAL_VIDEO' | 'DOWNLOADS' | 'THEME_BUILDER';
 
 export interface UserCustomTheme {
   id: string;

@@ -37,6 +37,8 @@ import {
   ShieldCheck,
   MessageSquare,
   Video,
+  Wrench,
+  Rocket,
 } from 'lucide-react';
 import { ref, onValue, set, remove, push, update } from 'firebase/database';
 import {
@@ -116,6 +118,8 @@ interface CommunityPostFeedProps {
   externalShowComposer?: boolean;
   onShowComposerChange?: (show: boolean) => void;
   onUserUpdate?: (user: User) => void;
+  onSwitchToTools?: () => void;
+  onSwitchToInfo?: () => void;
 }
 
 type FilterType = 'ALL' | 'OFFICIAL' | 'BUG_REPORT' | 'DOUBT' | 'MINE' | 'UNDER_REVIEW' | 'NOTES_FIX';
@@ -131,6 +135,8 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
   externalShowComposer,
   onShowComposerChange,
   onUserUpdate,
+  onSwitchToTools,
+  onSwitchToInfo,
 }) => {
   const isGuestUser = !user?.email && user?.provider !== 'email' && user?.provider !== 'google' && !!(user?.isGuest || user?.isAnonymous || user?.role === 'GUEST');
   const [guestModalOpen, setGuestModalOpen] = useState(false);

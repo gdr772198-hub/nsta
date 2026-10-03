@@ -142,7 +142,6 @@ import { PullToRefresh } from "./PullToRefresh";
 import pLimit from "p-limit";
 import { RedeemSection } from "./RedeemSection";
 import { Store } from "./Store";
-import { AppStore } from "./AppStore";
 import { McqHub } from "./McqHub";
 import { DraggableNstaLogoFab } from "./DraggableNstaLogoFab";
 import { LevelUpCelebrationModal } from "./LevelUpCelebrationModal";
@@ -10225,7 +10224,7 @@ export const StudentDashboard: React.FC<Props> = ({
                   <button
                     onClick={() => {
                       if (_isEntryLocked) {
-                        showAlert('ðŸ”’ This lesson is locked! Get a Redeem Code from your Admin and enter it in Profile â†’ Redeem tab.', 'INFO');
+                        showAlert('í ½í´’ This lesson is locked! Get a Redeem Code from your Admin and enter it in Profile â†’ Redeem tab.', 'INFO');
                         return;
                       }
                       if (_showEntryRoutineLock) {
@@ -14181,17 +14180,7 @@ export const StudentDashboard: React.FC<Props> = ({
         />
       );
     }
-    if ((activeTab as string) === "APP_STORE") {
-      if (settings?.appStorePageHidden) {
-        return (
-          <div className="text-center py-20 bg-slate-50 rounded-2xl border border-slate-100">
-            <h3 className="text-lg font-bold text-slate-700">App Store unavailable</h3>
-            <p className="text-sm text-slate-500 mt-1">This page has been hidden by admin.</p>
-          </div>
-        );
-      }
-      return <AppStore settings={settings} user={user} onUserUpdate={handleUserUpdate} />;
-    }
+    
     if ((activeTab as string) === "THEME_CUSTOMIZER") {
       return (
         <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -22222,7 +22211,7 @@ export const StudentDashboard: React.FC<Props> = ({
               onClose={() => {
                 setShowChat(false);
               }}
-              isAdmin={false}
+              isAdmin={_isAdminUser}
               isFeedOnly={chatMode === 'COMMUNITY'}
               isMcqOnly={false}
               isSupportOnly={chatMode === 'SUPPORT'}
