@@ -102,6 +102,7 @@ import {
   electAndPromoteHighestLevelHost,
   awardRoomStudyXp,
   syncMemberLiveStats,
+  formatDayHourMinSec,
 } from '../services/groupStudyService';
 import { getLevelFromScore } from '../utils/levelSystem';
 import { rotateScreen } from '../utils/displayPrefs';
@@ -416,6 +417,14 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
 
   // ── Room Time Expiry Countdown ────────────────────────────────────────────
   const [roomSecondsLeft, setRoomSecondsLeft] = useState<number>(0);
+  const [liveClockNow, setLiveClockNow] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setLiveClockNow(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // ── Chat & Doubts State ───────────────────────────────────────────────────
   const [chatMessage, setChatMessage] = useState<string>('');
@@ -2272,24 +2281,17 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
       isRoomCreatedByMe(currentRoom.id, currentRoom.hostId, user?.id) ||
       (auth.currentUser?.uid && currentRoom.hostId === auth.currentUser.uid);
 
-    let promptText = 'Kya aap is Group Study Room se bahar aana chahte hain?';
-    if (isRoomHost) {
-      if (otherMembersCount > 0) {
-        promptText = '⚠️ Aap is Room ke HOST hain! Aapke leave karte hi room band nahi hoga — Highest Level & XP wale user naye Host ban jayenge. Kya aap leave karna chahte hain?';
-      } else {
-        promptText = '⚠️ Aap is Room ke akele sadasya hain. Aapke leave karne par room close ho jayega. Kya aap leave karna chahte hain?';
-      }
+    let promptText = 'Kya aap is Group Study Room se bahar aana chahte hain? (Room destroy nahi hoga, aap ya anya sadasya kabhi bhi wapas jud sakte hain).';
+    if (isRoomHost && otherMembersCount > 0) {
+      promptText = '⚠️ Aap is Room ke HOST hain! Aapke leave karte hi room band nahi hoga — Highest Level & XP wale user naye Host ban jayenge. Kya aap leave karna chahte hain?';
     }
 
     if (confirm(promptText)) {
       const rId = currentRoom.id;
       setCurrentRoom(null);
       if (onActiveRoomChange) onActiveRoomChange(null);
-      if (isRoomHost && otherMembersCount === 0) {
-        await deleteGroupRoom(rId);
-      } else {
-        await leaveGroupRoom(rId, user?.id || 'guest', user?.name || 'Student');
-      }
+      // Room se bahar aane pe ab room destroy nahi hoga
+      await leaveGroupRoom(rId, user?.id || 'guest', user?.name || 'Student');
     }
   };
 
@@ -2658,10 +2660,12 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
       };
 
       saveCachedRoom(updatedRoom);
-      setCurrentRoom(updatedRoom);
-      if (onActiveRoomChange) onActiveRoomChange(updatedRoom);
+      // Room schedule karne ke baad host room se bahar chala jayega (returns to lobby/list)
+      setCurrentRoom(null);
+      if (onActiveRoomChange) onActiveRoomChange(null);
+      await leaveGroupRoom(updatedRoom.id, user?.id || 'guest', user?.name || 'Student');
 
-      alert(`🎉 Test schedule ho gaya! Start time: ${new Date(scheduledStartTime).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}.`);
+      alert(`🎉 Test schedule ho gaya!\n⏰ Start Time: ${new Date(scheduledStartTime).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}\n\nHost room se bahar aa gaye hain. Room list me countdown chal raha hai. Samay aane par test auto-start hoga aur aap ya koi bhi sadasya kabhi bhi wapas join kar sakte hain!`);
     } catch (e: any) {
       alert('Schedule karne me samasya: ' + (e?.message || 'Unknown error'));
     } finally {
@@ -3634,6 +3638,45 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                             Topic: <span className="text-slate-200 font-semibold">{room.subject}</span>
                           </p>
 
+                          {/* Live Day, Hour, Min, Sec Cooldown Banner */}
+                          {room.isScheduled && room.scheduledStartTime && (() => {
+                            const cd = formatDayHourMinSec(room.scheduledStartTime, liveClockNow);
+                            return (
+                              <div className="mb-3 p-2.5 rounded-xl bg-amber-950/40 border border-amber-500/40 text-amber-300 shadow-inner">
+                                <div className="flex items-center justify-between gap-1.5 mb-1.5">
+                                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1">
+                                    <Clock size={11} className="text-amber-400 shrink-0" />
+                                    <span>{cd.isStarted ? 'Test Time Active:' : '⏳ Room Cooldown (Starts In):'}</span>
+                                  </span>
+                                  {cd.isStarted && (
+                                    <span className="text-[10px] font-black text-emerald-400 animate-pulse">🟢 Active Now!</span>
+                                  )}
+                                </div>
+                                <div className="flex items-center justify-center gap-1 font-mono text-center">
+                                  <div className="flex-1 py-1 px-1 rounded-lg bg-slate-950/90 border border-amber-500/30">
+                                    <span className="block text-xs font-black text-amber-300">{cd.days}</span>
+                                    <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-400">Day</span>
+                                  </div>
+                                  <span className="text-amber-400 font-bold text-xs">:</span>
+                                  <div className="flex-1 py-1 px-1 rounded-lg bg-slate-950/90 border border-amber-500/30">
+                                    <span className="block text-xs font-black text-amber-300">{String(cd.hours).padStart(2, '0')}</span>
+                                    <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-400">Hour</span>
+                                  </div>
+                                  <span className="text-amber-400 font-bold text-xs">:</span>
+                                  <div className="flex-1 py-1 px-1 rounded-lg bg-slate-950/90 border border-amber-500/30">
+                                    <span className="block text-xs font-black text-amber-300">{String(cd.minutes).padStart(2, '0')}</span>
+                                    <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-400">Min</span>
+                                  </div>
+                                  <span className="text-amber-400 font-bold text-xs">:</span>
+                                  <div className="flex-1 py-1 px-1 rounded-lg bg-slate-950/90 border border-amber-500/30">
+                                    <span className="block text-xs font-black text-amber-300">{String(cd.seconds).padStart(2, '0')}</span>
+                                    <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-400">Sec</span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })()}
+
                           <div className="flex items-center justify-between gap-2 mb-4 text-xs text-slate-400 flex-wrap">
                             <div className="flex items-center gap-2">
                               <div className="w-6 h-6 rounded-full bg-slate-700 flex items-center justify-center text-[10px] font-bold text-slate-300">
@@ -4137,28 +4180,49 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                       </p>
 
                       {/* Scheduled Room Countdown Banner */}
-                      {currentRoom.isScheduled && currentRoom.scheduledStartTime && (
-                        <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-purple-500/20 border border-amber-500/40 text-center space-y-2.5 max-w-md mx-auto shadow-xl">
-                          <div className="flex items-center justify-center gap-2 text-amber-300 font-black text-sm">
-                            <Clock size={16} className="text-amber-400" />
-                            <span>⏰ Scheduled MCQ Test Room</span>
+                      {currentRoom.isScheduled && currentRoom.scheduledStartTime && (() => {
+                        const cd = formatDayHourMinSec(currentRoom.scheduledStartTime, liveClockNow);
+                        return (
+                          <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-purple-500/20 border border-amber-500/40 text-center space-y-3 max-w-md mx-auto shadow-xl">
+                            <div className="flex items-center justify-center gap-2 text-amber-300 font-black text-sm">
+                              <Clock size={16} className="text-amber-400" />
+                              <span>⏰ Scheduled MCQ Test Room</span>
+                            </div>
+                            <p className="text-xs text-slate-200">
+                              Test Start Samay: <b className="text-white">{new Date(currentRoom.scheduledStartTime).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</b>
+                            </p>
+
+                            {/* Live Day Hour Min Sec Cooldown Blocks */}
+                            <div className="flex items-center justify-center gap-2 py-1">
+                              <div className="flex items-center gap-1.5 font-mono">
+                                <div className="px-3 py-2 rounded-xl bg-slate-950/90 border border-amber-500/40 text-center min-w-[50px] shadow-inner">
+                                  <span className="block text-base font-black text-amber-300">{cd.days}</span>
+                                  <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-400">Day</span>
+                                </div>
+                                <span className="font-bold text-amber-400 text-sm">:</span>
+                                <div className="px-3 py-2 rounded-xl bg-slate-950/90 border border-amber-500/40 text-center min-w-[50px] shadow-inner">
+                                  <span className="block text-base font-black text-amber-300">{String(cd.hours).padStart(2, '0')}</span>
+                                  <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-400">Hour</span>
+                                </div>
+                                <span className="font-bold text-amber-400 text-sm">:</span>
+                                <div className="px-3 py-2 rounded-xl bg-slate-950/90 border border-amber-500/40 text-center min-w-[50px] shadow-inner">
+                                  <span className="block text-base font-black text-amber-300">{String(cd.minutes).padStart(2, '0')}</span>
+                                  <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-400">Min</span>
+                                </div>
+                                <span className="font-bold text-amber-400 text-sm">:</span>
+                                <div className="px-3 py-2 rounded-xl bg-slate-950/90 border border-amber-500/40 text-center min-w-[50px] shadow-inner">
+                                  <span className="block text-base font-black text-amber-300">{String(cd.seconds).padStart(2, '0')}</span>
+                                  <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-400">Sec</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <p className="text-[11px] text-slate-300">
+                              ⚡ <b>Host ke bina bhi chalega:</b> Time aane par test <b>automatically start</b> ho jayega aur questions auto-advance honge!
+                            </p>
                           </div>
-                          <p className="text-xs text-slate-200">
-                            Test Start Samay: <b className="text-white">{new Date(currentRoom.scheduledStartTime).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</b>
-                          </p>
-                          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-950 border border-amber-500/50 text-amber-400 font-mono text-base font-black shadow-inner">
-                            <span className="text-slate-400 text-xs font-sans">Starts In:</span>
-                            <span>
-                              {Math.max(0, currentRoom.scheduledStartTime - Date.now()) > 0
-                                ? formatSeconds(Math.floor((currentRoom.scheduledStartTime - Date.now()) / 1000))
-                                : '00:00 (Starting now!)'}
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-slate-300">
-                            ⚡ <b>Host ke bina bhi chalega:</b> Time aane par test <b>automatically start</b> ho jayega aur questions auto-advance honge!
-                          </p>
-                        </div>
-                      )}
+                        );
+                      })()}
 
                       {isHost ? (
                         <div className="space-y-3.5 max-w-lg mx-auto pt-2 text-left">
@@ -5314,14 +5378,52 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                       ) : (
                         <div className="py-4 space-y-4 max-w-lg mx-auto text-left">
                           {/* Waiting Status Banner */}
-                          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-center space-y-2">
-                            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/20 text-amber-300 text-xs font-black animate-pulse">
-                              <Clock size={15} /> Host Ke Shuru Karne Ka Intezar Karein...
+                          {currentRoom.isScheduled && currentRoom.scheduledStartTime && currentRoom.scheduledStartTime > liveClockNow ? (() => {
+                            const cd = formatDayHourMinSec(currentRoom.scheduledStartTime, liveClockNow);
+                            return (
+                              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-center space-y-2.5">
+                                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/20 text-amber-300 text-xs font-black animate-pulse">
+                                  <Clock size={15} /> ⏰ Scheduled Test Cooldown
+                                </div>
+                                <p className="text-xs text-slate-300 font-medium leading-relaxed">
+                                  Yeh room schedule kiya gaya hai. Niche diye gaye countdown ke mutabiq test auto-start hoga:
+                                </p>
+                                <div className="flex items-center justify-center gap-1 font-mono text-center py-1">
+                                  <div className="flex-1 max-w-[60px] py-1.5 px-1 rounded-xl bg-slate-950 border border-amber-500/30">
+                                    <span className="block text-sm font-black text-amber-300">{cd.days}</span>
+                                    <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-400">Day</span>
+                                  </div>
+                                  <span className="text-amber-400 font-bold text-sm">:</span>
+                                  <div className="flex-1 max-w-[60px] py-1.5 px-1 rounded-xl bg-slate-950 border border-amber-500/30">
+                                    <span className="block text-sm font-black text-amber-300">{String(cd.hours).padStart(2, '0')}</span>
+                                    <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-400">Hour</span>
+                                  </div>
+                                  <span className="text-amber-400 font-bold text-sm">:</span>
+                                  <div className="flex-1 max-w-[60px] py-1.5 px-1 rounded-xl bg-slate-950 border border-amber-500/30">
+                                    <span className="block text-sm font-black text-amber-300">{String(cd.minutes).padStart(2, '0')}</span>
+                                    <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-400">Min</span>
+                                  </div>
+                                  <span className="text-amber-400 font-bold text-sm">:</span>
+                                  <div className="flex-1 max-w-[60px] py-1.5 px-1 rounded-xl bg-slate-950 border border-amber-500/30">
+                                    <span className="block text-sm font-black text-amber-300">{String(cd.seconds).padStart(2, '0')}</span>
+                                    <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-400">Sec</span>
+                                  </div>
+                                </div>
+                                <p className="text-[11px] text-slate-400">
+                                  ⚡ Test samay aane par bina kisi delay ke automatically shuru ho jayega!
+                                </p>
+                              </div>
+                            );
+                          })() : (
+                            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-center space-y-2">
+                              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/20 text-amber-300 text-xs font-black animate-pulse">
+                                <Clock size={15} /> Host Ke Shuru Karne Ka Intezar Karein...
+                              </div>
+                              <p className="text-xs text-slate-300 font-medium leading-relaxed">
+                                Aap Study Room me safaltapoorvak jud chuke hain. Jaise hi Host session shuru karenge, pehla sawal aapke screen par turant aa jayega!
+                              </p>
                             </div>
-                            <p className="text-xs text-slate-300 font-medium leading-relaxed">
-                              Aap Study Room me safaltapoorvak jud chuke hain. Jaise hi Host session shuru karenge, pehla sawal aapke screen par turant aa jayega!
-                            </p>
-                          </div>
+                          )}
 
                           {/* Kitne User Aaye Hain (Count Banner) */}
                           <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 flex items-center justify-between">

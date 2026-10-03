@@ -414,6 +414,50 @@ export const CURATED_MCQ_SETS: Array<{ id: string; name: string; subject: string
   },
 ];
 
+// ── Room Cooldown (Day, Hour, Min, Sec) Helper ──────────────────────────────
+export interface RoomCooldown {
+  days: number;
+  hours: number;
+  minutes: number;
+  seconds: number;
+  totalSeconds: number;
+  formatted: string;
+  isStarted: boolean;
+}
+
+export const formatDayHourMinSec = (targetTime: number, nowTime: number = Date.now()): RoomCooldown => {
+  const diffMs = targetTime - nowTime;
+  if (diffMs <= 0) {
+    return {
+      days: 0,
+      hours: 0,
+      minutes: 0,
+      seconds: 0,
+      totalSeconds: 0,
+      formatted: '0d 00h 00m 00s',
+      isStarted: true,
+    };
+  }
+
+  const totalSeconds = Math.floor(diffMs / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  const formatted = `${days}d ${String(hours).padStart(2, '0')}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`;
+
+  return {
+    days,
+    hours,
+    minutes,
+    seconds,
+    totalSeconds,
+    formatted,
+    isStarted: false,
+  };
+};
+
 // ── Room Code Generator ────────────────────────────────────────────────────────
 export const generateRoomCode = (): string => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -509,12 +553,22 @@ export const subscribeToActiveRooms = (callback: (rooms: GroupStudyRoom[]) => vo
     }
 
     const list: GroupStudyRoom[] = Object.values(merged).filter(r => !r.isDeleted);
-    // Filter rooms active in the last 12 hours
+    // Filter rooms active in the last 24 hours OR scheduled for future
     const now = Date.now();
     const activeList = list.filter((r) => {
-      const isFresh = (now - (r.lastActive || r.createdAt || 0)) < 12 * 3600 * 1000;
+      if (r.isDeleted) return false;
+      if (r.isScheduled && r.scheduledStartTime && r.scheduledStartTime > now) return true;
+      const isFresh = (now - (r.lastActive || r.createdAt || 0)) < 24 * 3600 * 1000;
       return isFresh;
-    }).sort((a, b) => (b.lastActive || b.createdAt) - (a.lastActive || a.createdAt));
+    }).sort((a, b) => {
+      // Upcoming scheduled tests shown prominently
+      const aUpcoming = Boolean(a.isScheduled && a.scheduledStartTime && a.scheduledStartTime > now);
+      const bUpcoming = Boolean(b.isScheduled && b.scheduledStartTime && b.scheduledStartTime > now);
+      if (aUpcoming && !bUpcoming) return -1;
+      if (!aUpcoming && bUpcoming) return 1;
+      if (aUpcoming && bUpcoming) return (a.scheduledStartTime || 0) - (b.scheduledStartTime || 0);
+      return (b.lastActive || b.createdAt) - (a.lastActive || a.createdAt);
+    });
 
     callback(activeList);
   }, (err) => {
@@ -879,10 +933,14 @@ export const leaveGroupRoom = async (roomId: string, userId: string, userName: s
 
       const remainingMembers = Object.keys(room.members || {}).filter((id) => id !== effectiveUserId);
 
-      // "Room management: host ke off jane pe room closed na hoga — highest level user naya host ban jayega!"
+      // "Room se bahar aane pe ab room destroy nahi hoga": Room stays alive even if 0 members remain!
       if (remainingMembers.length === 0) {
-        // Destroy / Delete the room completely only when 0 members remain
-        await deleteGroupRoom(roomId);
+        // Room persists so host or students can re-enter, or scheduled battle can auto-start
+        try {
+          await update(ref(rtdb, `group_study_rooms/${roomId}`), {
+            lastActive: Date.now(),
+          });
+        } catch {}
       } else if (isHost) {
         // HOST MIGRATION: Promote the highest-level and highest-XP remaining member to new Host!
         const memberList: GroupStudyMember[] = remainingMembers
@@ -928,7 +986,11 @@ export const leaveGroupRoom = async (roomId: string, userId: string, userName: s
             console.warn('[GroupStudy] Host migration error:', migrateErr);
           }
         } else {
-          await deleteGroupRoom(roomId);
+          try {
+            await update(ref(rtdb, `group_study_rooms/${roomId}`), {
+              lastActive: Date.now(),
+            });
+          } catch {}
         }
       } else {
         // Send leave message
@@ -943,12 +1005,9 @@ export const leaveGroupRoom = async (roomId: string, userId: string, userName: s
           type: 'SYSTEM',
         });
       }
-    } else {
-      removeCachedRoom(roomId);
     }
   } catch (err) {
     console.error('Error leaving group room:', err);
-    removeCachedRoom(roomId);
   }
 };
 

@@ -33044,16 +33044,9 @@ Explanation: Yahan explanation...`}</p>
         onClose={() => {
           setShowGroupStudyModal(false);
           setGroupStudyPrefilledContext(null);
-          // "aur ab background me na aayega": Close and clean up active room so it does not persist in the background
+          // Room se bahar aane pe ab room destroy nahi hoga
           if (activeGroupStudyRoom) {
-            const isHost =
-              activeGroupStudyRoom.hostId === user?.id ||
-              isRoomCreatedByMe(activeGroupStudyRoom.id, activeGroupStudyRoom.hostId, user?.id);
-            if (isHost) {
-              deleteGroupRoom(activeGroupStudyRoom.id);
-            } else {
-              leaveGroupRoom(activeGroupStudyRoom.id, user?.id || 'guest', user?.name || 'Student');
-            }
+            leaveGroupRoom(activeGroupStudyRoom.id, user?.id || 'guest', user?.name || 'Student');
             setActiveGroupStudyRoom(null);
           }
         }}
