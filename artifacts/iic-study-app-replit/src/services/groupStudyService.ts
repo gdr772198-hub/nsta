@@ -131,6 +131,10 @@ export interface GroupStudyRoom {
   expiresAt: number;
   isExpired?: boolean;
   totalRoomXp?: number;
+  isScheduled?: boolean;
+  scheduledStartTime?: number;
+  autoRunWithoutHost?: boolean;
+  themeColor?: 'blue' | 'black' | 'white';
   timer: {
     durationMinutes: number;
     startTime: number | null;
@@ -626,6 +630,13 @@ export const createGroupRoom = async (
     mode?: 'STUDY' | 'LIVE_MCQ' | 'LIVE_CLASS';
     mcqType?: StudyRoomMcqType;
     durationMinutes?: number;
+    isScheduled?: boolean;
+    scheduledStartTime?: number;
+    autoRunWithoutHost?: boolean;
+    themeColor?: 'blue' | 'black' | 'white';
+    preloadedQuestions?: GroupStudyMcqQuestion[];
+    preloadedTitle?: string;
+    durationPerQuestion?: number;
   },
   host: {
     id: string;
@@ -665,7 +676,10 @@ export const createGroupRoom = async (
   };
 
   const durationMinutes = roomData.durationMinutes && roomData.durationMinutes > 0 ? roomData.durationMinutes : 30;
-  const expiresAt = now + durationMinutes * 60 * 1000;
+  const baseTime = roomData.isScheduled && roomData.scheduledStartTime && roomData.scheduledStartTime > now
+    ? roomData.scheduledStartTime
+    : now;
+  const expiresAt = baseTime + durationMinutes * 60 * 1000;
   const mcqType = roomData.mcqType || 'PROJECTOR_MODE';
 
   const initialRoom: GroupStudyRoom = {
@@ -688,6 +702,10 @@ export const createGroupRoom = async (
     expiresAt,
     isExpired: false,
     totalRoomXp: 0,
+    isScheduled: Boolean(roomData.isScheduled),
+    scheduledStartTime: roomData.scheduledStartTime,
+    autoRunWithoutHost: roomData.autoRunWithoutHost !== undefined ? roomData.autoRunWithoutHost : true,
+    themeColor: roomData.themeColor || 'blue',
     timer: {
       durationMinutes,
       startTime: now,
@@ -702,13 +720,13 @@ export const createGroupRoom = async (
     },
     liveMcq: {
       isActive: false,
-      title: `${roomData.subject || 'Lesson'} MCQ Battle`,
+      title: roomData.preloadedTitle || `${roomData.subject || 'Lesson'} MCQ Battle`,
       currentQuestionIndex: 0,
-      totalQuestions: 0,
+      totalQuestions: (roomData.preloadedQuestions || []).length,
       questionStartTime: 0,
-      durationPerQuestion: mcqType === 'REVISION_HUB' ? 15 : (mcqType === 'PROJECTOR_MODE' ? 25 : 20),
+      durationPerQuestion: roomData.durationPerQuestion || (mcqType === 'REVISION_HUB' ? 15 : (mcqType === 'PROJECTOR_MODE' ? 25 : 20)),
       status: 'WAITING',
-      questions: [],
+      questions: roomData.preloadedQuestions || [],
       scores: {},
     },
     members: {
@@ -719,7 +737,7 @@ export const createGroupRoom = async (
         id: 'welcome_msg',
         userId: effectiveHostId,
         userName: 'IIC Study Bot',
-        text: `🎉 Room created by ${host.name}! Mode: ${mcqType === 'REVISION_HUB' ? '⚡ MCQ +' : '🎯 MCQ'}. Room duration: ${durationMinutes} mins.`,
+        text: `🎉 Room created by ${host.name}! Mode: ${mcqType === 'REVISION_HUB' ? '⚡ MCQ +' : '🎯 MCQ'}. Room duration: ${durationMinutes} mins.${roomData.isScheduled ? ' ⏰ Scheduled Room — Auto-starts at scheduled time!' : ''}`,
         timestamp: now,
         type: 'SYSTEM',
       }
@@ -1501,6 +1519,65 @@ export const submitMcqAnswer = async (
     streakBrokenAt,
     earnedPoints,
   };
+};
+
+/**
+ * Staggered Batch Submission:
+ * Saves the entire quiz score and stats in a SINGLE Firebase write when the test completes.
+ * Prevents 10,000+ continuous reads/writes during questions and prevents Firebase quota burnout!
+ */
+export const submitFinalBatchScore = async (
+  roomId: string,
+  userId: string,
+  userName: string,
+  scoreData: {
+    score: number;
+    correctCount: number;
+    wrongCount: number;
+    totalAnswered: number;
+    maxStreak: number;
+    userXp: number;
+    streakBonusXp: number;
+    userPhotoURL?: string;
+    answers?: Record<number, { selectedOption: number; isCorrect: boolean; timeTakenSec: number }>;
+  }
+): Promise<void> => {
+  try {
+    const userScoreRef = ref(rtdb, `group_study_rooms/${roomId}/liveMcq/scores/${userId}`);
+    await set(userScoreRef, {
+      name: userName,
+      score: scoreData.score || 0,
+      correctCount: scoreData.correctCount || 0,
+      wrongCount: scoreData.wrongCount || 0,
+      totalAnswered: scoreData.totalAnswered || 0,
+      maxStreak: scoreData.maxStreak || 0,
+      userXp: scoreData.userXp || 0,
+      streakBonusXp: scoreData.streakBonusXp || 0,
+      userPhotoURL: scoreData.userPhotoURL || '',
+      submittedAt: Date.now(),
+    });
+
+    // Also update local cached room
+    const cached = getCachedRooms()[roomId];
+    if (cached && cached.liveMcq) {
+      if (!cached.liveMcq.scores) cached.liveMcq.scores = {};
+      cached.liveMcq.scores[userId] = {
+        name: userName,
+        score: scoreData.score || 0,
+        correctCount: scoreData.correctCount || 0,
+        wrongCount: scoreData.wrongCount || 0,
+        totalAnswered: scoreData.totalAnswered || 0,
+        maxStreak: scoreData.maxStreak || 0,
+        userXp: scoreData.userXp || 0,
+        streakBonusXp: scoreData.streakBonusXp || 0,
+      };
+      saveCachedRoom(cached);
+    }
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied')) return;
+    console.warn('[GroupStudy] submitFinalBatchScore notice:', err);
+  }
 };
 
 /**

@@ -235,6 +235,7 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
 
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wasLongPressRef = useRef(false);
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
 
   const NOTE_PAGES = useMemo(() => {
     if (!noteSections) return [] as { key: 'book' | 'smart' | 'explain'; label: string; badge?: string; badgeColor?: string; locked: boolean; text: string }[];
@@ -778,6 +779,32 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
   // Fallback order: explicit userLevel prop → readingScoreConfig.userLevel → 5 (safe/unlocked).
   const _effectiveUserLevel = userLevel ?? readingScoreConfig?.userLevel ?? 5;
   const freeStarLocked = false;
+
+  // Central Star / Save Important handler — used by both Long Press (Hold) and Star Button
+  const executeStarToggle = useCallback((topicText: string) => {
+    if (freeStarLocked) {
+      if (onUpgradeClick) onUpgradeClick();
+      return;
+    }
+    try { if (navigator.vibrate) navigator.vibrate([40, 40, 60]); } catch {}
+    if (onStarToggle && !(isAdmin && useImportantMark2)) {
+      onStarToggle(topicText);
+    } else if (isAdmin && useImportantMark2 && onMark2Toggle) {
+      onMark2Toggle(topicText);
+    } else {
+      try {
+        const raw = localStorage.getItem('nst_starred_notes_v1');
+        const list = raw ? JSON.parse(raw) : [];
+        const exists = list.some((n: any) => n.topicText === topicText);
+        const updated = exists
+          ? list.filter((n: any) => n.topicText !== topicText)
+          : [...list, { id: Date.now().toString(), noteKey: noteKey || 'reading_note', topicText: topicText, savedAt: new Date().toISOString() }];
+        localStorage.setItem('nst_starred_notes_v1', JSON.stringify(updated));
+        window.dispatchEvent(new Event('nst_notes_updated'));
+      } catch {}
+    }
+  }, [freeStarLocked, onUpgradeClick, onStarToggle, isAdmin, useImportantMark2, onMark2Toggle, noteKey]);
+
   const lastScrollY = useRef(0);
   const [toolbarHidden, setToolbarHidden] = useState(false);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
@@ -2348,30 +2375,71 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
               )}
               <button
                 type="button"
-                onPointerDown={(e) => {
+                onTouchStart={(e) => {
+                  if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+                  wasLongPressRef.current = false;
+                  if (e.touches && e.touches.length > 0) {
+                    touchStartPosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                  }
+                  longPressTimerRef.current = setTimeout(() => {
+                    wasLongPressRef.current = true;
+                    executeStarToggle(topic.text);
+                  }, 420);
+                }}
+                onTouchMove={(e) => {
+                  if (longPressTimerRef.current && touchStartPosRef.current && e.touches && e.touches.length > 0) {
+                    const dx = e.touches[0].clientX - touchStartPosRef.current.x;
+                    const dy = e.touches[0].clientY - touchStartPosRef.current.y;
+                    // Finger tremor tolerance: only cancel if movement exceeds 14px (real scroll)
+                    if (Math.hypot(dx, dy) > 14) {
+                      clearTimeout(longPressTimerRef.current);
+                      longPressTimerRef.current = null;
+                    }
+                  }
+                }}
+                onTouchEnd={() => {
+                  if (longPressTimerRef.current) {
+                    clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                  }
+                  if (wasLongPressRef.current) {
+                    // Suppress subsequent synthetic click from touch
+                    setTimeout(() => { wasLongPressRef.current = false; }, 350);
+                  }
+                }}
+                onTouchCancel={() => {
+                  if (longPressTimerRef.current) {
+                    clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                  }
+                }}
+                onMouseDown={(e) => {
+                  if (e.button !== 0) return;
                   if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
                   wasLongPressRef.current = false;
                   longPressTimerRef.current = setTimeout(() => {
                     wasLongPressRef.current = true;
-                    if (onStarToggle && !(isAdmin && useImportantMark2)) {
-                      if (freeStarLocked) {
-                        if (onUpgradeClick) onUpgradeClick();
-                      } else {
-                        try { if (navigator.vibrate) navigator.vibrate([30, 30, 50]); } catch {}
-                        onStarToggle(topic.text);
-                      }
-                    } else if (isAdmin && useImportantMark2 && onMark2Toggle) {
-                      try { if (navigator.vibrate) navigator.vibrate([30, 30, 50]); } catch {}
-                      onMark2Toggle(topic.text);
-                    }
-                  }, 500);
+                    executeStarToggle(topic.text);
+                  }, 450);
                 }}
-                onPointerUp={() => { if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); }}
-                onPointerLeave={() => { if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); }}
-                onPointerCancel={() => { if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); }}
+                onMouseUp={() => {
+                  if (longPressTimerRef.current) {
+                    clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                  }
+                }}
+                onMouseLeave={() => {
+                  if (longPressTimerRef.current) {
+                    clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                  }
+                }}
                 onContextMenu={(e) => e.preventDefault()}
                 onClick={(e) => {
-                  if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+                  if (longPressTimerRef.current) {
+                    clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                  }
                   if (wasLongPressRef.current) {
                     wasLongPressRef.current = false;
                     e.preventDefault();
@@ -2392,10 +2460,10 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                     startFromIndex(idx);
                   }
                 }}
-                aria-label={isActive ? 'Stop reading this line' : 'Read from this line'}
-                title={isActive ? 'Tap to stop' : 'Tap to read from here'}
-                className="w-full text-left pl-4 pr-10 py-2 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
-                style={{ WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none' }}
+                aria-label={isActive ? 'Stop reading this line' : 'Read from this line (tap) or Save Important (hold)'}
+                title={isActive ? 'Tap to stop' : 'Tap: Read | Hold: Save Important ⭐'}
+                className="w-full text-left pl-4 pr-10 py-2 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 select-none"
+                style={{ WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none', touchAction: 'pan-y' }}
               >
                 <p
                   className={`leading-relaxed ${isActive ? 'text-yellow-900' : ''}`}
@@ -2423,36 +2491,18 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                   onClick={(e) => {
                     e.stopPropagation();
                     e.preventDefault();
-                    if (freeStarLocked) {
-                      if (onUpgradeClick) onUpgradeClick();
-                      return;
-                    }
-                    try { if (navigator.vibrate) navigator.vibrate([30, 30, 50]); } catch {}
-                    if (onStarToggle && !(isAdmin && useImportantMark2)) {
-                      onStarToggle(topic.text);
-                    } else if (isAdmin && useImportantMark2 && onMark2Toggle) {
-                      onMark2Toggle(topic.text);
-                    } else {
-                      try {
-                        const raw = localStorage.getItem('nst_starred_notes_v1');
-                        const list = raw ? JSON.parse(raw) : [];
-                        const exists = list.some((n: any) => n.topicText === topic.text);
-                        const updated = exists
-                          ? list.filter((n: any) => n.topicText !== topic.text)
-                          : [...list, { id: Date.now().toString(), noteKey: noteKey || 'reading_note', topicText: topic.text, savedAt: new Date().toISOString() }];
-                        localStorage.setItem('nst_starred_notes_v1', JSON.stringify(updated));
-                        window.dispatchEvent(new Event('nst_notes_updated'));
-                      } catch {}
-                    }
+                    executeStarToggle(topic.text);
                   }}
                   onPointerDown={(e) => { e.stopPropagation(); }}
+                  onTouchStart={(e) => { e.stopPropagation(); }}
+                  onMouseDown={(e) => { e.stopPropagation(); }}
                   style={{ width: '28px', height: '28px', padding: 0 }}
                   className={`absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full inline-flex items-center justify-center transition-all z-20 cursor-pointer ${
                     starred
                       ? 'bg-amber-100 text-amber-500 border border-amber-300 shadow-sm opacity-100 scale-105'
                       : 'text-slate-400 hover:text-amber-500 hover:bg-amber-50 border border-slate-200/60 hover:border-amber-300 opacity-60 sm:opacity-40 group-hover:opacity-100'
                   }`}
-                  title={starred ? 'Important Notes me saved hai (Tap to remove)' : 'Important Notes me save karein ⭐'}
+                  title={starred ? 'Important Notes me saved hai (Tap to remove)' : 'Important Notes me save karein ⭐ (Tap karein ya Hold karein)'}
                 >
                   <Star size={13} className={starred ? 'fill-amber-400 text-amber-500' : 'text-slate-400 hover:text-amber-500'} />
                 </button>

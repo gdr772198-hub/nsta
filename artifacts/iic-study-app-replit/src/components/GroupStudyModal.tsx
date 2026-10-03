@@ -88,6 +88,7 @@ import {
   revealMcqAnswer,
   advanceMcqQuestion,
   submitMcqAnswer,
+  submitFinalBatchScore,
   awardFinalStreakBonus,
   autoSubmitRoom,
   endLiveMcqBattle,
@@ -309,8 +310,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
 
   const maxRoomCapacityAllowed = isAdmin ? 500 : (
     userTier === 'ULTRA' ? 100 :
-    userTier === 'BASIC' ? 35 :
-    15
+    userTier === 'BASIC' ? 50 :
+    25
   );
 
   const isCreateRoomGloballyHidden = false;
@@ -360,7 +361,7 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [showJoinPasswordInput, setShowJoinPasswordInput] = useState<boolean>(false);
   const [joinCodeError, setJoinCodeError] = useState<string>('');
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'MCQ' | 'LEADERBOARD' | 'MEMBERS'>('MCQ');
+  const [activeTab, setActiveTab] = useState<'MCQ' | 'LEADERBOARD' | 'MEMBERS' | 'CHAT'>('MCQ');
 
   // ── Password Protection State for Joining ─────────────────────────────────
   const [passwordModalRoom, setPasswordModalRoom] = useState<GroupStudyRoom | null>(null);
@@ -376,6 +377,27 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [newRoomMcqType, setNewRoomMcqType] = useState<StudyRoomMcqType>('PROJECTOR_MODE');
   const [newRoomDurationMinutes, setNewRoomDurationMinutes] = useState<number>(maxDurationMinutesAllowed);
   const [newRoomMaxMembers, setNewRoomMaxMembers] = useState<number>(30);
+  const [showRulesGuideModal, setShowRulesGuideModal] = useState<boolean>(false);
+  const [isScheduleMode, setIsScheduleMode] = useState<boolean>(false);
+  const [scheduledDate, setScheduledDate] = useState<string>(() => {
+    const d = new Date();
+    return d.toISOString().split('T')[0];
+  });
+  const [scheduledTime, setScheduledTime] = useState<string>(() => {
+    const d = new Date();
+    d.setMinutes(d.getMinutes() + 30);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  });
+  const [autoRunWithoutHost, setAutoRunWithoutHost] = useState<boolean>(true);
+  const [roomTheme, setRoomTheme] = useState<'blue' | 'black' | 'white'>(() => {
+    try { return (localStorage.getItem('nst_study_room_theme') as any) || 'blue'; } catch { return 'blue'; }
+  });
+
+  const toggleRoomTheme = (newTheme: 'blue' | 'black' | 'white') => {
+    setRoomTheme(newTheme);
+    try { localStorage.setItem('nst_study_room_theme', newTheme); } catch {}
+  };
+
   const [newRoomIsPrivate, setNewRoomIsPrivate] = useState<boolean>(false);
   const [selectedPreloadLesson, setSelectedPreloadLesson] = useState<any | null>(null);
   const [createModeClass, setCreateModeClass] = useState<string>('ALL');
@@ -407,6 +429,39 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [revealSecondsLeft, setRevealSecondsLeft] = useState<number>(3);
   const [autoAdvanceEnabled, setAutoAdvanceEnabled] = useState<boolean>(true);
   const [showLiveAnswersSheet, setShowLiveAnswersSheet] = useState<boolean>(false);
+
+  // ── Staggered Batch Submission State (Zero Continuous RTDB Writes during questions) ──
+  const [localBattleStats, setLocalBattleStats] = useState<{
+    score: number;
+    correctCount: number;
+    wrongCount: number;
+    totalAnswered: number;
+    currentStreak: number;
+    maxStreak: number;
+    userXp: number;
+    streakBonusXp: number;
+    answers: Record<number, { selectedOption: number; isCorrect: boolean; timeTakenSec: number }>;
+  }>({
+    score: 0,
+    correctCount: 0,
+    wrongCount: 0,
+    totalAnswered: 0,
+    currentStreak: 0,
+    maxStreak: 0,
+    userXp: 0,
+    streakBonusXp: 0,
+    answers: {},
+  });
+  const [hasBatchSubmitted, setHasBatchSubmitted] = useState<boolean>(false);
+  const [isSubmittingBatch, setIsSubmittingBatch] = useState<boolean>(false);
+  const [batchSyncSecondsRemaining, setBatchSyncSecondsRemaining] = useState<number>(0);
+
+  // ── Anti-Cheating / App-Minimize Detection State ─────────────────────────
+  const [minimizeWarningCount, setMinimizeWarningCount] = useState<number>(0);
+  const [showMinimizeWarningModal, setShowMinimizeWarningModal] = useState<boolean>(false);
+  const [isDisqualifiedFromRoom, setIsDisqualifiedFromRoom] = useState<boolean>(false);
+  const [showDisqualifiedModal, setShowDisqualifiedModal] = useState<boolean>(false);
+
   const [showMobileChat, setShowMobileChat] = useState<boolean>(false);
   const [isDiscussionCollapsed, setIsDiscussionCollapsed] = useState<boolean>(() => {
     try {
@@ -1331,6 +1386,18 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     )
   );
   const currentMember = currentRoom?.members?.[user?.id] || (auth.currentUser?.uid ? currentRoom?.members?.[auth.currentUser.uid] : undefined);
+  const currentEffectiveUid = auth.currentUser?.uid || user?.id || '';
+  const onlineMemberIds = useMemo(() => {
+    return Object.keys(currentRoom?.members || {}).sort();
+  }, [currentRoom?.members]);
+
+  const isHostPresent = Boolean(currentRoom?.hostId && currentRoom?.members?.[currentRoom.hostId]);
+
+  // Host is authority if present. If host is absent or room has autoRunWithoutHost, the lowest UID member is elected runner.
+  const isElectedRunner = Boolean(
+    isHost ||
+    ((currentRoom?.autoRunWithoutHost || !isHostPresent) && onlineMemberIds.length > 0 && onlineMemberIds[0] === currentEffectiveUid)
+  );
 
   // ── 1. Subscribe to Active Rooms in Lobby ─────────────────────────────────
   useEffect(() => {
@@ -1465,8 +1532,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
         const remaining = Math.max(0, duration - elapsedSec);
         setMcqSecondsLeft(remaining);
 
-        // Auto-reveal exactly when selected timer expires (0s) - Host authority only
-        if (isHost && remaining <= 0 && liveMcq.status === 'QUESTION') {
+        // Auto-reveal exactly when selected timer expires (0s) - Host or Elected Runner
+        if (isElectedRunner && remaining <= 0 && liveMcq.status === 'QUESTION') {
           handleRevealAnswer();
           return;
         }
@@ -1483,7 +1550,7 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     currentRoom?.liveMcq?.status,
     currentRoom?.liveMcq?.questionStartTime,
     currentRoom?.liveMcq?.durationPerQuestion,
-    isHost,
+    isElectedRunner,
   ]);
 
   // ── Auto-advance Countdown during REVEAL ──
@@ -1504,7 +1571,7 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
       setRevealSecondsLeft((prev) => {
         if (prev <= 1) {
           clearInterval(revealTimer);
-          if (isHost && liveMcq.status === 'REVEAL') {
+          if (isElectedRunner && liveMcq.status === 'REVEAL') {
             handleNextMcqQuestion();
           }
           return 0;
@@ -1519,7 +1586,41 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     currentRoom?.liveMcq?.currentQuestionIndex,
     currentRoom?.liveMcq?.autoAdvance,
     autoAdvanceEnabled,
-    isHost,
+    isElectedRunner,
+  ]);
+
+  // ── Scheduled Room Auto-Start Effect (Bina Host Ke Bhi Time Par Shuru Hoga) ──
+  useEffect(() => {
+    if (!currentRoom || !currentRoom.isScheduled || !currentRoom.scheduledStartTime) return;
+    if (currentRoom.liveMcq?.status !== 'WAITING') return;
+    if (!currentRoom.liveMcq?.questions || currentRoom.liveMcq.questions.length === 0) return;
+
+    const checkScheduledStart = () => {
+      const now = Date.now();
+      if (now >= currentRoom.scheduledStartTime!) {
+        if (isElectedRunner && currentRoom.liveMcq?.status === 'WAITING') {
+          startLiveMcqBattle(
+            currentRoom.id,
+            currentRoom.liveMcq.title,
+            currentRoom.liveMcq.questions,
+            currentRoom.liveMcq.durationPerQuestion || 20
+          ).catch((e) => console.warn('[GroupStudy] Scheduled auto-start notice:', e));
+        }
+      }
+    };
+
+    checkScheduledStart();
+    const interval = setInterval(checkScheduledStart, 1000);
+    return () => clearInterval(interval);
+  }, [
+    currentRoom?.id,
+    currentRoom?.isScheduled,
+    currentRoom?.scheduledStartTime,
+    currentRoom?.liveMcq?.status,
+    currentRoom?.liveMcq?.title,
+    currentRoom?.liveMcq?.questions,
+    currentRoom?.liveMcq?.durationPerQuestion,
+    isElectedRunner,
   ]);
 
   // Reset local answer selection on new question or new battle session
@@ -1528,6 +1629,74 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     setHasAnsweredCurrentQ(false);
     setShowXpBanner(false);
   }, [currentRoom?.liveMcq?.currentQuestionIndex, currentRoom?.liveMcq?.title, currentRoom?.liveMcq?.status]);
+
+  // Reset anti-cheating flags when battle resets or is in lobby
+  useEffect(() => {
+    if (
+      !currentRoom ||
+      currentRoom.liveMcq?.status === 'WAITING' ||
+      (currentRoom.liveMcq?.status === 'QUESTION' && currentRoom.liveMcq?.currentQuestionIndex === 0)
+    ) {
+      setMinimizeWarningCount(0);
+      setIsDisqualifiedFromRoom(false);
+      setShowMinimizeWarningModal(false);
+      setShowDisqualifiedModal(false);
+    }
+  }, [currentRoom?.id, currentRoom?.liveMcq?.status, currentRoom?.liveMcq?.currentQuestionIndex]);
+
+  // ── Anti-Cheating / App-Minimize Listener (1st Time: Warning, 2nd Time: Disqualify & Exit) ──
+  useEffect(() => {
+    if (!isOpen || !currentRoom?.id || !currentRoom?.liveMcq) return;
+    const mcqStatus = currentRoom.liveMcq.status;
+    const isBattleRunning = (mcqStatus === 'QUESTION' || mcqStatus === 'REVEAL') && !currentRoom.isExpired;
+    if (!isBattleRunning || isDisqualifiedFromRoom) return;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        setMinimizeWarningCount((prev) => {
+          const nextCount = prev + 1;
+          if (nextCount === 1) {
+            return 1;
+          } else if (nextCount >= 2) {
+            setIsDisqualifiedFromRoom(true);
+            setShowDisqualifiedModal(true);
+
+            // Auto-submit whatever questions were attempted so far and treat the rest as skipped
+            if (currentRoom?.id && user?.id) {
+              submitFinalBatchScore(currentRoom.id, user.id, user.name || 'Student', {
+                score: localBattleStats.score,
+                correctCount: localBattleStats.correctCount,
+                wrongCount: localBattleStats.wrongCount,
+                totalAnswered: localBattleStats.totalAnswered,
+                maxStreak: localBattleStats.maxStreak,
+                userXp: localBattleStats.userXp,
+                streakBonusXp: localBattleStats.streakBonusXp,
+                userPhotoURL: user.photoURL || '',
+                answers: localBattleStats.answers,
+              }).catch(() => {});
+
+              // Auto remove from active members
+              leaveGroupRoom(currentRoom.id, user.id, user.name || 'Student').catch(() => {});
+            }
+            return 2;
+          }
+          return prev;
+        });
+      } else if (document.visibilityState === 'visible') {
+        setMinimizeWarningCount((curr) => {
+          if (curr === 1) {
+            setShowMinimizeWarningModal(true);
+          }
+          return curr;
+        });
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [isOpen, currentRoom?.id, currentRoom?.liveMcq?.status, currentRoom?.isExpired, isDisqualifiedFromRoom, localBattleStats, user?.id, user?.name]);
 
   // ── Auto-save Group Study MCQ results to Student's MCQ Activity History ────
   useEffect(() => {
@@ -1545,12 +1714,81 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     if (savedSessionsRef.current.has(sessionKey)) return;
     savedSessionsRef.current.add(sessionKey);
 
-    const myScore = liveMcq.scores?.[user.id];
+    // ── Staggered Batch Submission to Firebase RTDB (Zero-Collision Queue across 10-15s) ──
+    const hashString = (str: string) => {
+      let h = 0;
+      for (let i = 0; i < str.length; i++) {
+        h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+      }
+      return Math.abs(h);
+    };
+
+    const currentUid = user.id;
+    // Spread 500 users evenly across 0s to 12s in 1.2s slots
+    const slotIndex = hashString(currentUid) % 10;
+    const jitterMs = slotIndex * 1200 + (hashString(currentUid + '_sub') % 600);
+
+    setIsSubmittingBatch(true);
+    setBatchSyncSecondsRemaining(Math.ceil(jitterMs / 1000));
+
+    const countdownInterval = setInterval(() => {
+      setBatchSyncSecondsRemaining((prev) => Math.max(0, prev - 1));
+    }, 1000);
+
+    setTimeout(async () => {
+      clearInterval(countdownInterval);
+      try {
+        await submitFinalBatchScore(currentRoom.id, currentUid, user.name || 'Student', {
+          score: localBattleStats.score,
+          correctCount: localBattleStats.correctCount,
+          wrongCount: localBattleStats.wrongCount,
+          totalAnswered: localBattleStats.totalAnswered,
+          maxStreak: localBattleStats.maxStreak,
+          userXp: localBattleStats.userXp,
+          streakBonusXp: localBattleStats.streakBonusXp,
+          userPhotoURL: user.photoURL || '',
+          answers: localBattleStats.answers,
+        });
+
+        // Award XP to user profile once at end of test
+        if (localBattleStats.userXp > 0) {
+          const currentXp = user.xp || user.totalScore || 0;
+          const newXp = Math.max(0, currentXp + localBattleStats.userXp);
+          const newLevel = getLevelFromScore(newXp);
+          const updatedUser = {
+            ...user,
+            xp: newXp,
+            totalScore: newXp,
+            level: newLevel,
+          };
+          try {
+            localStorage.setItem('nst_current_user', JSON.stringify(updatedUser));
+            localStorage.setItem(`nst_user_profile_${user.id}`, JSON.stringify(updatedUser));
+          } catch (_) {}
+          saveUserToLive(updatedUser, { immediate: true }).catch(() => {});
+          onUserUpdate?.(updatedUser);
+        }
+
+        setHasBatchSubmitted(true);
+      } catch (e) {
+        console.warn('Batch submit notice:', e);
+      } finally {
+        setIsSubmittingBatch(false);
+      }
+    }, jitterMs);
+
+    const myScore = liveMcq.scores?.[user.id] || {
+      name: user.name || 'Student',
+      score: localBattleStats.score,
+      correctCount: localBattleStats.correctCount,
+      wrongCount: localBattleStats.wrongCount,
+      totalAnswered: localBattleStats.totalAnswered,
+    };
     const allAnswersMap = liveMcq.questionAnswers || {};
     const questions = liveMcq.questions || [];
 
-    const correctCount = myScore?.correctCount || 0;
-    const wrongCount = myScore?.wrongCount || 0;
+    const correctCount = myScore?.correctCount !== undefined ? myScore.correctCount : localBattleStats.correctCount;
+    const wrongCount = myScore?.wrongCount !== undefined ? myScore.wrongCount : localBattleStats.wrongCount;
     const unansweredCount = Math.max(0, totalQ - correctCount - wrongCount);
     const accuracy = totalQ > 0 ? Math.round((correctCount / totalQ) * 100) : 0;
     const durationPerQ = liveMcq.durationPerQuestion || 20;
@@ -1559,8 +1797,11 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     const wrongQuestionsList: any[] = [];
 
     questions.forEach((q, qIndex) => {
+      const localAns = localBattleStats.answers?.[qIndex];
       const qAns = allAnswersMap[qIndex]?.[user.id];
-      const selected = qAns?.selectedOption !== undefined ? qAns.selectedOption : -1;
+      const selected = localAns?.selectedOption !== undefined
+        ? localAns.selectedOption
+        : (qAns?.selectedOption !== undefined ? qAns.selectedOption : -1);
       userAnswersRecord[qIndex] = selected;
 
       if (selected !== -1 && selected !== q.correctIndex) {
@@ -1678,6 +1919,32 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
 
       const durationMinutes = Math.min(newRoomDurationMinutes || 30, maxDurationMinutesAllowed);
 
+      let scheduledStartTime: number | undefined = undefined;
+      if (isScheduleMode) {
+        if (!isBasicUser && !isUltraUser && !isAdmin) {
+          alert('Room schedule karne ka option Basic aur Ultra members ke liye hai. Kripya Store se upgrade karein.');
+          return;
+        }
+        const combined = new Date(`${scheduledDate}T${scheduledTime}`);
+        scheduledStartTime = combined.getTime();
+        if (isNaN(scheduledStartTime) || scheduledStartTime < Date.now() - 60000) {
+          alert('Kripya aane wale samay (future time) ka date aur time select karein.');
+          return;
+        }
+      }
+
+      // Check if questions are preloaded for this room
+      const lessonToLaunch = selectedPreloadLesson || (
+        prefilledContext?.mcqData && Array.isArray(prefilledContext.mcqData) && prefilledContext.mcqData.length > 0
+          ? {
+              lessonTitle: prefilledContext.chapterTitle || prefilledContext.title || 'Chapter MCQ Battle',
+              questions: prefilledContext.mcqData
+                .map((q: any) => parseQuestionToGroupMcq(q))
+                .filter((q: any): q is GroupStudyMcqQuestion => Boolean(q && q.question && q.options.length >= 2)),
+            }
+          : null
+      );
+
       const userXp = Number(user?.totalScore ?? (user as any)?.xp ?? 0);
       const userLevel = Number(getLevelFromScore(userXp));
 
@@ -1691,6 +1958,13 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
           durationMinutes,
           maxMembers: Math.min(newRoomMaxMembers || 30, maxRoomCapacityAllowed),
           isPrivate: !!cleanPassword,
+          isScheduled: isScheduleMode,
+          scheduledStartTime,
+          autoRunWithoutHost,
+          themeColor: roomTheme,
+          preloadedQuestions: lessonToLaunch?.questions || [],
+          preloadedTitle: lessonToLaunch?.lessonTitle || `${effectiveRoomName} MCQ Battle`,
+          durationPerQuestion: newRoomMcqType === 'REVISION_HUB' ? 15 : 20,
         },
         {
           id: effectiveUid,
@@ -1731,13 +2005,28 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
           mode: 'LIVE_MCQ',
           mcqType: 'PROJECTOR_MODE',
           durationMinutes,
-          expiresAt: Date.now() + durationMinutes * 60 * 1000,
+          expiresAt: (scheduledStartTime || Date.now()) + durationMinutes * 60 * 1000,
           isExpired: false,
+          isScheduled: isScheduleMode,
+          scheduledStartTime,
+          autoRunWithoutHost,
+          themeColor: roomTheme,
           timer: {
             durationMinutes,
             startTime: Date.now(),
             isPaused: false,
             remainingSeconds: durationMinutes * 60,
+          },
+          liveMcq: {
+            isActive: false,
+            title: lessonToLaunch?.lessonTitle || `${effectiveRoomName} MCQ Battle`,
+            currentQuestionIndex: 0,
+            totalQuestions: (lessonToLaunch?.questions || []).length,
+            questionStartTime: 0,
+            durationPerQuestion: newRoomMcqType === 'REVISION_HUB' ? 15 : 20,
+            status: 'WAITING',
+            questions: lessonToLaunch?.questions || [],
+            scores: {},
           },
           members: {
             [effectiveUid]: {
@@ -1762,19 +2051,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
       // Room banne ke baad: Set active tab to MCQ arena directly
       setActiveTab('MCQ');
 
-      // Launch selected preloaded lesson MCQs or prefilled MCQs immediately if available
-      const lessonToLaunch = selectedPreloadLesson || (
-        prefilledContext?.mcqData && Array.isArray(prefilledContext.mcqData) && prefilledContext.mcqData.length > 0
-          ? {
-              lessonTitle: prefilledContext.chapterTitle || prefilledContext.title || 'Chapter MCQ Battle',
-              questions: prefilledContext.mcqData
-                .map((q: any) => parseQuestionToGroupMcq(q))
-                .filter((q: any): q is GroupStudyMcqQuestion => Boolean(q && q.question && q.options.length >= 2)),
-            }
-          : null
-      );
-
-      if (lessonToLaunch && Array.isArray(lessonToLaunch.questions) && lessonToLaunch.questions.length > 0) {
+      // Launch immediately ONLY if NOT scheduled
+      if (!isScheduleMode && lessonToLaunch && Array.isArray(lessonToLaunch.questions) && lessonToLaunch.questions.length > 0) {
         try {
           await startLiveMcqBattle(
             roomId,
@@ -2541,63 +2819,91 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
       return updatedRoom;
     });
 
-    const outcome = await submitMcqAnswer(
-      currentRoom.id,
-      user?.id || 'guest',
-      user?.name || 'Student',
-      isCorrect,
-      timeTaken,
-      optIdx,
-      currentRoom.liveMcq.currentQuestionIndex,
-      user?.photoURL
-    );
+    // Staggered Zero-Firebase-Write Engine: Calculate score and answers 100% locally in React memory!
+    let netXpChange = 0;
+    setLocalBattleStats((prev) => {
+      const oldStreak = prev.currentStreak;
+      let newStreak = 0;
+      let maxStreak = prev.maxStreak;
+      let baseXp = 0;
+      let streakBonusXp = 0;
+      let streakBrokenAt: number | undefined = undefined;
 
-    setLastXpOutcome(outcome);
-    // User requested: Answer dete time na dikhega kitna galat hua kitna sahi
-    setShowXpBanner(false);
+      if (isCorrect) {
+        baseXp = 5;
+        newStreak = oldStreak + 1;
+        maxStreak = Math.max(maxStreak, newStreak);
+      } else {
+        baseXp = -2;
+        if (oldStreak >= 10) streakBonusXp = 20;
+        else if (oldStreak >= 7) streakBonusXp = 20;
+        else if (oldStreak >= 5) streakBonusXp = 15;
+        else if (oldStreak >= 3) streakBonusXp = 10;
+        if (streakBonusXp > 0) streakBrokenAt = oldStreak;
+      }
 
-    // Synchronize XP and Level to user profile & localStorage & Firebase & local room state
-    if (outcome.netXpChange !== 0 && user?.id) {
-      const currentXp = user.xp || user.totalScore || 0;
-      const newXp = Math.max(0, currentXp + outcome.netXpChange);
-      const newLevel = getLevelFromScore(newXp);
-      const updatedUser = {
-        ...user,
-        xp: newXp,
-        totalScore: newXp,
-        level: newLevel,
+      const earnedPoints = isCorrect ? Math.max(1, Math.round(10 - timeTaken * 0.3)) : 0;
+      const newScore = Math.max(0, prev.score + earnedPoints);
+      netXpChange = baseXp + streakBonusXp;
+      const newTotalXp = Math.max(0, prev.userXp + netXpChange);
+
+      const updatedStats = {
+        score: newScore,
+        correctCount: prev.correctCount + (isCorrect ? 1 : 0),
+        wrongCount: prev.wrongCount + (isCorrect ? 0 : 1),
+        totalAnswered: prev.totalAnswered + 1,
+        currentStreak: newStreak,
+        maxStreak,
+        userXp: newTotalXp,
+        streakBonusXp: prev.streakBonusXp + streakBonusXp,
+        answers: {
+          ...prev.answers,
+          [curIdx]: { selectedOption: optIdx, isCorrect, timeTakenSec: timeTaken },
+        },
       };
 
-      try {
-        localStorage.setItem('nst_current_user', JSON.stringify(updatedUser));
-        localStorage.setItem(`nst_user_profile_${user.id}`, JSON.stringify(updatedUser));
-      } catch (_) {}
-
-      saveUserToLive(updatedUser, { immediate: true }).catch(() => {});
-      onUserUpdate?.(updatedUser);
-
-      // Instantly update currentRoom member object locally
-      setCurrentRoom((prev) => {
-        if (!prev || !prev.members || !prev.members[user.id]) return prev;
-        const currentMem = prev.members[user.id];
-        const updatedMem = {
-          ...currentMem,
-          xp: newXp,
-          totalXp: newXp,
-          level: newLevel,
-          roomXp: Math.max(0, (currentMem.roomXp || 0) + outcome.netXpChange),
-        };
-        const updated = {
-          ...prev,
-          members: {
-            ...prev.members,
-            [user.id]: updatedMem,
+      // Optimistically show user's score on device without hitting network
+      const currentUid = user?.id || 'guest';
+      setCurrentRoom((r) => {
+        if (!r || !r.liveMcq) return r;
+        const updatedScores = {
+          ...(r.liveMcq.scores || {}),
+          [currentUid]: {
+            name: user?.name || 'Student',
+            score: newScore,
+            correctCount: updatedStats.correctCount,
+            wrongCount: updatedStats.wrongCount,
+            totalAnswered: updatedStats.totalAnswered,
+            maxStreak,
+            userXp: newTotalXp,
+            streakBonusXp: updatedStats.streakBonusXp,
           },
         };
-        saveCachedRoom(updated);
-        return updated;
+        const updatedRoom = {
+          ...r,
+          liveMcq: {
+            ...r.liveMcq,
+            scores: updatedScores,
+          },
+        };
+        saveCachedRoom(updatedRoom);
+        return updatedRoom;
       });
-    }
+
+      return updatedStats;
+    });
+
+    setLastXpOutcome({
+      isCorrect,
+      timeTakenSec: timeTaken,
+      earnedPoints: isCorrect ? Math.max(1, Math.round(10 - timeTaken * 0.3)) : 0,
+      baseXp: isCorrect ? 5 : -2,
+      streakBonusXp: 0,
+      netXpChange,
+      currentStreak: isCorrect ? (localBattleStats.currentStreak + 1) : 0,
+      maxStreak: Math.max(localBattleStats.maxStreak, isCorrect ? (localBattleStats.currentStreak + 1) : 0),
+    });
+    setShowXpBanner(false);
   };
 
   const handleNextMcqQuestion = async () => {
@@ -2698,13 +3004,25 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
           isScreenRotated
             ? 'md:h-full md:max-w-none md:rounded-none'
             : 'md:h-[92vh] md:max-w-4xl md:rounded-3xl'
-        } bg-slate-900 border border-slate-700/70 shadow-2xl flex flex-col overflow-hidden text-slate-100 transition-all`}
+        } ${
+          roomTheme === 'black'
+            ? 'bg-black border-zinc-800 text-white'
+            : roomTheme === 'white'
+            ? 'bg-slate-50 border-slate-300 text-slate-900'
+            : 'bg-slate-900 border-slate-700/70 text-slate-100'
+        } shadow-2xl flex flex-col overflow-hidden transition-colors duration-200`}
         style={{
           boxShadow: `0 25px 50px -12px ${brandColor}33`,
         }}
       >
         {/* ── TOP NAV BAR ── */}
-        <div className="flex items-center justify-between gap-2 px-3 sm:px-4 py-2.5 sm:py-3 bg-slate-950/90 border-b border-slate-800 shrink-0">
+        <div className={`flex items-center justify-between gap-2 px-3 sm:px-4 py-2.5 sm:py-3 border-b shrink-0 ${
+          roomTheme === 'black'
+            ? 'bg-zinc-950 border-zinc-800 text-white'
+            : roomTheme === 'white'
+            ? 'bg-white border-slate-200 text-slate-900'
+            : 'bg-slate-950/90 border-slate-800 text-slate-100'
+        }`}>
           <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 pr-1 shrink-0">
             <div
               className="w-9 h-9 rounded-xl flex items-center justify-center font-black shadow-md text-white shrink-0"
@@ -2714,7 +3032,9 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
             </div>
             <div className="min-w-0 flex flex-col justify-center">
               <div className="flex items-center gap-1.5 min-w-0">
-                <span className="font-black text-xs sm:text-sm md:text-base tracking-wide text-white truncate max-w-[95px] sm:max-w-[170px] md:max-w-[260px]">
+                <span className={`font-black text-xs sm:text-sm md:text-base tracking-wide truncate max-w-[95px] sm:max-w-[170px] md:max-w-[260px] ${
+                  roomTheme === 'white' ? 'text-slate-900' : 'text-white'
+                }`}>
                   {currentRoom ? ((currentRoom.name && currentRoom.name !== 'undefined') ? currentRoom.name : `${currentRoom.subject || 'Live'} Battle`) : 'Study Room · Live MCQ Arena'}
                 </span>
                 {currentRoom && (
@@ -2731,7 +3051,9 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                   </span>
                 )}
               </div>
-              <p className="text-[10px] sm:text-[11px] text-slate-400 truncate max-w-[110px] sm:max-w-[220px]">
+              <p className={`text-[10px] sm:text-[11px] truncate max-w-[110px] sm:max-w-[220px] ${
+                roomTheme === 'white' ? 'text-slate-500' : 'text-slate-400'
+              }`}>
                 {currentRoom
                   ? `${currentRoom.subject || 'General'} • ${Object.keys(currentRoom.members || {}).length} Online`
                   : 'Live peer MCQ battles, instant XP & streak bonuses'}
@@ -2753,6 +3075,33 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               }
             }}
           >
+            {/* Room Theme Selector (Blue / Black / White) */}
+            <div className={`h-9 px-2 rounded-xl border flex items-center gap-1.5 shrink-0 ${
+              roomTheme === 'black'
+                ? 'bg-zinc-900 border-zinc-700'
+                : roomTheme === 'white'
+                ? 'bg-slate-100 border-slate-300'
+                : 'bg-slate-800/90 border-slate-700'
+            }`} title="Room Color: Blue, Black, ya White chunein">
+              <button
+                type="button"
+                onClick={() => toggleRoomTheme('blue')}
+                className={`w-5 h-5 rounded-full bg-indigo-600 transition-transform cursor-pointer ${roomTheme === 'blue' ? 'ring-2 ring-white scale-110 shadow-sm' : 'opacity-60 hover:opacity-100'}`}
+                title="Blue Theme (Indigo Slate)"
+              />
+              <button
+                type="button"
+                onClick={() => toggleRoomTheme('black')}
+                className={`w-5 h-5 rounded-full bg-black border border-zinc-500 transition-transform cursor-pointer ${roomTheme === 'black' ? 'ring-2 ring-amber-400 scale-110 shadow-sm' : 'opacity-60 hover:opacity-100'}`}
+                title="Black Theme (Pitch AMOLED)"
+              />
+              <button
+                type="button"
+                onClick={() => toggleRoomTheme('white')}
+                className={`w-5 h-5 rounded-full bg-white border border-slate-400 transition-transform cursor-pointer ${roomTheme === 'white' ? 'ring-2 ring-indigo-600 scale-110 shadow-sm' : 'opacity-60 hover:opacity-100'}`}
+                title="White Theme (Clean Day White)"
+              />
+            </div>
             {/* Rotate Screen Button (Always in Top Bar, Same Size as Other Buttons) */}
             <button
               type="button"
@@ -2892,6 +3241,15 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                     🎁 Free Lesson MCQs (0 Credits)
                   </span>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowRulesGuideModal(true)}
+                    className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-500/30 flex items-center gap-1.5 transition cursor-pointer shadow-xs active:scale-95"
+                  >
+                    <BookOpen size={11} className="text-amber-400" />
+                    <span>📖 Room Rules & Capacity (100 Users & Limits)</span>
+                  </button>
                 </div>
 
                 <h2 className="text-xl md:text-2xl font-black text-white leading-tight mb-2">
@@ -3072,6 +3430,12 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                               {isMyRoom && (
                                 <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
                                   👑 Aap Host Hain
+                                </span>
+                              )}
+                              {room.isScheduled && room.scheduledStartTime && (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
+                                  <Clock size={10} />
+                                  <span>⏰ Scheduled: {new Date(room.scheduledStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                 </span>
                               )}
                             </div>
@@ -3588,6 +3952,30 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                         Sabhi members ek hi samay par sawal hal karenge. Har sahi sawal par <b>+5 XP</b> aur speed points
                         milenge. Galat uttar par <b>-2 XP</b> aur streak tootne par bonus milega!
                       </p>
+
+                      {/* Scheduled Room Countdown Banner */}
+                      {currentRoom.isScheduled && currentRoom.scheduledStartTime && (
+                        <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-purple-500/20 border border-amber-500/40 text-center space-y-2.5 max-w-md mx-auto shadow-xl">
+                          <div className="flex items-center justify-center gap-2 text-amber-300 font-black text-sm">
+                            <Clock size={16} className="text-amber-400" />
+                            <span>⏰ Scheduled MCQ Test Room</span>
+                          </div>
+                          <p className="text-xs text-slate-200">
+                            Test Start Samay: <b className="text-white">{new Date(currentRoom.scheduledStartTime).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</b>
+                          </p>
+                          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-950 border border-amber-500/50 text-amber-400 font-mono text-base font-black shadow-inner">
+                            <span className="text-slate-400 text-xs font-sans">Starts In:</span>
+                            <span>
+                              {Math.max(0, currentRoom.scheduledStartTime - Date.now()) > 0
+                                ? formatSeconds(Math.floor((currentRoom.scheduledStartTime - Date.now()) / 1000))
+                                : '00:00 (Starting now!)'}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-300">
+                            ⚡ <b>Host ke bina bhi chalega:</b> Time aane par test <b>automatically start</b> ho jayega aur questions auto-advance honge!
+                          </p>
+                        </div>
+                      )}
 
                       {isHost ? (
                         <div className="space-y-3.5 max-w-lg mx-auto pt-2 text-left">
@@ -4978,6 +5366,27 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                           </p>
                         </div>
 
+                        {/* Staggered Syncing Queue Banner */}
+                        {isSubmittingBatch && (
+                          <div className="p-3.5 rounded-2xl bg-indigo-950/80 border border-indigo-500/40 text-center space-y-2 animate-in fade-in duration-200">
+                            <div className="flex items-center justify-center gap-2 text-indigo-300 font-bold text-xs">
+                              <span className="animate-spin text-sm">⏳</span>
+                              <span>
+                                Sabhi participants ka result queue mein sync ho raha hai... (Aapka Slot: {batchSyncSecondsRemaining}s)
+                              </span>
+                            </div>
+                            <div className="w-full max-w-xs mx-auto bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                              <div
+                                className="bg-gradient-to-r from-indigo-500 to-emerald-400 h-1.5 rounded-full transition-all duration-1000"
+                                style={{ width: `${Math.max(15, 100 - batchSyncSecondsRemaining * 8)}%` }}
+                              />
+                            </div>
+                            <p className="text-[10px] text-slate-400">
+                              ⚡ Staggered Zero-Spike Engine: Firebase quota surakshit hai aur load evenly divide ho chuka hai.
+                            </p>
+                          </div>
+                        )}
+
                         {/* Podium Top 3 */}
                         <div className="flex items-end justify-center gap-3 pt-2">
                           {scores[1] && (
@@ -5844,6 +6253,119 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                 </div>
               </div>
 
+              {/* ── LIVE NOW VS SCHEDULE TOGGLE ── */}
+              <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-300">Room Type:</span>
+                  <span className="text-[10px] text-amber-300 font-bold">
+                    {isScheduleMode ? '⏰ Scheduled Room (Basic & Ultra)' : '⚡ Instant Live Room'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsScheduleMode(false)}
+                    className={`py-2 px-3 rounded-xl border text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                      !isScheduleMode
+                        ? 'bg-indigo-600/30 border-indigo-400 text-white shadow-sm ring-1 ring-indigo-500'
+                        : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <span>⚡ Abhi Shuru Karein</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!isBasicUser && !isUltraUser && !isAdmin) {
+                        alert('Room schedule karne ka option Basic aur Ultra members ke liye hai. Kripya Store se upgrade karein.');
+                        return;
+                      }
+                      setIsScheduleMode(true);
+                    }}
+                    className={`py-2 px-3 rounded-xl border text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                      isScheduleMode
+                        ? 'bg-amber-500/30 border-amber-400 text-amber-300 shadow-sm ring-1 ring-amber-500'
+                        : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <span>⏰ Schedule Karein</span>
+                    {!isBasicUser && !isUltraUser && !isAdmin && (
+                      <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">VIP</span>
+                    )}
+                  </button>
+                </div>
+
+                {isScheduleMode && (
+                  <div className="pt-2 space-y-3 border-t border-slate-800 animate-in fade-in duration-150">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 mb-1">Date:</label>
+                        <input
+                          type="date"
+                          required
+                          value={scheduledDate}
+                          min={new Date().toISOString().split('T')[0]}
+                          onChange={(e) => setScheduledDate(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 mb-1">Time (24 Hr):</label>
+                        <input
+                          type="time"
+                          required
+                          value={scheduledTime}
+                          onChange={(e) => setScheduledTime(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Pre-select Questions for Scheduled Room */}
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 mb-1 flex items-center justify-between">
+                        <span>Select Chapter / Questions:</span>
+                        <span className="text-[9px] text-emerald-400 font-bold">
+                          {selectedPreloadLesson ? `✅ ${selectedPreloadLesson.questions?.length || 0} Questions` : 'Curated Set'}
+                        </span>
+                      </label>
+                      <select
+                        value={selectedPreloadLesson?.lessonTitle || ''}
+                        onChange={(e) => {
+                          const found = allRealLessons.find((l) => l.lessonTitle === e.target.value);
+                          if (found) setSelectedPreloadLesson(found);
+                          else setSelectedPreloadLesson(null);
+                        }}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-white outline-none focus:border-amber-400"
+                      >
+                        <option value="">🎯 Curated General Knowledge MCQs (Auto-Selected)</option>
+                        {allRealLessons.slice(0, 50).map((l, i) => (
+                          <option key={`sched_les_${i}_${l.lessonTitle}`} value={l.lessonTitle}>
+                            📖 {l.lessonTitle} ({l.questions?.length || 0} MCQs) - {l.subject || 'General'}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        Aap chapter select kar sakte hain ya default questions rehne de sakte hain.
+                      </p>
+                    </div>
+
+                    {/* Auto-Run without Host Checkbox */}
+                    <label className="flex items-start gap-2 text-xs text-slate-300 cursor-pointer pt-1">
+                      <input
+                        type="checkbox"
+                        checked={autoRunWithoutHost}
+                        onChange={(e) => setAutoRunWithoutHost(e.target.checked)}
+                        className="mt-0.5 rounded text-indigo-500 focus:ring-0"
+                      />
+                      <span className="text-[11px] leading-relaxed">
+                        <b>Bina host ke auto-run karein:</b> Host absent rahe tab bhi time aane par test apne aap shuru hoga aur har question ke baad auto-next question hoga!
+                      </span>
+                    </label>
+                  </div>
+                )}
+              </div>
+
               {/* Room Duration Selection based on Plan */}
               <div>
                 <label className="block text-xs font-bold text-slate-300 mb-1 flex items-center justify-between">
@@ -5869,6 +6391,82 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                     </option>
                   ))}
                 </select>
+              </div>
+
+              {/* Room Capacity (Max Members) Selection */}
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1 flex items-center justify-between">
+                  <span>Room Capacity (Kitne Log Jud Sakenge):</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowRulesGuideModal(true)}
+                    className="text-[10px] text-amber-300 font-bold hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>ℹ️ Rules Dekhein</span>
+                  </button>
+                </label>
+                <select
+                  value={newRoomMaxMembers}
+                  onChange={(e) => setNewRoomMaxMembers(parseInt(e.target.value, 10))}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                >
+                  {(isAdmin || userTier === 'ULTRA') && (
+                    <option value={100}>🚀 100 Members (Mega Battle Room - Full Cohort / High Speed)</option>
+                  )}
+                  {(isAdmin || userTier === 'ULTRA' || userTier === 'BASIC') && (
+                    <option value={50}>⚡ 50 Members (Medium Class / Group Battle)</option>
+                  )}
+                  <option value={30}>🎯 30 Members (Standard Batch - Recommended for Best Speed)</option>
+                  <option value={15}>👥 15 Members (Small Study Circle - Ultra Fast)</option>
+                </select>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  💡 Zero-lag atomic live sync ke sath 100 students tak bina kisi rukawat ke live quiz khel sakte hain.
+                </p>
+              </div>
+
+              {/* ── ROOM COLOR THEME SELECTOR ── */}
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1 flex items-center justify-between">
+                  <span>Room Theme / Color:</span>
+                  <span className="text-[10px] text-indigo-300 font-bold">
+                    {roomTheme === 'blue' ? '🔵 Midnight Blue' : roomTheme === 'black' ? '⚫ AMOLED Black' : '⚪ Clean White'}
+                  </span>
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => toggleRoomTheme('blue')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                      roomTheme === 'blue'
+                        ? 'bg-indigo-600/30 border-indigo-400 text-white shadow-sm ring-1 ring-indigo-500'
+                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <span>🔵 Blue</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleRoomTheme('black')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                      roomTheme === 'black'
+                        ? 'bg-zinc-900 border-zinc-500 text-white shadow-sm ring-1 ring-zinc-400'
+                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <span>⚫ Black</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleRoomTheme('white')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                      roomTheme === 'white'
+                        ? 'bg-white border-slate-300 text-slate-900 shadow-sm ring-1 ring-slate-400'
+                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <span>⚪ White</span>
+                  </button>
+                </div>
               </div>
 
               <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px]">
@@ -6084,6 +6682,108 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
         </div>
       )}
 
+      {/* ── ROOM RULES & CAPACITY GUIDE MODAL (100 Users & Simultaneous Rooms) ── */}
+      {showRulesGuideModal && (
+        <div className="fixed inset-0 z-[10002] flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-150">
+          <div className="w-full max-w-xl bg-slate-900 border border-indigo-500/40 rounded-3xl p-5 sm:p-6 shadow-2xl space-y-4 text-slate-100 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-xl">
+                  📚
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">Room Capacity & Multi-Room Rules</h3>
+                  <p className="text-[11px] text-slate-400">100 Users Speed & Simultaneous Room Guidelines</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowRulesGuideModal(false)}
+                className="w-8 h-8 rounded-full bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center cursor-pointer"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            <div className="space-y-3.5 overflow-y-auto pr-1 text-xs text-slate-200">
+              {/* Section 1: Ek Time Pe Kitne Rooms Chal Sakte Hain? */}
+              <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
+                <div className="flex items-center gap-2 text-amber-400 font-black text-xs">
+                  <Flame size={15} /> Ek Time Pe Kitne Rooms Chal Sakte Hain? (Simultaneous Rooms)
+                </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Realtime Database <b>100 Simultaneous Active Connections</b> support karta hai. Iska matlab hai ki aap alag-alag rooms me kul milakar 100 students ek sath bina kisi lag ke connect rakh sakte hain:
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-[11px]">
+                  <div className="p-2 rounded-xl bg-indigo-950/40 border border-indigo-500/30">
+                    <p className="font-black text-indigo-300">🚀 1 Mega Room</p>
+                    <p className="text-[10px] text-slate-300 mt-0.5">1 Room × <b>100 Students</b><br />(Grand Mega Quiz)</p>
+                  </div>
+                  <div className="p-2 rounded-xl bg-emerald-950/40 border border-emerald-500/30">
+                    <p className="font-black text-emerald-300">🎯 3–4 Batches</p>
+                    <p className="text-[10px] text-slate-300 mt-0.5">3-4 Rooms × <b>25-30 Students</b><br />(Best for Daily Batches)</p>
+                  </div>
+                  <div className="p-2 rounded-xl bg-purple-950/40 border border-purple-500/30">
+                    <p className="font-black text-purple-300">👥 6–8 Small Circles</p>
+                    <p className="text-[10px] text-slate-300 mt-0.5">6-8 Rooms × <b>10-15 Students</b><br />(Self Group Revision)</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 2: 100 Users Ke Liye Zero-Lag Architecture */}
+              <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
+                <div className="flex items-center gap-2 text-emerald-400 font-black text-xs">
+                  <ShieldCheck size={15} /> 100 Users Ke Sath Zero-Lag Kaise Kaam Karta Hai?
+                </div>
+                <ul className="space-y-1.5 text-[11px] text-slate-300 list-disc list-inside leading-relaxed">
+                  <li>
+                    <b className="text-white">Atomic Independent Scores:</b> Har student ka answer unke apne user ID par save hota hai. 100 log ek saath bhi click karenge to koi database freeze ya lock nahi hoga.
+                  </li>
+                  <li>
+                    <b className="text-white">Optimized Live Sync:</b> Quiz ke dauran sirf current active question aur light-weight score stream hota hai taaki 3G/4G par bhi battery ya data consume na ho.
+                  </li>
+                  <li>
+                    <b className="text-white">Auto-Disconnect Release:</b> Jaise hi koi student tab close karta hai ya test complete hota hai, room slot turant agle student ke liye khali ho jata hai.
+                  </li>
+                </ul>
+              </div>
+
+              {/* Section 3: Plan-Wise Creation Quotas */}
+              <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
+                <div className="flex items-center gap-2 text-cyan-400 font-black text-xs">
+                  <Crown size={15} /> Plan Ke Hisaab Se Room Creation Limits
+                </div>
+                <div className="space-y-1.5 text-[11px]">
+                  <div className="flex items-center justify-between p-2 rounded-lg bg-slate-900 border border-slate-800">
+                    <span className="text-slate-300">🆓 <b>Free User</b></span>
+                    <span className="text-slate-400 font-bold">2 Rooms / Din • 30 Min Max • Up to 25 Members</span>
+                  </div>
+                  <div className="flex items-center justify-between p-2 rounded-lg bg-cyan-950/30 border border-cyan-500/20">
+                    <span className="text-cyan-300">⭐ <b>Basic Plan</b></span>
+                    <span className="text-cyan-200 font-bold">3 Rooms / Din • 60 Min Max • Up to 50 Members</span>
+                  </div>
+                  <div className="flex items-center justify-between p-2 rounded-lg bg-purple-950/30 border border-purple-500/20">
+                    <span className="text-purple-300">👑 <b>Ultra VIP</b></span>
+                    <span className="text-purple-200 font-bold">5 Rooms / Din • 120 Min Max • Up to 100 Members</span>
+                  </div>
+                  <div className="flex items-center justify-between p-2 rounded-lg bg-emerald-950/30 border border-emerald-500/20">
+                    <span className="text-emerald-300">🛡️ <b>Admin Access</b></span>
+                    <span className="text-emerald-200 font-black">Unlimited Rooms • 240 Min Max • 100+ Members</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowRulesGuideModal(false)}
+              className="w-full py-2.5 rounded-xl font-black text-xs text-white bg-indigo-600 hover:bg-indigo-500 shadow-md active:scale-95 transition cursor-pointer shrink-0"
+            >
+              Samajh Gaya (Done)
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── ULTRA QUESTION INSPECTOR MODAL (Cherry-Pick Individual Questions) ── */}
       {showUltraQuestionInspector && (
         <div className="fixed inset-0 z-[9999] bg-black/85 backdrop-blur-md flex flex-col p-3 md:p-6 overflow-hidden animate-in fade-in duration-150">
@@ -6283,6 +6983,94 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-lg cursor-pointer"
             >
               Samajh Gaya (Close)
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── ANTI-CHEATING WARNING MODAL (1st Minimize Violation) ── */}
+      {showMinimizeWarningModal && (
+        <div className="fixed inset-0 z-[10001] bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-slate-900 border-2 border-amber-500 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl text-center ring-4 ring-amber-500/20">
+            <div className="w-16 h-16 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center text-3xl mx-auto shadow-inner">
+              ⚠️
+            </div>
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[11px] font-black uppercase tracking-wider mb-2">
+                Anti-Cheat Alert • Warning 1 of 2
+              </div>
+              <h3 className="text-lg font-black text-white">App Minimize Karna Mana Hai!</h3>
+              <p className="text-xs text-slate-300 mt-2 leading-relaxed">
+                Aapne live test ke dauran doosra app kholne ya screen minimize karne ki koshish ki hai. Yeh sakht mana hai!
+              </p>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-amber-950/40 border border-amber-500/40 text-left space-y-2 text-xs text-amber-200">
+              <div className="flex items-start gap-2">
+                <span className="text-amber-400 font-black text-sm">❗</span>
+                <span>
+                  <b>2nd Warning Rule:</b> Agar aapne dobara app minimize ya tab switch kiya, toh aapko turant <b>Room se Exit aur Disqualify</b> kar diya jayega!
+                </span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-amber-400 font-black text-sm">⏭️</span>
+                <span>
+                  Bache huye sabhi questions ko <b>SKIP</b> maan liya jayega aur koi extra mauka nahi milega.
+                </span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowMinimizeWarningModal(false)}
+              className="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-sm shadow-xl active:scale-95 transition cursor-pointer"
+            >
+              Main Samajh Gaya (Test Jari Rakhein)
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── ANTI-CHEATING DISQUALIFIED MODAL (2nd Minimize Violation -> Auto Exit) ── */}
+      {showDisqualifiedModal && (
+        <div className="fixed inset-0 z-[10002] bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-slate-900 border-2 border-rose-500 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl text-center ring-4 ring-rose-500/20">
+            <div className="w-16 h-16 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-400 flex items-center justify-center text-3xl mx-auto shadow-inner">
+              🚫
+            </div>
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-500/20 border border-rose-500/40 text-rose-300 text-[11px] font-black uppercase tracking-wider mb-2">
+                Room Se Disqualified
+              </div>
+              <h3 className="text-lg font-black text-white">Aapko Room Se Exit Kar Diya Gaya Hai!</h3>
+              <p className="text-xs text-slate-300 mt-2 leading-relaxed">
+                Aapne live test ke dauran <b>2 baar app minimize ya switch kiya</b>. Fair competition policy ke mutabiq aapka test terminate kar diya gaya hai.
+              </p>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-rose-950/40 border border-rose-500/40 text-left space-y-2 text-xs text-rose-200">
+              <div className="flex items-start gap-2">
+                <span className="text-rose-400 font-bold">✓</span>
+                <span>Ab tak ke attempt kiye gaye sawalon ka score submit ho chuka hai.</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-rose-400 font-bold">⏭️</span>
+                <span>Bache huye sabhi questions ko <b>SKIP (Unanswered)</b> maan liya gaya hai.</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowDisqualifiedModal(false);
+                setIsDisqualifiedFromRoom(false);
+                setMinimizeWarningCount(0);
+                setCurrentRoom(null);
+                if (onActiveRoomChange) onActiveRoomChange(null);
+              }}
+              className="w-full py-3 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-black text-sm shadow-xl active:scale-95 transition cursor-pointer"
+            >
+              Lobby Mein Wapas Jayein 🚪
             </button>
           </div>
         </div>
